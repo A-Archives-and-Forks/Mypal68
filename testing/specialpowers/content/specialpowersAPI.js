@@ -450,8 +450,8 @@ SPConsoleListener.prototype = {
   },
 
   QueryInterface: ChromeUtils.generateQI([
-    Ci.nsIConsoleListener,
-    Ci.nsIObserver,
+    "nsIConsoleListener",
+    "nsIObserver",
   ]),
 };
 

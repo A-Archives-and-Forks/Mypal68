@@ -20,6 +20,9 @@ var EXPORTED_SYMBOLS = ["BrowserTestUtils"];
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
+const { ComponentUtils } = ChromeUtils.import(
+  "resource://gre/modules/ComponentUtils.jsm"
+);
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
@@ -64,7 +67,7 @@ function NewProcessSelector() {}
 
 NewProcessSelector.prototype = {
   classID: OUR_PROCESSSELECTOR_CID,
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIContentProcessProvider]),
+  QueryInterface: ChromeUtils.generateQI(["nsIContentProcessProvider"]),
 
   provideProcess() {
     return Ci.nsIContentProcessProvider.NEW_PROCESS;
@@ -72,7 +75,7 @@ NewProcessSelector.prototype = {
 };
 
 let registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
-let selectorFactory = XPCOMUtils._getFactory(NewProcessSelector);
+let selectorFactory = ComponentUtils._getFactory(NewProcessSelector);
 registrar.registerFactory(OUR_PROCESSSELECTOR_CID, "", null, selectorFactory);
 
 var gSendCharCount = 0;
@@ -490,9 +493,9 @@ var BrowserTestUtils = {
         onLocationChange() {},
         onContentBlockingEvent() {},
         QueryInterface: ChromeUtils.generateQI([
-          Ci.nsIWebProgressListener,
-          Ci.nsIWebProgressListener2,
-          Ci.nsISupportsWeakReference,
+          "nsIWebProgressListener",
+          "nsIWebProgressListener2",
+          "nsISupportsWeakReference",
         ]),
       };
       browser.addProgressListener(wpl);

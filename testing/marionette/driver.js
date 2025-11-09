@@ -294,8 +294,8 @@ Object.defineProperty(GeckoDriver.prototype, "chromeWindowHandles", {
 });
 
 GeckoDriver.prototype.QueryInterface = ChromeUtils.generateQI([
-  Ci.nsIObserver,
-  Ci.nsISupportsWeakReference,
+  "nsIObserver",
+  "nsISupportsWeakReference",
 ]);
 
 GeckoDriver.prototype.init = function() {

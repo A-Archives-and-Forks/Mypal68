@@ -33,7 +33,7 @@ function SpecialPowersObserver() {
 SpecialPowersObserver.prototype = new SpecialPowersObserverAPI();
 
 SpecialPowersObserver.prototype.QueryInterface = ChromeUtils.generateQI([
-  Ci.nsIObserver,
+  "nsIObserver",
 ]);
 
 SpecialPowersObserver.prototype.observe = function(aSubject, aTopic, aData) {

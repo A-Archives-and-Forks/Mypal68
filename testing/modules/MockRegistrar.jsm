@@ -78,9 +78,9 @@ var MockRegistrar = Object.freeze({
         return wrappedMock.QueryInterface(iid);
       },
       lockFactory(lock) {
-        throw Cr.NS_ERROR_NOT_IMPLEMENTED;
+        throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
       },
-      QueryInterface: ChromeUtils.generateQI([Ci.nsIFactory]),
+      QueryInterface: ChromeUtils.generateQI(["nsIFactory"]),
     };
 
     this.registrar.registerFactory(

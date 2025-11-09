@@ -4,6 +4,12 @@
 
 var EXPORTED_SYMBOLS = ["MockFilePicker"];
 
+ChromeUtils.defineModuleGetter(
+  this,
+  "WrapPrivileged",
+  "resource://specialpowers/WrapPrivileged.jsm"
+);
+
 const Cm = Components.manager;
 
 const CONTRACT_ID = "@mozilla.org/filepicker;1";
@@ -15,11 +21,9 @@ ChromeUtils.defineModuleGetter(
 );
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-// Allow stuff from this scope to be accessed from non-privileged scopes. This
-// would crash if used outside of automation.
 /* globals __URI__ */
 if (__URI__.includes("specialpowers")) {
-  Cu.forcePermissiveCOWs();
+  Cu.crashIfNotInAutomation();
 }
 
 var registrar = Cm.QueryInterface(Ci.nsIComponentRegistrar);
@@ -31,14 +35,14 @@ var newFactory = function(window) {
   return {
     createInstance(aOuter, aIID) {
       if (aOuter) {
-        throw Cr.NS_ERROR_NO_AGGREGATION;
+        throw Components.Exception("", Cr.NS_ERROR_NO_AGGREGATION);
       }
       return new MockFilePickerInstance(window).QueryInterface(aIID);
     },
     lockFactory(aLock) {
-      throw Cr.NS_ERROR_NOT_IMPLEMENTED;
+      throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
     },
-    QueryInterface: ChromeUtils.generateQI([Ci.nsIFactory]),
+    QueryInterface: ChromeUtils.generateQI(["nsIFactory"]),
   };
 };
 
@@ -173,9 +177,11 @@ var MockFilePicker = {
 
 function MockFilePickerInstance(window) {
   this.window = window;
+  this.showCallback = null;
+  this.showCallbackWrapped = null;
 }
 MockFilePickerInstance.prototype = {
-  QueryInterface: ChromeUtils.generateQI([Ci.nsIFilePicker]),
+  QueryInterface: ChromeUtils.generateQI(["nsIFilePicker"]),
   init(aParent, aTitle, aMode) {
     MockFilePicker.mode = aMode;
     this.filterIndex = MockFilePicker.filterIndex;
@@ -273,8 +279,19 @@ MockFilePickerInstance.prototype = {
           MockFilePicker.displaySpecialDirectory = this.displaySpecialDirectory;
           MockFilePicker.shown = true;
           if (typeof MockFilePicker.showCallback == "function") {
+            if (MockFilePicker.showCallback != this.showCallback) {
+              this.showCallback = MockFilePicker.showCallback;
+              if (Cu.isXrayWrapper(this.window)) {
+                this.showCallbackWrapped = WrapPrivileged.wrapCallback(
+                  MockFilePicker.showCallback,
+                  this.window
+                );
+              } else {
+                this.showCallbackWrapped = this.showCallback;
+              }
+            }
             try {
-              var returnValue = MockFilePicker.showCallback(this);
+              var returnValue = this.showCallbackWrapped(this);
               if (typeof returnValue != "undefined") {
                 return returnValue;
               }

@@ -25,6 +25,7 @@ include ../../dom/media/webspeech/synth/crashtests/crashtests.list
 include ../../dom/offline/crashtests/crashtests.list
 include ../../dom/plugins/test/crashtests/crashtests.list
 include ../../dom/smil/crashtests/crashtests.list
+include ../../dom/streams/crashtests/crashtests.list
 include ../../dom/svg/crashtests/crashtests.list
 include ../../dom/workers/test/crashtests/crashtests.list
 include ../../dom/xml/crashtests/crashtests.list

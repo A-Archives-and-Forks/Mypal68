@@ -227,8 +227,9 @@ function sendMouseEvent(aEvent, aTarget, aWindow) {
 
   // If documentURIObject exists or `window` is a stub object, we're in
   // a chrome scope, so don't bother trying to go through SpecialPowers.
-  if (!window.document || window.document.documentURIObject)
+  if (!window.document || window.document.documentURIObject) {
     return aTarget.dispatchEvent(event);
+  }
   return SpecialPowers.dispatchEvent(aWindow, aTarget, event);
 }
 
@@ -450,10 +451,12 @@ function _parseModifiers(aEvent, aWindow = window) {
  * aOffsetY. This allows mouse clicks to be simulated by calling this method.
  *
  * aEvent is an object which may contain the properties:
- *   shiftKey, ctrlKey, altKey, metaKey, accessKey, clickCount, button, type
+ *   `shiftKey`, `ctrlKey`, `altKey`, `metaKey`, `accessKey`, `clickCount`,
+ *   `button`, `type`.
+ *   For valid `type`s see nsIDOMWindowUtils' `sendMouseEvent`.
  *
  * If the type is specified, an mouse event of that type is fired. Otherwise,
- * a mousedown followed by a mouse up is performed.
+ * a mousedown followed by a mouseup is performed.
  *
  * aWindow is optional, and defaults to the current window object.
  *
@@ -482,10 +485,12 @@ function synthesizeTouch(aTarget, aOffsetX, aOffsetY, aEvent, aWindow) {
  * Synthesize a mouse event at a particular point in aWindow.
  *
  * aEvent is an object which may contain the properties:
- *   shiftKey, ctrlKey, altKey, metaKey, accessKey, clickCount, button, type
+ *   `shiftKey`, `ctrlKey`, `altKey`, `metaKey`, `accessKey`, `clickCount`,
+ *   `button`, `type`.
+ *   For valid `type`s see nsIDOMWindowUtils' `sendMouseEvent`.
  *
  * If the type is specified, an mouse event of that type is fired. Otherwise,
- * a mousedown followed by a mouse up is performed.
+ * a mousedown followed by a mouseup is performed.
  *
  * aWindow is optional, and defaults to the current window object.
  */
@@ -781,7 +786,9 @@ function _sendWheelAndPaint(
   aWindow = window
 ) {
   var utils = _getDOMWindowUtils(aWindow);
-  if (!utils) return;
+  if (!utils) {
+    return;
+  }
 
   if (utils.isMozAfterPaintPending) {
     // If a paint is pending, then APZ may be waiting for a scroll acknowledgement
@@ -927,7 +934,9 @@ function synthesizeNativeTap(
   aWindow = window
 ) {
   let utils = _getDOMWindowUtils(aWindow);
-  if (!utils) return;
+  if (!utils) {
+    return;
+  }
 
   let scale = utils.screenPixelsPerCSSPixel;
   let rect = aTarget.getBoundingClientRect();
@@ -952,7 +961,9 @@ function synthesizeNativeMouseMove(
   aWindow = window
 ) {
   var utils = _getDOMWindowUtils(aWindow);
-  if (!utils) return;
+  if (!utils) {
+    return;
+  }
 
   var rect = aTarget.getBoundingClientRect();
   var x = aOffsetX + window.mozInnerScreenX + rect.left;
@@ -1049,8 +1060,9 @@ function synthesizeAndWaitNativeMouseMove(
  *          If keydown is specified, this only fires keydown (and keypress if
  *          it should be fired).
  *          If keyup is specified, this only fires keyup.
- *  - altKey, altGraphKey, ctrlKey, capsLockKey, fnKey, fnLockKey, numLockKey,
- *    metaKey, osKey, scrollLockKey, shiftKey, symbolKey, symbolLockKey:
+ *  - accelKey, altKey, altGraphKey, ctrlKey, capsLockKey, fnKey, fnLockKey,
+ *    numLockKey, metaKey, osKey, scrollLockKey, shiftKey, symbolKey,
+ *    symbolLockKey:
  *        Basically, you shouldn't use these attributes.  nsITextInputProcessor
  *        manages modifier key state when you synthesize modifier key events.
  *        However, if some of these attributes are true, this function activates
@@ -1366,7 +1378,7 @@ function synthesizeNativeKey(
   }
 
   var observer = {
-    observe: function(aSubject, aTopic, aData) {
+    observe(aSubject, aTopic, aData) {
       if (aCallback && aTopic == "keyevent") {
         aCallback(aData);
       }
@@ -1391,7 +1403,9 @@ var _gSeenEvent = false;
  * be fired.
  */
 function _expectEvent(aExpectedTarget, aExpectedEvent, aTestName) {
-  if (!aExpectedTarget || !aExpectedEvent) return null;
+  if (!aExpectedTarget || !aExpectedEvent) {
+    return null;
+  }
 
   _gSeenEvent = false;
 
@@ -1431,7 +1445,9 @@ function _checkExpectedEvent(
     var type = expectEvent ? aExpectedEvent : aExpectedEvent.substring(1);
     aExpectedTarget.removeEventListener(type, aEventHandler);
     var desc = type + " event";
-    if (!expectEvent) desc += " not";
+    if (!expectEvent) {
+      desc += " not";
+    }
     is(_gSeenEvent, expectEvent, aTestName + " " + desc + " fired");
   }
 
@@ -1528,7 +1544,7 @@ function _getDOMWindowUtils(aWindow = window) {
 
 function _defineConstant(name, value) {
   Object.defineProperty(this, name, {
-    value: value,
+    value,
     enumerable: true,
     writable: false,
   });
@@ -1819,10 +1835,10 @@ function _createKeyboardEventDictionary(
   }
   result.dictionary = {
     key: keyName,
-    code: code,
+    code,
     location: locationIsDefined ? aKeyEvent.location : 0,
     repeat: "repeat" in aKeyEvent ? aKeyEvent.repeat === true : false,
-    keyCode: keyCode,
+    keyCode,
   };
   return result;
 }
@@ -2379,7 +2395,7 @@ function synthesizeNativeOSXClick(x, y) {
     throw new Error("CGEventSourceCreate returns null");
   }
 
-  var loc = new CGPoint({ x: x, y: y });
+  var loc = new CGPoint({ x, y });
   var event = CGEventCreateMouseEvent(
     source,
     kCGEventLeftMouseDown,
@@ -2842,6 +2858,7 @@ function _computeSrcElementFromSrcSelection(aSrcSelection) {
  *          stepY:        The y-axis step for mousemove inside srcElement
  *          finalX:       The final x coordinate inside srcElement
  *          finalY:       The final x coordinate inside srcElement
+ *          id:           The pointer event id
  *          srcWindow:    The window for dispatching event on srcElement,
  *                        defaults to the current window object
  *          destWindow:   The window for dispatching event on destElement,
@@ -2863,6 +2880,7 @@ async function synthesizePlainDragAndDrop(aParams) {
     stepY = 9,
     finalX = srcX + stepX * 2,
     finalY = srcY + stepY * 2,
+    id = _getDOMWindowUtils(window).DEFAULT_MOUSE_POINTER_ID,
     srcWindow = window,
     destWindow = window,
     expectCancelDragStart = false,
@@ -2936,7 +2954,13 @@ async function synthesizePlainDragAndDrop(aParams) {
 
     await new Promise(r => setTimeout(r, 0));
 
-    synthesizeMouse(srcElement, srcX, srcY, { type: "mousedown" }, srcWindow);
+    synthesizeMouse(
+      srcElement,
+      srcX,
+      srcY,
+      { type: "mousedown", id },
+      srcWindow
+    );
     if (logFunc) {
       logFunc(`mousedown at ${srcX}, ${srcY}`);
     }
@@ -2976,7 +3000,13 @@ async function synthesizePlainDragAndDrop(aParams) {
 
       srcX += stepX;
       srcY += stepY;
-      synthesizeMouse(srcElement, srcX, srcY, { type: "mousemove" }, srcWindow);
+      synthesizeMouse(
+        srcElement,
+        srcX,
+        srcY,
+        { type: "mousemove", id },
+        srcWindow
+      );
       if (logFunc) {
         logFunc(`first mousemove at ${srcX}, ${srcY}`);
       }
@@ -2985,7 +3015,13 @@ async function synthesizePlainDragAndDrop(aParams) {
 
       srcX += stepX;
       srcY += stepY;
-      synthesizeMouse(srcElement, srcX, srcY, { type: "mousemove" }, srcWindow);
+      synthesizeMouse(
+        srcElement,
+        srcX,
+        srcY,
+        { type: "mousemove", id },
+        srcWindow
+      );
       if (logFunc) {
         logFunc(`second mousemove at ${srcX}, ${srcY}`);
       }
@@ -3011,7 +3047,7 @@ async function synthesizePlainDragAndDrop(aParams) {
           srcElement,
           finalX,
           finalY,
-          { type: "mouseup" },
+          { type: "mouseup", id },
           srcWindow
         );
         return;
@@ -3305,7 +3341,7 @@ async function synthesizePlainDragAndCancel(
 }
 
 var PluginUtils = {
-  withTestPlugin: function(callback) {
+  withTestPlugin(callback) {
     var ph = _EU_Cc["@mozilla.org/plugin/host;1"].getService(
       _EU_Ci.nsIPluginHost
     );
