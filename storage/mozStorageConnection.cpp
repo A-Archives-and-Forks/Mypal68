@@ -570,9 +570,9 @@ nsresult Connection::initialize(const nsACString& aStorageKey,
 
   // in memory database requested, sqlite uses a magic file name
 
-  const nsAutoCString path = mName.IsEmpty()
-                                 ? nsAutoCString(":memory:"_ns)
-                                 : "file:"_ns + mName + "?mode=memory"_ns;
+  const nsAutoCString path =
+      mName.IsEmpty() ? nsAutoCString(":memory:"_ns)
+                      : "file:"_ns + mName + "?mode=memory&cache=shared"_ns;
 
   int srv = ::sqlite3_open_v2(path.get(), &mDBConn, mFlags, GetVFSName(true));
   if (srv != SQLITE_OK) {
