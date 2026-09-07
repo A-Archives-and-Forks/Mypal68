@@ -124,6 +124,13 @@ bool NeckoChild::DeallocPAltDataOutputStreamChild(
   return true;
 }
 
+already_AddRefed<PDocumentChannelChild> NeckoChild::AllocPDocumentChannelChild(
+    const PBrowserOrId& aBrowser, const SerializedLoadContext& aSerialized,
+    const DocumentChannelCreationArgs& args) {
+  MOZ_ASSERT_UNREACHABLE("AllocPDocumentChannelChild should not be called");
+  return nullptr;
+}
+
 PFTPChannelChild* NeckoChild::AllocPFTPChannelChild(
     const PBrowserOrId& aBrowser, const SerializedLoadContext& aSerialized,
     const FTPChannelCreationArgs& aOpenArgs) {
@@ -354,9 +361,8 @@ mozilla::ipc::IPCResult NeckoChild::RecvNetworkChangeNotification(
 }
 
 PClassifierDummyChannelChild* NeckoChild::AllocPClassifierDummyChannelChild(
-    nsIURI* aURI, nsIURI* aTopWindowURI,
-    nsIPrincipal* aContentBlockingAllowListPrincipal,
-    const nsresult& aTopWindowURIResult, const Maybe<LoadInfoArgs>& aLoadInfo) {
+    nsIURI* aURI, nsIURI* aTopWindowURI, const nsresult& aTopWindowURIResult,
+    const Maybe<LoadInfoArgs>& aLoadInfo) {
   return new ClassifierDummyChannelChild();
 }
 

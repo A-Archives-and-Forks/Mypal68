@@ -108,11 +108,6 @@ interface nsIHttpChannelInternal : nsISupports
     [must_use] attribute boolean forceAllowThirdPartyCookie;
 
     /**
-     * True iff the channel has been canceled.
-     */
-    [must_use] readonly attribute boolean canceled;
-
-    /**
      * External handlers may set this to true to notify the channel
      * that it is open on behalf of a download.
      */
@@ -311,12 +306,6 @@ interface nsIHttpChannelInternal : nsISupports
     [must_use] readonly attribute nsIURI topWindowURI;
 
     /**
-     * The content blocking allow list principal belonging to the document
-     * loaded in the top-level window that's associated with this channel.
-     */
-    [must_use, noscript] readonly attribute nsIPrincipal contentBlockingAllowListPrincipal;
-
-    /**
      * Set top-level window URI to this channel only when the topWindowURI
      * is null and there is no window associated to this channel.
      * Note that the current usage of this method is only for xpcshell test.
@@ -397,8 +386,22 @@ interface nsIHttpChannelInternal : nsISupports
     [noscript, notxpcom, nostdcall]
     void setIPv6Disabled();
 
+    /**
+     * Returns a cached CrossOriginOpenerPolicy that is computed just before we
+     * determine if there is a policy mismatch.
+     * @throws NS_ERROR_NOT_AVAILABLE if it has not been computed yet
+     */
+    readonly attribute nsILoadInfo_CrossOriginOpenerPolicy crossOriginOpenerPolicy;
+
+    /**
+     * Called during onStartRequest to compute the cross-origin-opener-policy
+     * for a given channel.
+     */
     [noscript]
-    nsILoadInfo_CrossOriginOpenerPolicy getCrossOriginOpenerPolicy();
+    nsILoadInfo_CrossOriginOpenerPolicy computeCrossOriginOpenerPolicy(
+        in nsILoadInfo_CrossOriginOpenerPolicy aInitiatorPolicy);
+
+    [notxpcom, nostdcall] attribute boolean hasNonEmptySandboxingFlag;
 
     [noscript, notxpcom, nostdcall]
     void DoDiagnosticAssertWhenOnStopNotCalledOnDestroy();

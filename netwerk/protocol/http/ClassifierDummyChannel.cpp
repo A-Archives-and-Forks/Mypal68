@@ -75,12 +75,11 @@ NS_INTERFACE_MAP_BEGIN(ClassifierDummyChannel)
   NS_INTERFACE_MAP_ENTRY_CONCRETE(ClassifierDummyChannel)
 NS_INTERFACE_MAP_END
 
-ClassifierDummyChannel::ClassifierDummyChannel(
-    nsIURI* aURI, nsIURI* aTopWindowURI,
-    nsIPrincipal* aContentBlockingAllowListPrincipal,
-    nsresult aTopWindowURIResult, nsILoadInfo* aLoadInfo)
+ClassifierDummyChannel::ClassifierDummyChannel(nsIURI* aURI,
+                                               nsIURI* aTopWindowURI,
+                                               nsresult aTopWindowURIResult,
+                                               nsILoadInfo* aLoadInfo)
     : mTopWindowURI(aTopWindowURI),
-      mContentBlockingAllowListPrincipal(aContentBlockingAllowListPrincipal),
       mTopWindowURIResult(aTopWindowURIResult),
       mFirstPartyClassificationFlags(0),
       mThirdPartyClassificationFlags(0) {
@@ -91,15 +90,11 @@ ClassifierDummyChannel::ClassifierDummyChannel(
 }
 
 ClassifierDummyChannel::~ClassifierDummyChannel() {
-  NS_ReleaseOnMainThreadSystemGroup("ClassifierDummyChannel::mLoadInfo",
-                                    mLoadInfo.forget());
-  NS_ReleaseOnMainThreadSystemGroup("ClassifierDummyChannel::mURI",
-                                    mURI.forget());
-  NS_ReleaseOnMainThreadSystemGroup("ClassifierDummyChannel::mTopWindowURI",
-                                    mTopWindowURI.forget());
-  NS_ReleaseOnMainThreadSystemGroup(
-      "ClassifierDummyChannel::mContentBlockingAllowListPrincipal",
-      mContentBlockingAllowListPrincipal.forget());
+  NS_ReleaseOnMainThread("ClassifierDummyChannel::mLoadInfo",
+                         mLoadInfo.forget());
+  NS_ReleaseOnMainThread("ClassifierDummyChannel::mURI", mURI.forget());
+  NS_ReleaseOnMainThread("ClassifierDummyChannel::mTopWindowURI",
+                         mTopWindowURI.forget());
 }
 
 void ClassifierDummyChannel::AddClassificationFlags(
@@ -569,14 +564,6 @@ ClassifierDummyChannel::GetTopWindowURI(nsIURI** aTopWindowURI) {
 }
 
 NS_IMETHODIMP
-ClassifierDummyChannel::GetContentBlockingAllowListPrincipal(
-    nsIPrincipal** aPrincipal) {
-  nsCOMPtr<nsIPrincipal> copy = mContentBlockingAllowListPrincipal;
-  copy.forget(aPrincipal);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 ClassifierDummyChannel::SetTopWindowURIIfUnknown(nsIURI* aTopWindowURI) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -651,8 +638,14 @@ void ClassifierDummyChannel::SetIPv4Disabled() {}
 
 void ClassifierDummyChannel::SetIPv6Disabled() {}
 
-NS_IMETHODIMP ClassifierDummyChannel::GetCrossOriginOpenerPolicy(
-    nsILoadInfo::CrossOriginOpenerPolicy* aPolicy) {
+bool ClassifierDummyChannel::GetHasNonEmptySandboxingFlag() { return false; }
+
+void ClassifierDummyChannel::SetHasNonEmptySandboxingFlag(
+    bool aHasNonEmptySandboxingFlag) {}
+
+NS_IMETHODIMP ClassifierDummyChannel::ComputeCrossOriginOpenerPolicy(
+    nsILoadInfo::CrossOriginOpenerPolicy aInitiatorPolicy,
+    nsILoadInfo::CrossOriginOpenerPolicy* aOutPolicy) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -725,6 +718,12 @@ NS_IMETHODIMP ClassifierDummyChannel::IsThirdPartyTrackingResource(
 void ClassifierDummyChannel::DoDiagnosticAssertWhenOnStopNotCalledOnDestroy() {}
 
 NS_IMETHODIMP ClassifierDummyChannel::SetWaitForHTTPSSVCRecord() {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+ClassifierDummyChannel::GetCrossOriginOpenerPolicy(
+    nsILoadInfo::CrossOriginOpenerPolicy* aPolicy) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 

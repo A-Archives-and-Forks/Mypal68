@@ -6,6 +6,7 @@
 #define nsBaseChannel_h__
 
 #include "mozilla/net/NeckoTargetHolder.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/MozPromise.h"
 #include "mozilla/UniquePtr.h"
 #include "nsString.h"
@@ -296,6 +297,7 @@ class nsBaseChannel
   mozilla::UniquePtr<nsString> mContentDispositionFilename;
   int64_t mContentLength;
   bool mWasOpened;
+  bool mCanceled;
 
   friend class mozilla::net::PrivateBrowsingChannel<nsBaseChannel>;
 };

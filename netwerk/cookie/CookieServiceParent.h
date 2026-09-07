@@ -7,6 +7,7 @@
 
 #include "mozilla/net/PCookieServiceParent.h"
 
+class nsIArray;
 class nsICookie;
 namespace mozilla {
 class OriginAttributes;

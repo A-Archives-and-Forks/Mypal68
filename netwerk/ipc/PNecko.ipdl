@@ -25,12 +25,14 @@ include protocol PFileChannel;
 include protocol PClassifierDummyChannel;
 include protocol PWebrtcTCPSocket;
 include protocol PSocketProcessBridge;
+include protocol PDocumentChannel;
 
 include IPCStream;
 include NeckoChannelParams;
 include PBrowserOrId;
 include protocol PAltDataOutputStream;
 
+using mozilla::dom::MaybeDiscardedBrowsingContext from "mozilla/dom/BrowsingContext.h";
 using class IPC::SerializedLoadContext from "SerializedLoadContext.h";
 using mozilla::dom::TabId from "mozilla/dom/ipc/IdType.h";
 using refcounted class nsIInputStream from "mozilla/ipc/IPCStreamUtils.h";
@@ -63,6 +65,7 @@ nested(upto inside_cpow) sync protocol PNecko
   manages PStunAddrsRequest;
   manages PClassifierDummyChannel;
   manages PWebrtcTCPSocket;
+  manages PDocumentChannel;
 
 parent:
   async __delete__();
@@ -81,6 +84,11 @@ parent:
 
   async PDNSRequest(nsCString hostName, nsCString trrServer, uint16_t type,
                     OriginAttributes originAttributes, uint32_t flags);
+
+  async PDocumentChannel(PBrowser browser,
+                         MaybeDiscardedBrowsingContext browsingContext,
+                         SerializedLoadContext loadContext,
+                         DocumentChannelCreationArgs args);
 
   async PWebSocketEventListener(uint64_t aInnerWindowID);
 
@@ -110,7 +118,6 @@ parent:
   async PChannelDiverter(ChannelDiverterArgs channel);
 
   async PClassifierDummyChannel(nsIURI uri, nsIURI aTopWindowURI,
-                                nsIPrincipal contentBlockingAllowListPrincipal,
                                 nsresult aTopWindowURIResult,
                                 LoadInfoArgs? loadInfo);
 

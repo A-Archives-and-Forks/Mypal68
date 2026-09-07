@@ -5,9 +5,14 @@
 #ifndef mozilla_net_ParentChannelListener_h
 #define mozilla_net_ParentChannelListener_h
 
+#include "nsIAuthPromptProvider.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsINetworkInterceptController.h"
 #include "nsIStreamListener.h"
+#include "nsIMultiPartChannel.h"
+#include "nsIRemoteWindowContext.h"
+#include "mozilla/dom/CanonicalBrowsingContext.h"
+#include "mozilla/dom/CanonicalBrowsingContext.h"
 
 namespace mozilla {
 namespace net {
@@ -25,17 +30,26 @@ namespace net {
 
 class ParentChannelListener final : public nsIInterfaceRequestor,
                                     public nsIStreamListener,
-                                    public nsINetworkInterceptController {
+                                    public nsIMultiPartChannelListener,
+                                    public nsINetworkInterceptController,
+                                    private nsIAuthPromptProvider,
+                                    private nsIRemoteWindowContext {
  public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIINTERFACEREQUESTOR
   NS_DECL_NSIREQUESTOBSERVER
   NS_DECL_NSISTREAMLISTENER
+  NS_DECL_NSIMULTIPARTCHANNELLISTENER
   NS_DECL_NSINETWORKINTERCEPTCONTROLLER
+  NS_DECL_NSIAUTHPROMPTPROVIDER
+  NS_DECL_NSIREMOTEWINDOWCONTEXT
 
   NS_DECLARE_STATIC_IID_ACCESSOR(PARENT_CHANNEL_LISTENER)
 
-  explicit ParentChannelListener(nsIStreamListener* aListener);
+  explicit ParentChannelListener(
+      nsIStreamListener* aListener,
+      dom::CanonicalBrowsingContext* aBrowsingContext,
+      bool aUsePrivateBrowsing);
 
   // For channel diversion from child to parent.
   void DivertTo(nsIStreamListener* aListener);
@@ -47,6 +61,10 @@ class ParentChannelListener final : public nsIInterfaceRequestor,
 
   // Called to set a new listener which replaces the old one after a redirect.
   void SetListenerAfterRedirect(nsIStreamListener* aListener);
+
+  dom::CanonicalBrowsingContext* GetBrowsingContext() {
+    return mBrowsingContext;
+  }
 
  private:
   virtual ~ParentChannelListener();
@@ -80,9 +98,22 @@ class ParentChannelListener final : public nsIInterfaceRequestor,
   // This will be populated with a real network controller if parent-side
   // interception is enabled.
   nsCOMPtr<nsINetworkInterceptController> mInterceptController;
+
+  RefPtr<dom::CanonicalBrowsingContext> mBrowsingContext;
+
+  // True if we received OnStartRequest for a nsIMultiPartChannel, and are
+  // expected AllPartsStopped to be called when complete.
+  bool mIsMultiPart = false;
+
+  // True if the nsILoadContext for this channel has private browsing enabled.
+  bool mUsePrivateBrowsing = false;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(ParentChannelListener, PARENT_CHANNEL_LISTENER)
+
+inline nsISupports* ToSupports(ParentChannelListener* aDoc) {
+  return static_cast<nsIInterfaceRequestor*>(aDoc);
+}
 
 }  // namespace net
 }  // namespace mozilla

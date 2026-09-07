@@ -10,7 +10,7 @@
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/net/SocketProcessChild.h"
 #include "mozilla/net/SocketProcessParent.h"
-#include "mozilla/SystemGroup.h"
+#include "mozilla/SchedulerGroup.h"
 #include "nsHostResolver.h"
 #include "nsIDNSByTypeRecord.h"
 #include "mozilla/Unused.h"
@@ -318,7 +318,7 @@ DNSRequestSender::Cancel(nsresult reason) {
                 host, trrServer, type, originAttributes, flags, reason);
           }
         });
-    SystemGroup::Dispatch(TaskCategory::Other, runnable.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, runnable.forget());
   }
   return NS_OK;
 }
@@ -326,7 +326,7 @@ DNSRequestSender::Cancel(nsresult reason) {
 void DNSRequestSender::StartRequest() {
   // we can only do IPDL on the main thread
   if (!NS_IsMainThread()) {
-    SystemGroup::Dispatch(
+    SchedulerGroup::Dispatch(
         TaskCategory::Other,
         NewRunnableMethod("net::DNSRequestSender::StartRequest", this,
                           &DNSRequestSender::StartRequest));
@@ -335,10 +335,6 @@ void DNSRequestSender::StartRequest() {
 
   if (DNSRequestChild* child = mIPCActor->AsDNSRequestChild()) {
     if (XRE_IsContentProcess()) {
-      nsCOMPtr<nsISerialEventTarget> systemGroupEventTarget =
-          SystemGroup::EventTargetFor(TaskCategory::Other);
-      gNeckoChild->SetEventTargetForActor(child, systemGroupEventTarget);
-
       mozilla::dom::ContentChild* cc =
           static_cast<mozilla::dom::ContentChild*>(gNeckoChild->Manager());
       if (cc->IsShuttingDown()) {

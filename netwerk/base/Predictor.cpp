@@ -34,6 +34,7 @@
 
 #include "mozilla/OriginAttributes.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticPrefs_network.h"
 
 #include "mozilla/net/NeckoCommon.h"
@@ -1197,7 +1198,7 @@ Predictor::LearnNative(nsIURI* targetURI, nsIURI* sourceURI,
 
     RefPtr<PredictorLearnRunnable> runnable = new PredictorLearnRunnable(
         targetURI, sourceURI, reason, originAttributes);
-    SystemGroup::Dispatch(TaskCategory::Other, runnable.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, runnable.forget());
 
     return NS_OK;
   }

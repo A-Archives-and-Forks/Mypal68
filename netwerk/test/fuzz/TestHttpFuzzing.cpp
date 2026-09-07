@@ -19,8 +19,10 @@
 #include "NullPrincipal.h"
 #include "nsCycleCollector.h"
 #include "RequestContextService.h"
+#include "nsSandboxFlags.h"
 
 #include "FuzzingInterface.h"
+#include "FuzzingStreamListener.h"
 #include "FuzzyLayer.h"
 
 namespace mozilla {
@@ -28,62 +30,8 @@ namespace net {
 
 // Target spec and optional proxy type to use, set by the respective
 // initialization function so we can cover all combinations.
-nsAutoCString spec;
-nsAutoCString proxyType;
-
-class FuzzingStreamListener final : public nsIStreamListener {
- public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIREQUESTOBSERVER
-  NS_DECL_NSISTREAMLISTENER
-
-  FuzzingStreamListener() = default;
-
-  void waitUntilDone() {
-    SpinEventLoopUntil([&]() { return mChannelDone; });
-  }
-
- private:
-  ~FuzzingStreamListener() = default;
-  bool mChannelDone = false;
-};
-
-NS_IMPL_ISUPPORTS(FuzzingStreamListener, nsIStreamListener, nsIRequestObserver)
-
-NS_IMETHODIMP
-FuzzingStreamListener::OnStartRequest(nsIRequest* aRequest) {
-  FUZZING_LOG(("FuzzingStreamListener::OnStartRequest"));
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-FuzzingStreamListener::OnDataAvailable(nsIRequest* aRequest,
-                                       nsIInputStream* aInputStream,
-                                       uint64_t aOffset, uint32_t aCount) {
-  FUZZING_LOG(("FuzzingStreamListener::OnDataAvailable"));
-  static uint32_t const kCopyChunkSize = 128 * 1024;
-  uint32_t toRead = std::min<uint32_t>(aCount, kCopyChunkSize);
-  nsCString data;
-
-  while (aCount) {
-    nsresult rv = NS_ReadInputStreamToString(aInputStream, data, toRead);
-    if (NS_FAILED(rv)) {
-      return rv;
-    }
-    aOffset += toRead;
-    aCount -= toRead;
-    toRead = std::min<uint32_t>(aCount, kCopyChunkSize);
-  }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-FuzzingStreamListener::OnStopRequest(nsIRequest* aRequest,
-                                     nsresult aStatusCode) {
-  FUZZING_LOG(("FuzzingStreamListener::OnStopRequest"));
-  mChannelDone = true;
-  return NS_OK;
-}
+static nsAutoCString httpSpec;
+static nsAutoCString proxyType;
 
 static int FuzzingInitNetworkHttp(int* argc, char*** argv) {
   Preferences::SetBool("network.dns.native-is-localhost", true);
@@ -91,15 +39,15 @@ static int FuzzingInitNetworkHttp(int* argc, char*** argv) {
   Preferences::SetInt("network.http.speculative-parallel-limit", 0);
   Preferences::SetInt("network.http.spdy.default-concurrent", 1);
 
-  if (spec.IsEmpty()) {
-    spec = "http://127.0.0.1/";
+  if (httpSpec.IsEmpty()) {
+    httpSpec = "http://127.0.0.1/";
   }
 
   return 0;
 }
 
 static int FuzzingInitNetworkHttp2(int* argc, char*** argv) {
-  spec = "https://127.0.0.1/";
+  httpSpec = "https://127.0.0.1/";
   return FuzzingInitNetworkHttp(argc, argv);
 }
 
@@ -146,7 +94,7 @@ static int FuzzingRunNetworkHttp(const uint8_t* data, size_t size) {
     nsCOMPtr<nsIURI> url;
     nsresult rv;
 
-    if (NS_NewURI(getter_AddRefs(url), spec) != NS_OK) {
+    if (NS_NewURI(getter_AddRefs(url), httpSpec) != NS_OK) {
       MOZ_CRASH("Call to NS_NewURI failed.");
     }
 
@@ -156,8 +104,8 @@ static int FuzzingRunNetworkHttp(const uint8_t* data, size_t size) {
                 nsIRequest::LOAD_FRESH_CONNECTION |
                 nsIChannel::LOAD_INITIAL_DOCUMENT_URI;
     nsSecurityFlags secFlags;
-    secFlags = nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL |
-               nsILoadInfo::SEC_SANDBOXED;
+    secFlags = nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL;
+    uint32_t sandboxFlags = SANDBOXED_ORIGIN;
 
     nsCOMPtr<nsIChannel> channel;
     nsCOMPtr<nsILoadInfo> loadInfo;
@@ -207,7 +155,8 @@ static int FuzzingRunNetworkHttp(const uint8_t* data, size_t size) {
           nsContentUtils::GetSystemPrincipal(),  // loading principal
           nsContentUtils::GetSystemPrincipal(),  // triggering principal
           nullptr,                               // Context
-          secFlags, nsIContentPolicy::TYPE_INTERNAL_XMLHTTPREQUEST);
+          secFlags, nsIContentPolicy::TYPE_INTERNAL_XMLHTTPREQUEST,
+          sandboxFlags);
 
       rv = pph->NewProxiedChannel(url, proxyInfo,
                                   0,        // aProxyResolveFlags
@@ -226,8 +175,8 @@ static int FuzzingRunNetworkHttp(const uint8_t* data, size_t size) {
                          nullptr,    // loadGroup
                          nullptr,    // aCallbacks
                          loadFlags,  // aLoadFlags
-                         nullptr     // aIoService
-      );
+                         nullptr,    // aIoService
+                         sandboxFlags);
 
       if (NS_FAILED(rv)) {
         MOZ_CRASH("Call to NS_NewChannel failed.");

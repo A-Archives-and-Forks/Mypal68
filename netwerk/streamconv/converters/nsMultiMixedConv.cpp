@@ -130,6 +130,12 @@ nsPartChannel::Cancel(nsresult aStatus) {
 }
 
 NS_IMETHODIMP
+nsPartChannel::GetCanceled(bool* aCanceled) {
+  *aCanceled = NS_FAILED(mStatus);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsPartChannel::Suspend(void) {
   // Suspending an individual part must not suspend the underlying
   // multipart channel...
@@ -415,6 +421,12 @@ nsMultiMixedConv::AsyncConvertData(const char* aFromType, const char* aToType,
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsMultiMixedConv::GetConvertedType(const nsACString& aFromType,
+                                   nsACString& aToType) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 // nsIRequestObserver implementation
 NS_IMETHODIMP
 nsMultiMixedConv::OnStartRequest(nsIRequest* request) {
@@ -559,6 +571,12 @@ nsMultiMixedConv::OnStopRequest(nsIRequest* request, nsresult aStatus) {
 
     (void)mFinalListener->OnStartRequest(request);
     (void)mFinalListener->OnStopRequest(request, aStatus);
+  }
+
+  nsCOMPtr<nsIMultiPartChannelListener> multiListener =
+      do_QueryInterface(mFinalListener);
+  if (multiListener) {
+    multiListener->OnAfterLastPart(aStatus);
   }
 
   return NS_OK;

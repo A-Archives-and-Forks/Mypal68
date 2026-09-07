@@ -15,7 +15,6 @@
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/SyncRunnable.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/net/DNSListenerProxy.h"
 #include "mozilla/net/TRRServiceParent.h"
@@ -40,27 +39,11 @@ already_AddRefed<ChildDNSService> ChildDNSService::GetSingleton() {
                 XRE_IsContentProcess() || XRE_IsSocketProcess());
 
   if (!gChildDNSService) {
-    auto initTask = []() {
-      gChildDNSService = new ChildDNSService();
-      ClearOnShutdown(&gChildDNSService);
-    };
-
-    // For normal cases, DNS service should be initialized in nsHttpHandler. For
-    // some xpcshell tests, nsHttpHandler is not used at all, so the best we use
-    // SyncRunnable to make sure DNS service is initialized on main thread.
     if (!NS_IsMainThread()) {
-      // Forward to the main thread synchronously.
-      RefPtr<nsIThread> mainThread = do_GetMainThread();
-      if (!mainThread) {
-        return nullptr;
-      }
-
-      SyncRunnable::DispatchToThread(
-          mainThread, new SyncRunnable(NS_NewRunnableFunction(
-                          "ChildDNSService::GetSingleton", initTask)));
-    } else {
-      initTask();
+      return nullptr;
     }
+    gChildDNSService = new ChildDNSService();
+    ClearOnShutdown(&gChildDNSService);
   }
 
   return do_AddRef(gChildDNSService);
@@ -124,7 +107,7 @@ nsresult ChildDNSService::AsyncResolveInternal(
   nsCOMPtr<nsIEventTarget> target = target_;
   nsCOMPtr<nsIXPConnectWrappedJS> wrappedListener = do_QueryInterface(listener);
   if (wrappedListener && !target) {
-    target = SystemGroup::EventTargetFor(TaskCategory::Network);
+    target = GetMainThreadSerialEventTarget();
   }
   if (target) {
     // Guarantee listener freed on main thread.  Not sure we need this in child

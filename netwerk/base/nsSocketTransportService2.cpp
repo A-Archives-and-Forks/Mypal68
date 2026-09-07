@@ -661,6 +661,12 @@ nsSocketTransportService::Shutdown(bool aXpcomShutdown) {
     return NS_ERROR_UNEXPECTED;
   }
 
+  {
+    for (auto& observer : mShutdownObservers) {
+      observer->Observe();
+    }
+  }
+
   // signal the socket thread to shutdown
   mShuttingDown = true;
 
@@ -1622,6 +1628,20 @@ void nsSocketTransportService::TryRepairPollableEvent() {
   mPollList[0].fd = mPollableEvent ? mPollableEvent->PollableFD() : nullptr;
   mPollList[0].in_flags = PR_POLL_READ | PR_POLL_EXCEPT;
   mPollList[0].out_flags = 0;
+}
+
+NS_IMETHODIMP
+nsSocketTransportService::AddShutdownObserver(
+    nsISTSShutdownObserver* aObserver) {
+  mShutdownObservers.AppendElement(aObserver);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsSocketTransportService::RemoveShutdownObserver(
+    nsISTSShutdownObserver* aObserver) {
+  mShutdownObservers.RemoveElement(aObserver);
+  return NS_OK;
 }
 
 }  // namespace net

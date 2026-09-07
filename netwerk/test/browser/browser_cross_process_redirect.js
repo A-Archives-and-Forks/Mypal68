@@ -40,26 +40,28 @@ ProcessChooser.prototype = {
     Services.obs.removeObserver(this, "http-on-may-change-process");
   },
 
-  examine(aChannel) {
-    if (this.channel && this.channel != aChannel) {
+  examine(aRequestor) {
+    const channel = aRequestor.channel;
+
+    if (this.channel && this.channel != channel) {
       // Hack: this is just so we don't get redirected multiple times.
       info("same channel. give null");
       return;
     }
 
-    if (aChannel.URI.host != this.toDomain) {
-      info("wrong host for channel " + aChannel.URI.host);
+    if (channel.URI.host != this.toDomain) {
+      info("wrong host for channel " + channel.URI.host);
       return;
     }
 
-    let redirects = aChannel.loadInfo.redirectChain;
+    let redirects = channel.loadInfo.redirectChain;
     if (redirects[redirects.length - 1].principal.host != this.fromDomain) {
       info("didn't find redirect");
       return;
     }
 
     info("setting channel");
-    this.channel = aChannel;
+    this.channel = channel;
     let self = this;
 
     info("unregistering");
@@ -75,17 +77,17 @@ ProcessChooser.prototype = {
       // Can asyncly create a tab, or can resolve with a tab that was
       // previously created.
       info("resolving");
-      resolve(self.remoteTab);
+      resolve(self.remoteTab.contentProcessId);
     });
 
     info("calling switchprocessto");
-    aChannel.switchProcessTo(tabPromise, identifier);
+    aRequestor.switchProcessTo(tabPromise, identifier);
   },
 
   observe(aSubject, aTopic, aData) {
     switch (aTopic) {
       case "http-on-may-change-process":
-        this.examine(aSubject.QueryInterface(Ci.nsIHttpChannel));
+        this.examine(aSubject.QueryInterface(Ci.nsIProcessSwitchRequestor));
         break;
       default:
         ok(false, "Unexpected topic observed!");
@@ -253,7 +255,11 @@ add_task(async function() {
     }
   );
 
-  let browser1LoadHasStopped = BrowserTestUtils.browserStopped(browser1);
+  let browser1LoadHasStopped = BrowserTestUtils.browserStopped(
+    browser1,
+    undefined,
+    true
+  );
 
   await BrowserTestUtils.loadURI(
     browser1,
@@ -273,7 +279,11 @@ add_task(async function() {
     "example.org",
     true
   );
-  let browser1LoadHasStoppedAgain = BrowserTestUtils.browserStopped(browser1);
+  let browser1LoadHasStoppedAgain = BrowserTestUtils.browserStopped(
+    browser1,
+    undefined,
+    true
+  );
   await BrowserTestUtils.loadURI(
     browser1,
     kRoot1 + "redirect.sjs?" + kRoot2 + "dummy.html"

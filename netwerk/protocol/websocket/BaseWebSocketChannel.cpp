@@ -199,14 +199,15 @@ BaseWebSocketChannel::SetPingTimeout(uint32_t aSeconds) {
 }
 
 NS_IMETHODIMP
-BaseWebSocketChannel::InitLoadInfoNative(nsINode* aLoadingNode,
-                                         nsIPrincipal* aLoadingPrincipal,
-                                         nsIPrincipal* aTriggeringPrincipal,
-                                         nsICookieJarSettings* aCookieJarSettings,
-                                         uint32_t aSecurityFlags,
-                                         nsContentPolicyType aContentPolicyType) {
-  mLoadInfo = new LoadInfo(aLoadingPrincipal, aTriggeringPrincipal,
-                           aLoadingNode, aSecurityFlags, aContentPolicyType);
+BaseWebSocketChannel::InitLoadInfoNative(
+    nsINode* aLoadingNode, nsIPrincipal* aLoadingPrincipal,
+    nsIPrincipal* aTriggeringPrincipal,
+    nsICookieJarSettings* aCookieJarSettings, uint32_t aSecurityFlags,
+    nsContentPolicyType aContentPolicyType, uint32_t aSandboxFlags) {
+  mLoadInfo = new LoadInfo(
+      aLoadingPrincipal, aTriggeringPrincipal, aLoadingNode, aSecurityFlags,
+      aContentPolicyType, Maybe<mozilla::dom::ClientInfo>(),
+      Maybe<mozilla::dom::ServiceWorkerDescriptor>(), aSandboxFlags);
   if (aCookieJarSettings) {
     mLoadInfo->SetCookieJarSettings(aCookieJarSettings);
   }
@@ -221,7 +222,7 @@ BaseWebSocketChannel::InitLoadInfo(nsINode* aLoadingNode,
                                    nsContentPolicyType aContentPolicyType) {
   return InitLoadInfoNative(aLoadingNode, aLoadingPrincipal,
                             aTriggeringPrincipal, nullptr, aSecurityFlags,
-                            aContentPolicyType);
+                            aContentPolicyType, 0);
 }
 
 NS_IMETHODIMP
@@ -352,10 +353,10 @@ BaseWebSocketChannel::ListenerAndContextContainer::
     ~ListenerAndContextContainer() {
   MOZ_ASSERT(mListener);
 
-  NS_ReleaseOnMainThreadSystemGroup(
+  NS_ReleaseOnMainThread(
       "BaseWebSocketChannel::ListenerAndContextContainer::mListener",
       mListener.forget());
-  NS_ReleaseOnMainThreadSystemGroup(
+  NS_ReleaseOnMainThread(
       "BaseWebSocketChannel::ListenerAndContextContainer::mContext",
       mContext.forget());
 }

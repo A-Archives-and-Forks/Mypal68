@@ -60,6 +60,7 @@ EXPORTS.mozilla.net += [
     'nsServerTiming.h',
     'NullHttpChannel.h',
     'NullHttpTransaction.h',
+    'ParentChannelListener.h',
     'PHttpChannelParams.h',
     'PSpdyPush.h',
     'TimingStruct.h',

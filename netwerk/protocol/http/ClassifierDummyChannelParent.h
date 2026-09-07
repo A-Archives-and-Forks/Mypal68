@@ -21,9 +21,8 @@ class ClassifierDummyChannelParent final
 
   ClassifierDummyChannelParent();
 
-  void Init(nsIURI* aURI, nsIURI* aTopWindowURI,
-            nsIPrincipal* aContentBlockingAllowListPrincipal,
-            nsresult aTopWindowURIResult, nsILoadInfo* aLoadInfo);
+  void Init(nsIURI* aURI, nsIURI* aTopWindowURI, nsresult aTopWindowURIResult,
+            nsILoadInfo* aLoadInfo);
 
  private:
   ~ClassifierDummyChannelParent();

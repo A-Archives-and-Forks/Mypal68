@@ -10,6 +10,8 @@
 #include "mozilla/ipc/IOThreadChild.h"
 #include "mozilla/BackgroundHangMonitor.h"
 #include "mozilla/Preferences.h"
+#include "ProcessUtils.h"
+
 
 #ifdef OS_POSIX
 #  include <unistd.h>  // For sleep().
@@ -78,7 +80,7 @@ bool SocketProcessImpl::Init(int aArgc, char* aArgv[]) {
     }
   }
 
-  SharedPreferenceDeserializer deserializer;
+  ipc::SharedPreferenceDeserializer deserializer;
   if (!deserializer.DeserializeFromSharedMemory(prefsHandle, prefMapHandle,
                                                 prefsLen, prefMapSize)) {
     return false;

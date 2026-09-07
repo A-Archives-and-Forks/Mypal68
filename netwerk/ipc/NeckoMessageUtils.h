@@ -35,6 +35,12 @@ struct Permission {
         capability(aCapability),
         expireType(aExpireType),
         expireTime(aExpireTime) {}
+
+  bool operator==(const Permission& aOther) const {
+    return aOther.origin == origin && aOther.type == type &&
+           aOther.capability == capability && aOther.expireType == expireType &&
+           aOther.expireTime == expireTime;
+  }
 };
 
 template <>

@@ -33,6 +33,10 @@ class NeckoChild : public PNeckoChild {
       PHttpChannelChild* channel);
   bool DeallocPAltDataOutputStreamChild(PAltDataOutputStreamChild* aActor);
 
+  already_AddRefed<PDocumentChannelChild> AllocPDocumentChannelChild(
+      const PBrowserOrId& aBrowser, const SerializedLoadContext& aSerialized,
+      const DocumentChannelCreationArgs& args);
+
   PCookieServiceChild* AllocPCookieServiceChild();
   bool DeallocPCookieServiceChild(PCookieServiceChild*);
   PFTPChannelChild* AllocPFTPChannelChild(
@@ -77,9 +81,7 @@ class NeckoChild : public PNeckoChild {
   mozilla::ipc::IPCResult RecvNetworkChangeNotification(nsCString const& type);
 
   PClassifierDummyChannelChild* AllocPClassifierDummyChannelChild(
-      nsIURI* aURI, nsIURI* aTopWindowURI,
-      nsIPrincipal* aContentBlockingAllowListPrincipal,
-      const nsresult& aTopWindowURIResult,
+      nsIURI* aURI, nsIURI* aTopWindowURI, const nsresult& aTopWindowURIResult,
       const Maybe<LoadInfoArgs>& aLoadInfo);
 
   bool DeallocPClassifierDummyChannelChild(

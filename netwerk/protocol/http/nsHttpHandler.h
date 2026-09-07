@@ -28,7 +28,11 @@
 #  include "nsIOService.h"
 #endif
 
-class nsIHttpChannel;
+// XXX These includes can be replaced by forward declarations by moving the On*
+// method implementations to the cpp file
+#include "nsIChannel.h"
+#include "nsIHttpChannel.h"
+
 class nsIHttpUpgradeListener;
 class nsIPrefBranch;
 class nsICancelable;
@@ -46,9 +50,9 @@ bool OnSocketThread();
 class ATokenBucketEvent;
 class EventTokenBucket;
 class Tickler;
-class HttpBaseChannel;  // MY
 class nsHttpConnection;
 class nsHttpConnectionInfo;
+class HttpBaseChannel;
 class HttpTransactionShell;
 class AltSvcMapping;
 class TRR;
@@ -374,6 +378,10 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
     NotifyObservers(chan, NS_HTTP_ON_OPENING_REQUEST_TOPIC);
   }
 
+  void OnOpeningDocumentRequest(nsIIdentChannel* chan) {
+    NotifyObservers(chan, NS_DOCUMENT_ON_OPENING_REQUEST_TOPIC);
+  }
+
   // Called by the channel before writing a request
   void OnModifyRequest(nsIHttpChannel* chan) {
     NotifyObservers(chan, NS_HTTP_ON_MODIFY_REQUEST_TOPIC);
@@ -414,10 +422,6 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   // communicating with the server.
   void OnExamineCachedResponse(nsIHttpChannel* chan) {
     NotifyObservers(chan, NS_HTTP_ON_EXAMINE_CACHED_RESPONSE_TOPIC);
-  }
-
-  void OnMayChangeProcess(nsIHttpChannel* chan) {
-    NotifyObservers(chan, NS_HTTP_ON_MAY_CHANGE_PROCESS_TOPIC);
   }
 
   // Generates the host:port string for use in the Host: header as well as the
@@ -493,7 +497,7 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
 
   MOZ_MUST_USE nsresult InitConnectionMgr();
 
-  void NotifyObservers(nsIHttpChannel* chan, const char* event);
+  void NotifyObservers(nsIChannel* chan, const char* event);
 
   void SetFastOpenOSSupport();
 

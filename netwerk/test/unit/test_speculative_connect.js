@@ -76,13 +76,8 @@ function TestServer() {
 }
 
 TestServer.prototype = {
-  QueryInterface: function(iid) {
-    if (iid.equals(Ci.nsIServerSocket) || iid.equals(Ci.nsISupports)) {
-      return this;
-    }
-    throw Cr.NS_ERROR_NO_INTERFACE;
-  },
-  onSocketAccepted: function(socket, trans) {
+  QueryInterface: ChromeUtils.generateQI(["nsIServerSocket"]),
+  onSocketAccepted(socket, trans) {
     try {
       this.listener.close();
     } catch (e) {}
@@ -90,7 +85,7 @@ TestServer.prototype = {
     next_test();
   },
 
-  onStopListening: function(socket) {},
+  onStopListening(socket) {},
 };
 
 /** TestFailedStreamCallback
@@ -103,46 +98,43 @@ function TestFailedStreamCallback(transport, hostname, next) {
   this.hostname = hostname;
   this.next = next;
   this.dummyContent = "G";
+  this.closed = false;
 }
 
 TestFailedStreamCallback.prototype = {
-  QueryInterface: function(iid) {
-    if (
-      iid.equals(Ci.nsIInputStreamCallback) ||
-      iid.equals(Ci.nsIOutputStreamCallback) ||
-      iid.equals(Ci.nsISupports)
-    ) {
-      return this;
+  QueryInterface: ChromeUtils.generateQI([
+    "nsIInputStreamCallback",
+    "nsIOutputStreamCallback",
+  ]),
+  processException(e) {
+    if (this.closed) {
+      return;
     }
-    throw Cr.NS_ERROR_NO_INTERFACE;
-  },
-  processException: function(e) {
     do_check_instanceof(e, Ci.nsIException);
     // A refusal to connect speculatively should throw an error.
     Assert.equal(e.result, Cr.NS_ERROR_CONNECTION_REFUSED);
+    this.closed = true;
     this.transport.close(Cr.NS_BINDING_ABORTED);
-    return true;
+    this.next();
   },
-  onOutputStreamReady: function(outstream) {
+  onOutputStreamReady(outstream) {
     info("outputstream handler.");
     Assert.notEqual(typeof outstream, undefined);
     try {
       outstream.write(this.dummyContent, this.dummyContent.length);
     } catch (e) {
       this.processException(e);
-      this.next();
       return;
     }
     info("no exception on write. Wait for read.");
   },
-  onInputStreamReady: function(instream) {
+  onInputStreamReady(instream) {
     info("inputstream handler.");
     Assert.notEqual(typeof instream, undefined);
     try {
       instream.available();
     } catch (e) {
       this.processException(e);
-      this.next();
       return;
     }
     do_throw("Speculative Connect should have failed for " + this.hostname);

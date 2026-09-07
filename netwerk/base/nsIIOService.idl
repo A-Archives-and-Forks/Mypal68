@@ -126,6 +126,7 @@ interface nsIIOService : nsISupports
                                                       in const_MaybeServiceWorkerDescriptorRef aController,
                                                       in unsigned long aSecurityFlags,
                                                       in nsContentPolicyType aContentPolicyType,
+                                                      in unsigned long aSandboxFlags,
                                                       out nsIChannel aResult);
 
     /**

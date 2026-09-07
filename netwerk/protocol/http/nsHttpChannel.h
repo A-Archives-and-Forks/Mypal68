@@ -47,17 +47,7 @@ namespace net {
 class nsChannelClassifier;
 
 using DNSPromise = MozPromise<nsCOMPtr<nsIDNSRecord>, nsresult, false>;
-
-class HttpChannelSecurityWarningReporter : public nsISupports {
- public:
-  virtual MOZ_MUST_USE nsresult ReportSecurityMessage(
-      const nsAString& aMessageTag, const nsAString& aMessageCategory) = 0;
-  virtual MOZ_MUST_USE nsresult LogBlockedCORSRequest(
-      const nsAString& aMessage, const nsACString& aCategory) = 0;
-  virtual MOZ_MUST_USE nsresult
-  LogMimeTypeMismatch(const nsACString& aMessageName, bool aWarning,
-                      const nsAString& aURL, const nsAString& aContentType) = 0;
-};
+class HttpChannelSecurityWarningReporter;
 
 //-----------------------------------------------------------------------------
 // nsHttpChannel
@@ -163,9 +153,6 @@ class nsHttpChannel final : public HttpBaseChannel,
   NS_IMETHOD AsyncOpen(nsIStreamListener* aListener) override;
   // nsIHttpChannel
   NS_IMETHOD GetEncodedBodySize(uint64_t* aEncodedBodySize) override;
-  NS_IMETHOD SwitchProcessTo(mozilla::dom::Promise* aBrowserParent,
-                             uint64_t aIdentifier) override;
-  NS_IMETHOD HasCrossOriginOpenerPolicyMismatch(bool* aMismatch) override;
   // nsIHttpChannelInternal
   NS_IMETHOD SetupFallbackChannel(const char* aFallbackKey) override;
   NS_IMETHOD SetChannelIsForDownload(bool aChannelIsForDownload) override;
@@ -277,8 +264,10 @@ class nsHttpChannel final : public HttpBaseChannel,
 
   base::ProcessId ProcessId();
 
-  MOZ_MUST_USE bool AttachStreamFilter(
-      ipc::Endpoint<extensions::PStreamFilterParent>&& aEndpoint);
+  using ChildEndpointPromise =
+      MozPromise<ipc::Endpoint<extensions::PStreamFilterChild>, bool, true>;
+  MOZ_MUST_USE RefPtr<ChildEndpointPromise> AttachStreamFilter(
+      base::ProcessId aChildProcessId);
 
  private:  // used for alternate service validation
   RefPtr<TransactionObserver> mTransactionObserver;
@@ -289,14 +278,6 @@ class nsHttpChannel final : public HttpBaseChannel,
     mTransactionObserver = arg;
   }
   TransactionObserver* GetTransactionObserver() { return mTransactionObserver; }
-
-  typedef MozPromise<nsCOMPtr<nsIRemoteTab>, nsresult, false> TabPromise;
-  already_AddRefed<TabPromise> TakeRedirectTabPromise() {
-    return mRedirectTabPromise.forget();
-  }
-  uint64_t CrossProcessRedirectIdentifier() {
-    return mCrossProcessRedirectIdentifier;
-  }
 
 #ifdef MOZ_GECKO_PROFILER
   CacheDisposition mCacheDisposition;
@@ -362,6 +343,8 @@ class nsHttpChannel final : public HttpBaseChannel,
   void AsyncContinueProcessResponse();
   MOZ_MUST_USE nsresult ContinueProcessResponse1();
   MOZ_MUST_USE nsresult ContinueProcessResponse2(nsresult);
+
+ public:
   void UpdateCacheDisposition(bool aSuccessfulReval);
   MOZ_MUST_USE nsresult ContinueProcessResponse3(nsresult);
   MOZ_MUST_USE nsresult ContinueProcessResponse4(nsresult);
@@ -403,7 +386,6 @@ class nsHttpChannel final : public HttpBaseChannel,
   virtual MOZ_MUST_USE nsresult
   SetupReplacementChannel(nsIURI*, nsIChannel*, bool preserveMethod,
                           uint32_t redirectFlags) override;
-  nsresult StartCrossProcessRedirect();
 
   // proxy specific methods
   MOZ_MUST_USE nsresult ProxyFailover();
@@ -496,9 +478,15 @@ class nsHttpChannel final : public HttpBaseChannel,
   MOZ_MUST_USE nsresult
   ProcessContentSignatureHeader(nsHttpResponseHead* aResponseHead);
 
-  nsresult GetResponseCrossOriginPolicy(
-      nsILoadInfo::CrossOriginPolicy* aResponseCrossOriginPolicy);
-  nsresult ProcessCrossOriginHeader();
+  nsresult ProcessCrossOriginEmbedderPolicyHeader();
+  nsresult ProcessCrossOriginResourcePolicyHeader();
+
+  nsresult ComputeCrossOriginOpenerPolicyMismatch();
+  // This method returns the cached result of running the Cross-Origin-Opener
+  // policy compare algorithm by calling ComputeCrossOriginOpenerPolicyMismatch
+  bool HasCrossOriginOpenerPolicyMismatch() {
+    return mHasCrossOriginOpenerPolicyMismatch;
+  }
 
   /**
    * A function to process a single security header (STS or PKP), assumes
@@ -578,12 +566,6 @@ class nsHttpChannel final : public HttpBaseChannel,
   nsCOMPtr<nsIURI> mRedirectURI;
   nsCOMPtr<nsIChannel> mRedirectChannel;
   nsCOMPtr<nsIChannel> mPreflightChannel;
-
-  // The associated childChannel is getting relocated to another process.
-  // This promise will be resolved when that process is set up.
-  RefPtr<TabPromise> mRedirectTabPromise;
-  // This identifier is passed to the childChannel in order to identify it.
-  uint64_t mCrossProcessRedirectIdentifier = 0;
 
   // nsChannelClassifier checks this channel's URI against
   // the URI classifier service.
@@ -745,6 +727,10 @@ class nsHttpChannel final : public HttpBaseChannel,
     (uint32_t, WaitHTTPSSVCRecord, 1)
   ))
   // clang-format on
+
+  // True if this is a navigation to a page with a different cross origin
+  // opener policy ( see ComputeCrossOriginOpenerPolicyMismatch )
+  uint32_t mHasCrossOriginOpenerPolicyMismatch : 1;
 
   // The origin of the top window, only valid when TopWindowOriginComputed is
   // true.

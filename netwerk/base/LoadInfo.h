@@ -18,6 +18,7 @@
 #include "mozilla/dom/ClientInfo.h"
 #include "mozilla/dom/ServiceWorkerDescriptor.h"
 
+class nsDocShell;
 class nsICookieJarSettings;
 class nsINode;
 class nsPIDOMWindowOuter;
@@ -27,17 +28,20 @@ namespace mozilla {
 namespace dom {
 class PerformanceStorage;
 class XMLHttpRequestMainThread;
+class CanonicalBrowsingContext;
+class WindowGlobalParent;
 }  // namespace dom
 
 namespace net {
 class LoadInfoArgs;
+class LoadInfo;
 }  // namespace net
 
 namespace ipc {
 // we have to forward declare that function so we can use it as a friend.
 nsresult LoadInfoArgsToLoadInfo(
     const Maybe<mozilla::net::LoadInfoArgs>& aLoadInfoArgs,
-    nsILoadInfo** outLoadInfo);
+    nsINode* aCspToInheritLoadingContext, net::LoadInfo** outLoadInfo);
 }  // namespace ipc
 
 namespace net {
@@ -52,6 +56,7 @@ class LoadInfo final : public nsILoadInfo {
   NS_DECL_ISUPPORTS
   NS_DECL_NSILOADINFO
 
+  // Used for TYPE_SUBDOCUMENT load.
   // aLoadingPrincipal MUST NOT BE NULL.
   LoadInfo(nsIPrincipal* aLoadingPrincipal, nsIPrincipal* aTriggeringPrincipal,
            nsINode* aLoadingContext, nsSecurityFlags aSecurityFlags,
@@ -59,14 +64,23 @@ class LoadInfo final : public nsILoadInfo {
            const Maybe<mozilla::dom::ClientInfo>& aLoadingClientInfo =
                Maybe<mozilla::dom::ClientInfo>(),
            const Maybe<mozilla::dom::ServiceWorkerDescriptor>& aController =
-               Maybe<mozilla::dom::ServiceWorkerDescriptor>());
+               Maybe<mozilla::dom::ServiceWorkerDescriptor>(),
+           uint32_t aSandboxFlags = 0);
+  // Used for TYPE_SUBDOCUMENT load.
+  LoadInfo(dom::CanonicalBrowsingContext* aBrowsingContext,
+           nsIPrincipal* aTriggeringPrincipal, uint64_t aFrameOuterWindowID,
+           nsSecurityFlags aSecurityFlags, uint32_t aSandboxFlags);
 
   // Constructor used for TYPE_DOCUMENT loads which have a different
   // loadingContext than other loads. This ContextForTopLevelLoad is
   // only used for content policy checks.
   LoadInfo(nsPIDOMWindowOuter* aOuterWindow, nsIPrincipal* aTriggeringPrincipal,
-           nsISupports* aContextForTopLevelLoad,
-           nsSecurityFlags aSecurityFlags);
+           nsISupports* aContextForTopLevelLoad, nsSecurityFlags aSecurityFlags,
+           uint32_t aSandboxFlags);
+  LoadInfo(dom::CanonicalBrowsingContext* aBrowsingContext,
+           nsIPrincipal* aTriggeringPrincipal,
+           const OriginAttributes& aOriginAttributes, uint64_t aOuterWindowID,
+           nsSecurityFlags aSecurityFlags, uint32_t aSandboxFlags);
 
   // create an exact copy of the loadinfo
   already_AddRefed<nsILoadInfo> Clone() const;
@@ -129,8 +143,9 @@ class LoadInfo final : public nsILoadInfo {
            const Maybe<mozilla::dom::ClientInfo>& aReservedClientInfo,
            const Maybe<mozilla::dom::ClientInfo>& aInitialClientInfo,
            const Maybe<mozilla::dom::ServiceWorkerDescriptor>& aController,
-           nsSecurityFlags aSecurityFlags,
+           nsSecurityFlags aSecurityFlags, uint32_t aSandboxFlags,
            nsContentPolicyType aContentPolicyType, LoadTainting aTainting,
+           bool aBlockAllMixedContent,
            bool aUpgradeInsecureRequests, bool aBrowserUpgradeInsecureRequests,
            bool aBrowserWouldUpgradeInsecureRequests, bool aForceAllowDataURI,
            bool aAllowInsecureRedirectToDataURI, bool aBypassCORSChecks,
@@ -152,7 +167,8 @@ class LoadInfo final : public nsILoadInfo {
            bool aDocumentHasUserInteracted, bool aDocumentHasLoaded,
            bool aAllowListFutureDocumentsCreatedFromThisRedirectChain,
            const nsAString& aCspNonce, bool aSkipContentSniffing,
-           uint32_t aRequestBlockingReason, bool aIsMetaRefresh);
+           bool aHasStoragePermission, bool aIsMetaRefresh,
+           uint32_t aRequestBlockingReason, nsINode* aLoadingContext);
   LoadInfo(const LoadInfo& rhs);
 
   NS_IMETHOD GetRedirects(JSContext* aCx,
@@ -161,17 +177,28 @@ class LoadInfo final : public nsILoadInfo {
 
   friend nsresult mozilla::ipc::LoadInfoArgsToLoadInfo(
       const Maybe<mozilla::net::LoadInfoArgs>& aLoadInfoArgs,
-      nsILoadInfo** outLoadInfo);
+      nsINode* aCspToInheritLoadingContext, net::LoadInfo** outLoadInfo);
 
   ~LoadInfo() = default;
 
   void ComputeIsThirdPartyContext(nsPIDOMWindowOuter* aOuterWindow);
+  void ComputeIsThirdPartyContext(dom::WindowGlobalParent* aGlobal);
 
   // This function is the *only* function which can change the securityflags
   // of a loadinfo. It only exists because of the XHR code. Don't call it
   // from anywhere else!
   void SetIncludeCookiesSecFlag();
   friend class mozilla::dom::XMLHttpRequestMainThread;
+
+  // nsDocShell::OpenInitializedChannel needs to update the loadInfo with
+  // the correct browsingContext.
+  friend class ::nsDocShell;
+  void UpdateBrowsingContextID(uint64_t aBrowsingContextID) {
+    mBrowsingContextID = aBrowsingContextID;
+  }
+  void UpdateFrameBrowsingContextID(uint64_t aFrameBrowsingContextID) {
+    mFrameBrowsingContextID = aFrameBrowsingContextID;
+  }
 
   // if you add a member, please also update the copy constructor and consider
   // if it should be merged from parent channel through
@@ -197,8 +224,10 @@ class LoadInfo final : public nsILoadInfo {
   nsWeakPtr mLoadingContext;
   nsWeakPtr mContextForTopLevelLoad;
   nsSecurityFlags mSecurityFlags;
+  uint32_t mSandboxFlags;
   nsContentPolicyType mInternalContentPolicyType;
   LoadTainting mTainting = LoadTainting::Basic;
+  bool mBlockAllMixedContent = false;
   bool mUpgradeInsecureRequests = false;
   bool mBrowserUpgradeInsecureRequests = false;
   bool mBrowserWouldUpgradeInsecureRequests = false;
@@ -236,6 +265,7 @@ class LoadInfo final : public nsILoadInfo {
   bool mAllowListFutureDocumentsCreatedFromThisRedirectChain = false;
   nsString mCspNonce;
   bool mSkipContentSniffing = false;
+  bool mHasStoragePermission;
   bool mIsMetaRefresh = false;
 
   // Is true if this load was triggered by processing the attributes of the

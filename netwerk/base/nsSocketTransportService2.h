@@ -313,6 +313,8 @@ class nsSocketTransportService final : public nsPISocketTransportService,
   void TryRepairPollableEvent();
 
   bool mNotTrustedMitmDetected;
+
+  nsTArray<nsCOMPtr<nsISTSShutdownObserver>> mShutdownObservers;
 };
 
 extern nsSocketTransportService* gSocketTransportService;

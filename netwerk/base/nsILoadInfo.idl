@@ -161,24 +161,12 @@ interface nsILoadInfo : nsISupports
    * is loading the URI "http://b.com/whatever", GetChannelResultPrincipal
    * will return a principal from "http://a.com/".
    *
-   * This flag can not be used together with SEC_SANDBOXED.  If both are passed
-   * to the LoadInfo constructor then this flag will be dropped.  If you need
-   * to know whether this flag would have been present but was dropped due to
-   * sandboxing, check for the forceInheritPrincipalDropped flag.
+   * This flag can not be used together with SANDBOXED_ORIGIN sandbox flag.  If
+   * both are passed to the LoadInfo constructor then this flag will be dropped.
+   * If you need to know whether this flag would have been present but was dropped
+   * due to sandboxing, check for the forceInheritPrincipalDropped flag.
    */
   const unsigned long SEC_FORCE_INHERIT_PRINCIPAL = (1<<7);
-
-  /**
-   * Sandbox the load. The resulting resource will use a freshly created
-   * null principal. So GetChannelResultPrincipal will always return a
-   * null principal whenever this flag is set.
-   *
-   * This will happen independently of the scheme of the URI that the
-   * channel is loading.
-   *
-   * This flag can not be used together with SEC_FORCE_INHERIT_PRINCIPAL.
-   */
-  const unsigned long SEC_SANDBOXED = (1<<8);
 
   /**
    * Inherit the Principal for about:blank.
@@ -416,6 +404,11 @@ interface nsILoadInfo : nsISupports
 %}
 
   /**
+   * The sandboxFlags of that channel.
+   */
+  [infallible] readonly attribute unsigned long sandboxFlags;
+
+  /**
    * Allows to query only the security mode bits from above.
    */
   [infallible] readonly attribute unsigned long securityMode;
@@ -450,6 +443,12 @@ interface nsILoadInfo : nsISupports
    * It cannot be null.
    */
   attribute nsICookieJarSettings cookieJarSettings;
+
+  /**
+   * True if the loading document has the storage permission. This value would
+   * be set during opening the channel.
+   */
+  [infallible] attribute boolean hasStoragePermission;
 
   /**
    * True if the load was triggered by a meta refresh.
@@ -576,8 +575,17 @@ interface nsILoadInfo : nsISupports
   /**
    * Returns true if document or any of the documents ancestors
    * up to the toplevel document make use of the CSP directive
-   * 'upgrade-insecure-requests'. Used to identify upgrade
-   * requests in e10s where the loadingDocument is not available.
+   * 'block-all-mixed-content'.
+   *
+   * Warning: If the loadingDocument is null, then the
+   * blockAllMixedContent is false.
+   */
+  [infallible] readonly attribute boolean blockAllMixedContent;
+
+  /**
+   * Returns true if document or any of the documents ancestors
+   * up to the toplevel document make use of the CSP directive
+   * 'upgrade-insecure-requests'.
    *
    * Warning: If the loadingDocument is null, then the
    * upgradeInsecureRequests is false.
@@ -627,9 +635,9 @@ interface nsILoadInfo : nsISupports
 
   /**
    * The SEC_FORCE_INHERIT_PRINCIPAL flag may be dropped when a load info
-   * object is created.  Specifically, it will be dropped if the SEC_SANDBOXED
-   * flag is also present.  This flag is set if SEC_FORCE_INHERIT_PRINCIPAL was
-   * dropped.
+   * object is created.  Specifically, it will be dropped if the SANDBOXED_ORIGIN
+   * sandbox flag is also present.  This flag is set if SEC_FORCE_INHERIT_PRINCIPAL
+   * was dropped.
    */
   [infallible] readonly attribute boolean forceInheritPrincipalDropped;
 
@@ -918,7 +926,7 @@ interface nsILoadInfo : nsISupports
   attribute nsIURI resultPrincipalURI;
 
   /**
-   * Returns the null principal of the resulting resource if the SEC_SANDBOXED
+   * Returns the null principal of the resulting resource if the SANDBOXED_ORIGIN
    * flag is set.  Otherwise returns null.  This is used by
    * GetChannelResultPrincipal() to ensure that the same null principal object
    * is returned every time.
@@ -1227,17 +1235,17 @@ interface nsILoadInfo : nsISupports
   [infallible] readonly attribute boolean isFromProcessingFrameAttributes;
 
   cenum CrossOriginOpenerPolicy : 8 {
-    OPENER_POLICY_NULL           = 0,
-    OPENER_POLICY_SAME_ORIGIN    = 1,
-    OPENER_POLICY_SAME_SITE      = 2,
-    OPENER_POLICY_UNSAFE_ALLOW_OUTGOING_FLAG = 0x80,
-    OPENER_POLICY_SAME_ORIGIN_ALLOW_OUTGOING = OPENER_POLICY_SAME_ORIGIN | OPENER_POLICY_UNSAFE_ALLOW_OUTGOING_FLAG,
-    OPENER_POLICY_SAME_SITE_ALLOW_OUTGOING = OPENER_POLICY_SAME_SITE | OPENER_POLICY_UNSAFE_ALLOW_OUTGOING_FLAG
+    OPENER_POLICY_UNSAFE_NONE = 0,
+    OPENER_POLICY_SAME_ORIGIN = 1,
+    OPENER_POLICY_SAME_ORIGIN_ALLOW_POPUPS = 2,
+    OPENER_POLICY_EMBEDDER_POLICY_REQUIRE_CORP_FLAG = 0x10,
+    OPENER_POLICY_SAME_ORIGIN_EMBEDDER_POLICY_REQUIRE_CORP =
+        OPENER_POLICY_SAME_ORIGIN |
+        OPENER_POLICY_EMBEDDER_POLICY_REQUIRE_CORP_FLAG
   };
 
-  cenum CrossOriginPolicy : 8 {
-    CROSS_ORIGIN_POLICY_NULL            = 0,
-    CROSS_ORIGIN_POLICY_ANONYMOUS       = 1,
-    CROSS_ORIGIN_POLICY_USE_CREDENTIALS = 2
+  cenum CrossOriginEmbedderPolicy : 8 {
+    EMBEDDER_POLICY_NULL = 0,
+    EMBEDDER_POLICY_REQUIRE_CORP = 1,
   };
 };

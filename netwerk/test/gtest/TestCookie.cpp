@@ -84,7 +84,8 @@ void SetACookieInternal(nsICookieService* aCookieService, const char* aSpec,
                 nsIContentPolicy::TYPE_OTHER);
 
   nsCOMPtr<nsICookieJarSettings> cookieJarSettings =
-      aAllowed ? CookieJarSettings::Create() : CookieJarSettings::CreateBlockingAll();
+      aAllowed ? CookieJarSettings::Create()
+               : CookieJarSettings::GetBlockingAll();
   MOZ_ASSERT(cookieJarSettings);
 
   nsCOMPtr<nsILoadInfo> loadInfo = dummyChannel->LoadInfo();
@@ -880,7 +881,7 @@ TEST(TestCookie, TestCookieMain)
   EXPECT_TRUE(NS_SUCCEEDED(cookieMgr->RemoveAll()));
 
   // None of these cookies will be set because using
-  // CookieJarSettings::CreateBlockingAll().
+  // CookieJarSettings::GetBlockingAll().
   SetACookieJarBlocked(cookieService, "http://samesite.test", "unset=yes");
   SetACookieJarBlocked(cookieService, "http://samesite.test",
                        "unspecified=yes; samesite");

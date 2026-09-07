@@ -62,13 +62,13 @@ nsBaseChannel::nsBaseChannel()
       mStatus(NS_OK),
       mContentDispositionHint(UINT32_MAX),
       mContentLength(-1),
-      mWasOpened(false) {
+      mWasOpened(false),
+      mCanceled(false) {
   mContentType.AssignLiteral(UNKNOWN_CONTENT_TYPE);
 }
 
 nsBaseChannel::~nsBaseChannel() {
-  NS_ReleaseOnMainThreadSystemGroup("nsBaseChannel::mLoadInfo",
-                                    mLoadInfo.forget());
+  NS_ReleaseOnMainThread("nsBaseChannel::mLoadInfo", mLoadInfo.forget());
 }
 
 nsresult nsBaseChannel::Redirect(nsIChannel* newChannel, uint32_t redirectFlags,
@@ -135,11 +135,8 @@ nsresult nsBaseChannel::Redirect(nsIChannel* newChannel, uint32_t redirectFlags,
     }
   }
 
-  nsCOMPtr<nsIWritablePropertyBag> bag = ::do_QueryInterface(newChannel);
-  if (bag) {
-    for (auto iter = mPropertyHash.Iter(); !iter.Done(); iter.Next()) {
-      bag->SetProperty(iter.Key(), iter.UserData());
-    }
+  if (nsCOMPtr<nsIWritablePropertyBag> bag = ::do_QueryInterface(newChannel)) {
+    nsHashPropertyBag::CopyFrom(bag, static_cast<nsIPropertyBag2*>(this));
   }
 
   // Notify consumer, giving chance to cancel redirect.
@@ -345,13 +342,21 @@ void nsBaseChannel::ClassifyURI() {
 //-----------------------------------------------------------------------------
 // nsBaseChannel::nsISupports
 
-NS_IMPL_ISUPPORTS_INHERITED(nsBaseChannel, nsHashPropertyBag, nsIRequest,
-                            nsIChannel, nsIThreadRetargetableRequest,
-                            nsIInterfaceRequestor, nsITransportEventSink,
-                            nsIRequestObserver, nsIStreamListener,
-                            nsIThreadRetargetableStreamListener,
-                            nsIAsyncVerifyRedirectCallback,
-                            nsIPrivateBrowsingChannel)
+NS_IMPL_ADDREF(nsBaseChannel)
+NS_IMPL_RELEASE(nsBaseChannel)
+
+NS_INTERFACE_MAP_BEGIN(nsBaseChannel)
+  NS_INTERFACE_MAP_ENTRY(nsIRequest)
+  NS_INTERFACE_MAP_ENTRY(nsIChannel)
+  NS_INTERFACE_MAP_ENTRY(nsIThreadRetargetableRequest)
+  NS_INTERFACE_MAP_ENTRY(nsIInterfaceRequestor)
+  NS_INTERFACE_MAP_ENTRY(nsITransportEventSink)
+  NS_INTERFACE_MAP_ENTRY(nsIRequestObserver)
+  NS_INTERFACE_MAP_ENTRY(nsIStreamListener)
+  NS_INTERFACE_MAP_ENTRY(nsIThreadRetargetableStreamListener)
+  NS_INTERFACE_MAP_ENTRY(nsIAsyncVerifyRedirectCallback)
+  NS_INTERFACE_MAP_ENTRY(nsIPrivateBrowsingChannel)
+NS_INTERFACE_MAP_END_INHERITING(nsHashPropertyBag)
 
 //-----------------------------------------------------------------------------
 // nsBaseChannel::nsIRequest
@@ -384,11 +389,16 @@ nsBaseChannel::GetStatus(nsresult* status) {
 NS_IMETHODIMP
 nsBaseChannel::Cancel(nsresult status) {
   // Ignore redundant cancelation
-  if (NS_FAILED(mStatus)) return NS_OK;
+  if (mCanceled) {
+    return NS_OK;
+  }
 
+  mCanceled = true;
   mStatus = status;
 
-  if (mRequest) mRequest->Cancel(status);
+  if (mRequest) {
+    mRequest->Cancel(status);
+  }
 
   return NS_OK;
 }
@@ -431,7 +441,8 @@ nsBaseChannel::SetTRRMode(nsIRequest::TRRMode aTRRMode) {
 
 NS_IMETHODIMP
 nsBaseChannel::GetLoadGroup(nsILoadGroup** aLoadGroup) {
-  NS_IF_ADDREF(*aLoadGroup = mLoadGroup);
+  nsCOMPtr<nsILoadGroup> loadGroup(mLoadGroup);
+  loadGroup.forget(aLoadGroup);
   return NS_OK;
 }
 
@@ -466,13 +477,15 @@ nsBaseChannel::SetOriginalURI(nsIURI* aURI) {
 
 NS_IMETHODIMP
 nsBaseChannel::GetURI(nsIURI** aURI) {
-  NS_IF_ADDREF(*aURI = mURI);
+  nsCOMPtr<nsIURI> uri(mURI);
+  uri.forget(aURI);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsBaseChannel::GetOwner(nsISupports** aOwner) {
-  NS_IF_ADDREF(*aOwner = mOwner);
+  nsCOMPtr<nsISupports> owner(mOwner);
+  owner.forget(aOwner);
   return NS_OK;
 }
 
@@ -494,7 +507,8 @@ nsBaseChannel::SetLoadInfo(nsILoadInfo* aLoadInfo) {
 
 NS_IMETHODIMP
 nsBaseChannel::GetLoadInfo(nsILoadInfo** aLoadInfo) {
-  NS_IF_ADDREF(*aLoadInfo = mLoadInfo);
+  nsCOMPtr<nsILoadInfo> loadInfo(mLoadInfo);
+  loadInfo.forget(aLoadInfo);
   return NS_OK;
 }
 
@@ -505,7 +519,8 @@ nsBaseChannel::GetIsDocument(bool* aIsDocument) {
 
 NS_IMETHODIMP
 nsBaseChannel::GetNotificationCallbacks(nsIInterfaceRequestor** aCallbacks) {
-  NS_IF_ADDREF(*aCallbacks = mCallbacks);
+  nsCOMPtr<nsIInterfaceRequestor> callbacks(mCallbacks);
+  callbacks.forget(aCallbacks);
   return NS_OK;
 }
 
@@ -523,7 +538,8 @@ nsBaseChannel::SetNotificationCallbacks(nsIInterfaceRequestor* aCallbacks) {
 
 NS_IMETHODIMP
 nsBaseChannel::GetSecurityInfo(nsISupports** aSecurityInfo) {
-  NS_IF_ADDREF(*aSecurityInfo = mSecurityInfo);
+  nsCOMPtr<nsISupports> securityInfo(mSecurityInfo);
+  securityInfo.forget(aSecurityInfo);
   return NS_OK;
 }
 
@@ -944,6 +960,11 @@ nsBaseChannel::CheckListenerChain() {
   }
 
   return listener->CheckListenerChain();
+}
+
+NS_IMETHODIMP nsBaseChannel::GetCanceled(bool* aCanceled) {
+  *aCanceled = mCanceled;
+  return NS_OK;
 }
 
 void nsBaseChannel::SetupNeckoTarget() {

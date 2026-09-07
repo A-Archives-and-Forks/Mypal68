@@ -14,6 +14,7 @@
 #include "mozilla/net/WebSocketChannelParent.h"
 #include "mozilla/net/WebSocketEventListenerParent.h"
 #include "mozilla/net/DataChannelParent.h"
+#include "mozilla/net/DocumentChannelParent.h"
 #include "mozilla/net/SimpleChannelParent.h"
 #include "mozilla/net/AltDataOutputStreamParent.h"
 #include "mozilla/Unused.h"
@@ -319,6 +320,59 @@ mozilla::ipc::IPCResult NeckoParent::RecvPFTPChannelConstructor(
     const FTPChannelCreationArgs& aOpenArgs) {
   FTPChannelParent* p = static_cast<FTPChannelParent*>(aActor);
   if (!p->Init(aOpenArgs)) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+  return IPC_OK();
+}
+
+already_AddRefed<PDocumentChannelParent>
+NeckoParent::AllocPDocumentChannelParent(
+    PBrowserParent* aBrowser, const MaybeDiscarded<BrowsingContext>& aContext,
+    const SerializedLoadContext& aSerialized,
+    const DocumentChannelCreationArgs& args) {
+  // We still create the actor even if the BrowsingContext isn't available,
+  // so that we can send the reject message using it from
+  // RecvPDocumentChannelConstructor
+  CanonicalBrowsingContext* context = nullptr;
+  if (!aContext.IsNullOrDiscarded()) {
+    context = aContext.get_canonical();
+  }
+
+  nsCOMPtr<nsIPrincipal> requestingPrincipal;
+  // We only have the requesting principal in case of TYPE_SUBDOCUMENT.
+  // If we don't have an embedder window global, then it is probably a race and
+  // we will deal with that later in the code path.
+  if (context && !aContext.IsDiscarded() && context->GetParent()) {
+    if (RefPtr<WindowGlobalParent> embedderWGP =
+            context->GetParentWindowGlobal()) {
+      requestingPrincipal = embedderWGP->DocumentPrincipal();
+    }
+  }
+
+  nsCOMPtr<nsILoadContext> loadContext;
+  const char* error = CreateChannelLoadContext(
+      aBrowser, Manager(), aSerialized, requestingPrincipal, loadContext);
+  if (error) {
+    return nullptr;
+  }
+  RefPtr<DocumentChannelParent> p =
+      new DocumentChannelParent(context, loadContext);
+  return p.forget();
+}
+
+mozilla::ipc::IPCResult NeckoParent::RecvPDocumentChannelConstructor(
+    PDocumentChannelParent* aActor, PBrowserParent* aBrowser,
+    const MaybeDiscarded<BrowsingContext>& aContext,
+    const SerializedLoadContext& aSerialized,
+    const DocumentChannelCreationArgs& aArgs) {
+  DocumentChannelParent* p = static_cast<DocumentChannelParent*>(aActor);
+
+  if (aContext.IsNullOrDiscarded()) {
+    Unused << p->SendFailedAsyncOpen(NS_ERROR_FAILURE);
+    return IPC_OK();
+  }
+
+  if (!p->Init(aArgs)) {
     return IPC_FAIL_NO_REASON(this);
   }
   return IPC_OK();
@@ -796,16 +850,14 @@ mozilla::ipc::IPCResult NeckoParent::RecvGetExtensionFD(
 }
 
 PClassifierDummyChannelParent* NeckoParent::AllocPClassifierDummyChannelParent(
-    nsIURI* aURI, nsIURI* aTopWindowURI,
-    nsIPrincipal* aContentBlockingAllowListPrincipal,
-    const nsresult& aTopWindowURIResult, const Maybe<LoadInfoArgs>& aLoadInfo) {
+    nsIURI* aURI, nsIURI* aTopWindowURI, const nsresult& aTopWindowURIResult,
+    const Maybe<LoadInfoArgs>& aLoadInfo) {
   RefPtr<ClassifierDummyChannelParent> c = new ClassifierDummyChannelParent();
   return c.forget().take();
 }
 
 mozilla::ipc::IPCResult NeckoParent::RecvPClassifierDummyChannelConstructor(
     PClassifierDummyChannelParent* aActor, nsIURI* aURI, nsIURI* aTopWindowURI,
-    nsIPrincipal* aContentBlockingAllowListPrincipal,
     const nsresult& aTopWindowURIResult, const Maybe<LoadInfoArgs>& aLoadInfo) {
   ClassifierDummyChannelParent* p =
       static_cast<ClassifierDummyChannelParent*>(aActor);
@@ -820,8 +872,7 @@ mozilla::ipc::IPCResult NeckoParent::RecvPClassifierDummyChannelConstructor(
     return IPC_FAIL_NO_REASON(this);
   }
 
-  p->Init(aURI, aTopWindowURI, aContentBlockingAllowListPrincipal,
-          aTopWindowURIResult, loadInfo);
+  p->Init(aURI, aTopWindowURI, aTopWindowURIResult, loadInfo);
   return IPC_OK();
 }
 

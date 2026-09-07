@@ -122,6 +122,18 @@ class NeckoParent : public PNeckoParent {
   PTCPSocketParent* AllocPTCPSocketParent(const nsString& host,
                                           const uint16_t& port);
 
+  already_AddRefed<PDocumentChannelParent> AllocPDocumentChannelParent(
+      PBrowserParent* aBrowser,
+      const dom::MaybeDiscarded<dom::BrowsingContext>& aContext,
+      const SerializedLoadContext& aSerialized,
+      const DocumentChannelCreationArgs& args);
+  virtual mozilla::ipc::IPCResult RecvPDocumentChannelConstructor(
+      PDocumentChannelParent* aActor, PBrowserParent* aBrowser,
+      const dom::MaybeDiscarded<dom::BrowsingContext>& aContext,
+      const SerializedLoadContext& aSerialized,
+      const DocumentChannelCreationArgs& aArgs) override;
+  bool DeallocPDocumentChannelParent(PDocumentChannelParent* channel);
+
   bool DeallocPTCPSocketParent(PTCPSocketParent*);
   PTCPServerSocketParent* AllocPTCPServerSocketParent(
       const uint16_t& aLocalPort, const uint16_t& aBacklog,
@@ -218,9 +230,7 @@ class NeckoParent : public PNeckoParent {
                                              GetExtensionFDResolver&& aResolve);
 
   PClassifierDummyChannelParent* AllocPClassifierDummyChannelParent(
-      nsIURI* aURI, nsIURI* aTopWindowURI,
-      nsIPrincipal* aContentBlockingAllowListPrincipal,
-      const nsresult& aTopWindowURIResult,
+      nsIURI* aURI, nsIURI* aTopWindowURI, const nsresult& aTopWindowURIResult,
       const Maybe<LoadInfoArgs>& aLoadInfo);
 
   bool DeallocPClassifierDummyChannelParent(
@@ -228,8 +238,7 @@ class NeckoParent : public PNeckoParent {
 
   virtual mozilla::ipc::IPCResult RecvPClassifierDummyChannelConstructor(
       PClassifierDummyChannelParent* aActor, nsIURI* aURI,
-      nsIURI* aTopWindowURI, nsIPrincipal* aContentBlockingAllowListPrincipal,
-      const nsresult& aTopWindowURIResult,
+      nsIURI* aTopWindowURI, const nsresult& aTopWindowURIResult,
       const Maybe<LoadInfoArgs>& aLoadInfo) override;
 
   mozilla::ipc::IPCResult RecvInitSocketProcessBridge(

@@ -25,6 +25,7 @@
 #include "nsIChildChannel.h"
 #include "nsIHttpChannelChild.h"
 #include "nsIDivertableChannel.h"
+#include "nsIMultiPartChannel.h"
 #include "nsIThreadRetargetableRequest.h"
 #include "mozilla/net/DNS.h"
 
@@ -58,6 +59,7 @@ class HttpChannelChild final : public PHttpChannelChild,
                                public nsIChildChannel,
                                public nsIHttpChannelChild,
                                public nsIDivertableChannel,
+                               public nsIMultiPartChannel,
                                public nsIThreadRetargetableRequest,
                                public NeckoTargetHolder {
   virtual ~HttpChannelChild();
@@ -72,6 +74,7 @@ class HttpChannelChild final : public PHttpChannelChild,
   NS_DECL_NSICHILDCHANNEL
   NS_DECL_NSIHTTPCHANNELCHILD
   NS_DECL_NSIDIVERTABLECHANNEL
+  NS_DECL_NSIMULTIPARTCHANNEL
   NS_DECL_NSITHREADRETARGETABLEREQUEST
   NS_DECLARE_STATIC_IID_ACCESSOR(HTTP_CHANNEL_CHILD_IID)
 
@@ -127,6 +130,15 @@ class HttpChannelChild final : public PHttpChannelChild,
       const nsHttpResponseHead& aResponseHead, const bool& aUseResponseHead,
       const nsHttpHeaderArray& aRequestHeaders,
       const HttpChannelOnStartRequestArgs& aArgs) override;
+  mozilla::ipc::IPCResult RecvOnTransportAndData(
+      const nsresult& aChannelStatus, const nsresult& aTransportStatus,
+      const uint64_t& aOffset, const uint32_t& aCount,
+      const nsCString& aData) override;
+
+  mozilla::ipc::IPCResult RecvOnStopRequest(
+      const nsresult& aChannelStatus, const ResourceTimingStructArgs& aTiming,
+      const TimeStamp& aLastActiveTabOptHit,
+      const nsHttpHeaderArray& aResponseTrailers) override;
   mozilla::ipc::IPCResult RecvFailedAsyncOpen(const nsresult& status) override;
   mozilla::ipc::IPCResult RecvRedirect1Begin(
       const uint32_t& registrarId, const URIParams& newURI,
@@ -160,6 +172,28 @@ class HttpChannelChild final : public PHttpChannelChild,
 
   mozilla::ipc::IPCResult RecvAltDataCacheInputStreamAvailable(
       const Maybe<IPCStream>& aStream) override;
+
+  mozilla::ipc::IPCResult RecvNotifyChannelClassifierProtectionDisabled(
+      const uint32_t& aAcceptedReason) override;
+
+  mozilla::ipc::IPCResult RecvNotifyCookieAllowed() override;
+
+  mozilla::ipc::IPCResult RecvNotifyCookieBlocked(
+      const uint32_t& aRejectedReason) override;
+
+  mozilla::ipc::IPCResult RecvNotifyClassificationFlags(
+      const uint32_t& aClassificationFlags, const bool& aIsThirdParty) override;
+
+  mozilla::ipc::IPCResult RecvNotifyFlashPluginStateChanged(
+      const nsIHttpChannel::FlashPluginState& aState) override;
+
+  mozilla::ipc::IPCResult RecvSetClassifierMatchedInfo(
+      const ClassifierInfo& info) override;
+
+  mozilla::ipc::IPCResult RecvSetClassifierMatchedTrackingInfo(
+      const ClassifierInfo& info) override;
+
+  mozilla::ipc::IPCResult RecvOnAfterLastPart(const nsresult& aStatus) override;
 
   virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 
@@ -249,19 +283,6 @@ class HttpChannelChild final : public PHttpChannelChild,
                             const nsHttpHeaderArray& aResponseTrailers);
   void ProcessFlushedForDiversion();
   void ProcessDivertMessages();
-  void ProcessNotifyChannelClassifierProtectionDisabled(
-      uint32_t aAcceptedReason);
-  void ProcessNotifyCookieAllowed();
-  void ProcessNotifyCookieBlocked(uint32_t aRejectedReason);
-  void ProcessNotifyClassificationFlags(uint32_t aClassificationFlags,
-                                        bool aIsThirdParty);
-  void ProcessNotifyFlashPluginStateChanged(
-      nsIHttpChannel::FlashPluginState aState);
-  void ProcessSetClassifierMatchedInfo(const nsCString& aList,
-                                       const nsCString& aProvider,
-                                       const nsCString& aFullHash);
-  void ProcessSetClassifierMatchedTrackingInfo(const nsCString& aLists,
-                                               const nsCString& aFullHashes);
 
   // Return true if we need to tell the parent the size of unreported received
   // data
@@ -369,6 +390,10 @@ class HttpChannelChild final : public PHttpChannelChild,
   int32_t mCacheFetchCount;
   uint32_t mCacheExpirationTime;
 
+  // If we're handling a multi-part response, then this is set to the current
+  // part ID during OnStartRequest.
+  Maybe<uint32_t> mMultiPartID;
+
   // To ensure only one SendDeletingChannel is triggered.
   Atomic<bool> mDeletingChannelSent;
 
@@ -454,6 +479,10 @@ class HttpChannelChild final : public PHttpChannelChild,
   // is synthesized.
   uint8_t mSuspendParentAfterSynthesizeResponse : 1;
 
+  // True if this channel is a multi-part channel, and the last part
+  // is currently being processed.
+  uint8_t mIsLastPartOfMultiPart : 1;
+
   void FinishInterceptedRedirect();
   void CleanupRedirectingChannel(nsresult rv);
 
@@ -494,6 +523,7 @@ class HttpChannelChild final : public PHttpChannelChild,
   void DeleteSelf();
   void DoNotifyListener();
   void ContinueDoNotifyListener();
+  void OnAfterLastPart(const nsresult& aStatus);
 
   // Create a a new channel to be used in a redirection, based on the provided
   // response headers.

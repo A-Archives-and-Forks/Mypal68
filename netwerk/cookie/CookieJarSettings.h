@@ -106,9 +106,11 @@ class CookieJarSettings final : public nsICookieJarSettings {
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSICOOKIEJARSETTINGS
 
-  static already_AddRefed<nsICookieJarSettings> CreateBlockingAll();
+  static already_AddRefed<nsICookieJarSettings> GetBlockingAll();
 
   static already_AddRefed<nsICookieJarSettings> Create();
+
+  static already_AddRefed<nsICookieJarSettings> Create(uint32_t aCookieBehavior);
 
   static CookieJarSettings* Cast(nsICookieJarSettings* aCS) {
     return static_cast<CookieJarSettings*>(aCS);
@@ -125,6 +127,8 @@ class CookieJarSettings final : public nsICookieJarSettings {
   // no reasons. HasBeenChanged() returns true if the object has changed its
   // internal state and it must be sent beck to the content process.
   bool HasBeenChanged() const { return mToBeMerged; }
+
+  void UpdateIsOnContentBlockingAllowList(nsIChannel* aChannel);
 
   // Utility function to test if the passed cookiebahvior is
   // BEHAVIOR_REJECT_TRACKER, BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN or
@@ -152,6 +156,7 @@ class CookieJarSettings final : public nsICookieJarSettings {
 
   uint32_t mCookieBehavior;
   CookiePermissionList mCookiePermissions;
+  bool mIsOnContentBlockingAllowList;
 
   State mState;
 

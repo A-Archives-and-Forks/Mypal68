@@ -96,6 +96,17 @@ inline bool IsSocketProcessChild() {
   return amChild;
 }
 
+class HttpChannelSecurityWarningReporter : public nsISupports {
+ public:
+  [[nodiscard]] virtual nsresult ReportSecurityMessage(
+      const nsAString& aMessageTag, const nsAString& aMessageCategory) = 0;
+  [[nodiscard]] virtual nsresult LogBlockedCORSRequest(
+      const nsAString& aMessage, const nsACString& aCategory) = 0;
+  [[nodiscard]] virtual nsresult LogMimeTypeMismatch(
+      const nsACString& aMessageName, bool aWarning, const nsAString& aURL,
+      const nsAString& aContentType) = 0;
+};
+
 }  // namespace net
 }  // namespace mozilla
 

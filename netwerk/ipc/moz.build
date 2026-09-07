@@ -3,7 +3,12 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 EXPORTS.mozilla.net += [
+    'ADocumentChannelBridge.h',
     'ChannelEventQueue.h',
+    'DocumentChannel.h',
+    'DocumentChannelChild.h',
+    'DocumentChannelParent.h',
+    'DocumentLoadListener.h',
     'InputChannelThrottleQueueChild.h',
     'InputChannelThrottleQueueParent.h',
     'NeckoChild.h',
@@ -24,6 +29,10 @@ EXPORTS.mozilla.net += [
 
 UNIFIED_SOURCES += [
     'ChannelEventQueue.cpp',
+    'DocumentChannel.cpp',
+    'DocumentChannelChild.cpp',
+    'DocumentChannelParent.cpp',
+    'DocumentLoadListener.cpp',
     'InputChannelThrottleQueueChild.cpp',
     'InputChannelThrottleQueueParent.cpp',
     'NeckoChild.cpp',
@@ -44,6 +53,7 @@ IPDL_SOURCES = [
     'NeckoChannelParams.ipdlh',
     'PChannelDiverter.ipdl',
     'PDataChannel.ipdl',
+    'PDocumentChannel.ipdl',
     'PFileChannel.ipdl',
     'PInputChannelThrottleQueue.ipdl',
     'PNecko.ipdl',

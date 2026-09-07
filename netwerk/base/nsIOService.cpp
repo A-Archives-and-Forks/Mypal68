@@ -904,13 +904,14 @@ nsresult nsIOService::NewChannelFromURIWithClientAndController(
     nsIPrincipal* aTriggeringPrincipal,
     const Maybe<ClientInfo>& aLoadingClientInfo,
     const Maybe<ServiceWorkerDescriptor>& aController, uint32_t aSecurityFlags,
-    nsContentPolicyType aContentPolicyType, nsIChannel** aResult) {
+    nsContentPolicyType aContentPolicyType, uint32_t aSandboxFlags,
+    nsIChannel** aResult) {
   return NewChannelFromURIWithProxyFlagsInternal(
       aURI,
       nullptr,  // aProxyURI
       0,        // aProxyFlags
       aLoadingNode, aLoadingPrincipal, aTriggeringPrincipal, aLoadingClientInfo,
-      aController, aSecurityFlags, aContentPolicyType, aResult);
+      aController, aSecurityFlags, aContentPolicyType, aSandboxFlags, aResult);
 }
 
 NS_IMETHODIMP
@@ -928,7 +929,8 @@ nsresult nsIOService::NewChannelFromURIWithProxyFlagsInternal(
     nsIPrincipal* aTriggeringPrincipal,
     const Maybe<ClientInfo>& aLoadingClientInfo,
     const Maybe<ServiceWorkerDescriptor>& aController, uint32_t aSecurityFlags,
-    nsContentPolicyType aContentPolicyType, nsIChannel** result) {
+    nsContentPolicyType aContentPolicyType, uint32_t aSandboxFlags,
+    nsIChannel** result) {
   // Ideally all callers of NewChannelFromURIWithProxyFlagsInternal provide
   // the necessary arguments to create a loadinfo.
   //
@@ -946,7 +948,7 @@ nsresult nsIOService::NewChannelFromURIWithProxyFlagsInternal(
       aContentPolicyType == nsIContentPolicy::TYPE_DOCUMENT) {
     loadInfo = new LoadInfo(aLoadingPrincipal, aTriggeringPrincipal,
                             aLoadingNode, aSecurityFlags, aContentPolicyType,
-                            aLoadingClientInfo, aController);
+                            aLoadingClientInfo, aController, aSandboxFlags);
   }
   if (!loadInfo) {
     JSContext* cx = nsContentUtils::GetCurrentJSContext();
@@ -1050,7 +1052,7 @@ nsIOService::NewChannelFromURIWithProxyFlags(
   return NewChannelFromURIWithProxyFlagsInternal(
       aURI, aProxyURI, aProxyFlags, aLoadingNode, aLoadingPrincipal,
       aTriggeringPrincipal, Maybe<ClientInfo>(),
-      Maybe<ServiceWorkerDescriptor>(), aSecurityFlags, aContentPolicyType,
+      Maybe<ServiceWorkerDescriptor>(), aSecurityFlags, aContentPolicyType, 0,
       result);
 }
 

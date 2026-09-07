@@ -594,8 +594,8 @@ class nsCompleteUpgradeData : public ARefBase {
 
  private:
   virtual ~nsCompleteUpgradeData() {
-    NS_ReleaseOnMainThreadSystemGroup("nsCompleteUpgradeData.mUpgradeListener",
-                                      mUpgradeListener.forget());
+    NS_ReleaseOnMainThread("nsCompleteUpgradeData.mUpgradeListener",
+                           mUpgradeListener.forget());
   }
 };
 

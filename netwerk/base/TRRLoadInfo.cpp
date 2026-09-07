@@ -87,10 +87,10 @@ TRRLoadInfo::GetSecurityFlags(nsSecurityFlags* aResult) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-/*NS_IMETHODIMP
+NS_IMETHODIMP
 TRRLoadInfo::GetSandboxFlags(uint32_t* aResult) {
   return NS_ERROR_NOT_IMPLEMENTED;
-}*/
+}
 
 NS_IMETHODIMP
 TRRLoadInfo::GetSecurityMode(uint32_t* aFlags) {
@@ -114,6 +114,16 @@ TRRLoadInfo::GetCookieJarSettings(nsICookieJarSettings** aCookieJarSettings) {
 
 NS_IMETHODIMP
 TRRLoadInfo::SetCookieJarSettings(nsICookieJarSettings* aCookieJarSettings) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::GetHasStoragePermission(bool* aHasStoragePermission) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::SetHasStoragePermission(bool aHasStoragePermission) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -197,10 +207,10 @@ nsContentPolicyType TRRLoadInfo::InternalContentPolicyType() {
   return mInternalContentPolicyType;
 }
 
-/*NS_IMETHODIMP
+NS_IMETHODIMP
 TRRLoadInfo::GetBlockAllMixedContent(bool* aResult) {
   return NS_ERROR_NOT_IMPLEMENTED;
-}*/
+}
 
 NS_IMETHODIMP
 TRRLoadInfo::GetUpgradeInsecureRequests(bool* aResult) {

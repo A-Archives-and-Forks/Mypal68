@@ -12,7 +12,7 @@ namespace mozilla {
 namespace net {
 
 NS_IMPL_ISUPPORTS(NullHttpChannel, nsINullChannel, nsIHttpChannel,
-                  nsITimedChannel)
+                  nsIIdentChannel, nsITimedChannel)
 
 NullHttpChannel::NullHttpChannel()
     : mAllRedirectsSameOrigin(false), mAllRedirectsPassTimingAllowCheck(false) {
@@ -253,17 +253,6 @@ NullHttpChannel::RedirectTo(nsIURI* aNewURI) {
 }
 
 NS_IMETHODIMP
-NullHttpChannel::SwitchProcessTo(mozilla::dom::Promise* aBrowserParent,
-                                 uint64_t aIdentifier) {
-  return NS_ERROR_NOT_AVAILABLE;
-}
-
-NS_IMETHODIMP
-NullHttpChannel::HasCrossOriginOpenerPolicyMismatch(bool* aMismatch) {
-  return NS_ERROR_NOT_AVAILABLE;
-}
-
-NS_IMETHODIMP
 NullHttpChannel::UpgradeToSecure() { return NS_ERROR_NOT_IMPLEMENTED; }
 
 NS_IMETHODIMP
@@ -439,6 +428,11 @@ NullHttpChannel::GetStatus(nsresult* aStatus) {
 
 NS_IMETHODIMP
 NullHttpChannel::Cancel(nsresult aStatus) { return NS_ERROR_NOT_IMPLEMENTED; }
+
+NS_IMETHODIMP
+NullHttpChannel::GetCanceled(bool* aCanceled) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
 
 NS_IMETHODIMP
 NullHttpChannel::Suspend() { return NS_ERROR_NOT_IMPLEMENTED; }
