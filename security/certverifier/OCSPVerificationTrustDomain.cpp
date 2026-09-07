@@ -34,8 +34,9 @@ Result OCSPVerificationTrustDomain::IsChainValid(const DERArray&, Time,
 }
 
 Result OCSPVerificationTrustDomain::CheckRevocation(EndEntityOrCA,
-                                                    const CertID&, Time, Time,
+                                                    const CertID&, Time,
                                                     Duration, const Input*,
+                                                    const Input*,
                                                     const Input*) {
   // We do not expect this to be called for OCSP signers
   return Result::FATAL_ERROR_LIBRARY_FAILURE;
@@ -56,10 +57,18 @@ Result OCSPVerificationTrustDomain::CheckRSAPublicKeyModulusSizeInBits(
       aEEOrCA, aModulusSizeInBits);
 }
 
-Result OCSPVerificationTrustDomain::VerifyRSAPKCS1SignedDigest(
-    const SignedDigest& aSignedDigest, Input aSubjectPublicKeyInfo) {
-  return mCertDBTrustDomain.VerifyRSAPKCS1SignedDigest(aSignedDigest,
-                                                       aSubjectPublicKeyInfo);
+Result OCSPVerificationTrustDomain::VerifyRSAPKCS1SignedData(
+    Input data, DigestAlgorithm digestAlgorithm, Input signature,
+    Input subjectPublicKeyInfo) {
+  return mCertDBTrustDomain.VerifyRSAPKCS1SignedData(
+      data, digestAlgorithm, signature, subjectPublicKeyInfo);
+}
+
+Result OCSPVerificationTrustDomain::VerifyRSAPSSSignedData(
+    Input data, DigestAlgorithm digestAlgorithm, Input signature,
+    Input subjectPublicKeyInfo) {
+  return mCertDBTrustDomain.VerifyRSAPSSSignedData(
+      data, digestAlgorithm, signature, subjectPublicKeyInfo);
 }
 
 Result OCSPVerificationTrustDomain::CheckECDSACurveIsAcceptable(
@@ -67,10 +76,11 @@ Result OCSPVerificationTrustDomain::CheckECDSACurveIsAcceptable(
   return mCertDBTrustDomain.CheckECDSACurveIsAcceptable(aEEOrCA, aCurve);
 }
 
-Result OCSPVerificationTrustDomain::VerifyECDSASignedDigest(
-    const SignedDigest& aSignedDigest, Input aSubjectPublicKeyInfo) {
-  return mCertDBTrustDomain.VerifyECDSASignedDigest(aSignedDigest,
-                                                    aSubjectPublicKeyInfo);
+Result OCSPVerificationTrustDomain::VerifyECDSASignedData(
+    Input data, DigestAlgorithm digestAlgorithm, Input signature,
+    Input subjectPublicKeyInfo) {
+  return mCertDBTrustDomain.VerifyECDSASignedData(
+      data, digestAlgorithm, signature, subjectPublicKeyInfo);
 }
 
 Result OCSPVerificationTrustDomain::CheckValidityIsAcceptable(

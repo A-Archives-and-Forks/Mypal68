@@ -132,9 +132,6 @@ class nsCertOverrideService final : public nsICertOverrideService,
   nsCOMPtr<nsIFile> mSettingsFile;
   nsTHashtable<nsCertOverrideEntry> mSettingsTable;
 
-  void CountPermanentOverrideTelemetry(
-      const mozilla::MutexAutoLock& aProofOfLock);
-
   void RemoveAllFromMemory();
   nsresult Read(const mozilla::MutexAutoLock& aProofOfLock);
   nsresult Write(const mozilla::MutexAutoLock& aProofOfLock);
@@ -145,7 +142,7 @@ class nsCertOverrideService final : public nsICertOverrideService,
                           const nsACString& dbKey,
                           const mozilla::MutexAutoLock& aProofOfLock);
 
-  RefPtr<TaskQueue> mWriterTaskQueue;
+  RefPtr<mozilla::TaskQueue> mWriterTaskQueue;
 
   // Only accessed on the main thread
   uint64_t mPendingWriteCount;

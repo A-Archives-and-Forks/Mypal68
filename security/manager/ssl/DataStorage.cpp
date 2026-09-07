@@ -13,7 +13,6 @@
 #include "mozilla/Services.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/StaticPtr.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/Unused.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsDirectoryServiceUtils.h"
@@ -576,9 +575,6 @@ DataStorage::Reader::Run() {
                                                           std::move(entry));
       }
     } while (true);
-
-    Telemetry::Accumulate(Telemetry::DATA_STORAGE_ENTRIES,
-                          mDataStorage->mPersistentDataTable.Count());
   }
 
   return NS_OK;

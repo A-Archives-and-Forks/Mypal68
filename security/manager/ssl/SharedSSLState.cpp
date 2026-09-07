@@ -7,6 +7,7 @@
 #include "nsComponentManagerUtils.h"
 #include "nsICertOverrideService.h"
 #include "nsIObserverService.h"
+#include "nsNSSComponent.h"  //MY
 #include "mozilla/Services.h"
 #include "nsThreadUtils.h"
 #include "nsCRT.h"

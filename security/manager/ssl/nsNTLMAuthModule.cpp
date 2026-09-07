@@ -18,7 +18,6 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_network.h"
-#include "mozilla/Telemetry.h"
 #include "nsCOMPtr.h"
 #include "nsComponentManagerUtils.h"
 #include "nsICryptoHMAC.h"
@@ -926,15 +925,6 @@ nsNTLMAuthModule::Init(const char* /*serviceName*/, uint32_t serviceFlags,
   mUsername = username;
   mPassword = password;
   mNTLMNegotiateSent = false;
-
-  static bool sTelemetrySent = false;
-  if (!sTelemetrySent) {
-    mozilla::Telemetry::Accumulate(mozilla::Telemetry::NTLM_MODULE_USED_2,
-                                   serviceFlags & nsIAuthModule::REQ_PROXY_AUTH
-                                       ? NTLM_MODULE_GENERIC_PROXY
-                                       : NTLM_MODULE_GENERIC_DIRECT);
-    sTelemetrySent = true;
-  }
 
   return NS_OK;
 }

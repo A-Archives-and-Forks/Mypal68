@@ -341,7 +341,7 @@ lg_OpenCertDB(const char *configdir, const char *prefix, PRBool readOnly,
               NSSLOWCERTCertDBHandle **certdbPtr)
 {
     NSSLOWCERTCertDBHandle *certdb = NULL;
-    CK_RV crv = CKR_NETSCAPE_CERTDB_FAILED;
+    CK_RV crv = CKR_NSS_CERTDB_FAILED;
     SECStatus rv;
     char *name = NULL;
     char *appName = NULL;
@@ -401,7 +401,7 @@ lg_OpenKeyDB(const char *configdir, const char *prefix, PRBool readOnly,
     if (appName)
         PORT_Free(appName);
     if (keydb == NULL)
-        return CKR_NETSCAPE_KEYDB_FAILED;
+        return CKR_NSS_KEYDB_FAILED;
     *keydbPtr = keydb;
 
     return CKR_OK;
@@ -515,6 +515,7 @@ lg_init(SDB **pSdb, int flags, NSSLOWCERTCertDBHandle *certdbPtr,
     lgdb_p->hashTable = PL_NewHashTable(64, lg_HashNumber, PL_CompareValues,
                                         SECITEM_HashCompare, NULL, 0);
     if (lgdb_p->hashTable == NULL) {
+        PR_DestroyLock(lgdb_p->dbLock);
         goto loser;
     }
 
@@ -548,12 +549,6 @@ loser:
         PORT_Free(sdb);
     }
     if (lgdb_p) {
-        if (lgdb_p->dbLock) {
-            PR_DestroyLock(lgdb_p->dbLock);
-        }
-        if (lgdb_p->hashTable) {
-            PL_HashTableDestroy(lgdb_p->hashTable);
-        }
         PORT_Free(lgdb_p);
     }
     return error;

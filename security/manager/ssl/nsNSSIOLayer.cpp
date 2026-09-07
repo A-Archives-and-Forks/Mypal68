@@ -1827,7 +1827,7 @@ class ClientAuthDataRunnable : public SyncRunnableBase {
   ClientAuthInfo mInfo;
   CERTCertificate* const mServerCert;
   nsTArray<nsTArray<uint8_t>> mCollectedCANames;
-  nsTArray<nsTArray<uint8_t>> mEnterpriseIntermediates;
+  nsTArray<nsTArray<uint8_t>> mEnterpriseCertificates;
   UniqueCERTCertificate mSelectedCertificate;
   UniqueSECKEYPrivateKey mSelectedKey;
 };
@@ -1993,12 +1993,12 @@ class ClientAuthCertNonverifyingTrustDomain final : public TrustDomain {
  public:
   ClientAuthCertNonverifyingTrustDomain(
       nsTArray<nsTArray<uint8_t>>& collectedCANames,
-      nsTArray<nsTArray<uint8_t>>& thirdPartyIntermediates)
+      nsTArray<nsTArray<uint8_t>>& thirdPartyCertificates)
       : mCollectedCANames(collectedCANames),
 #ifdef MOZ_NEW_CERT_STORAGE
         mCertStorage(do_GetService(NS_CERT_STORAGE_CID)),
 #endif
-        mThirdPartyIntermediates(thirdPartyIntermediates) {
+        mThirdPartyCertificates(thirdPartyCertificates) {
   }
 
   virtual mozilla::pkix::Result GetCertTrust(
@@ -2011,9 +2011,10 @@ class ClientAuthCertNonverifyingTrustDomain final : public TrustDomain {
 
   virtual mozilla::pkix::Result CheckRevocation(
       EndEntityOrCA endEntityOrCA, const CertID& certID, Time time,
-      Time validityPeriodBeginning, Duration validityDuration,
+      Duration validityDuration,
       /*optional*/ const Input* stapledOCSPresponse,
-      /*optional*/ const Input* aiaExtension) override {
+      /*optional*/ const Input* aiaExtension,
+      /*optional*/ const Input* sctExtension) override {
     return Success;
   }
 
@@ -2030,16 +2031,23 @@ class ClientAuthCertNonverifyingTrustDomain final : public TrustDomain {
       EndEntityOrCA endEntityOrCA, unsigned int modulusSizeInBits) override {
     return Success;
   }
-  virtual mozilla::pkix::Result VerifyRSAPKCS1SignedDigest(
-      const SignedDigest& signedDigest, Input subjectPublicKeyInfo) override {
+  virtual mozilla::pkix::Result VerifyRSAPKCS1SignedData(
+      Input data, DigestAlgorithm, Input signature,
+      Input subjectPublicKeyInfo) override {
+    return Success;
+  }
+  virtual mozilla::pkix::Result VerifyRSAPSSSignedData(
+      Input data, DigestAlgorithm, Input signature,
+      Input subjectPublicKeyInfo) override {
     return Success;
   }
   virtual mozilla::pkix::Result CheckECDSACurveIsAcceptable(
       EndEntityOrCA endEntityOrCA, NamedCurve curve) override {
     return Success;
   }
-  virtual mozilla::pkix::Result VerifyECDSASignedDigest(
-      const SignedDigest& signedDigest, Input subjectPublicKeyInfo) override {
+  virtual mozilla::pkix::Result VerifyECDSASignedData(
+      Input data, DigestAlgorithm, Input signature,
+      Input subjectPublicKeyInfo) override {
     return Success;
   }
   virtual mozilla::pkix::Result CheckValidityIsAcceptable(
@@ -2068,7 +2076,7 @@ class ClientAuthCertNonverifyingTrustDomain final : public TrustDomain {
 #ifdef MOZ_NEW_CERT_STORAGE
   nsCOMPtr<nsICertStorage> mCertStorage;
 #endif
-  nsTArray<nsTArray<uint8_t>>& mThirdPartyIntermediates;  // non-owning
+  nsTArray<nsTArray<uint8_t>>& mThirdPartyCertificates;  // non-owning
   UniqueCERTCertList mBuiltChain;
 };
 
@@ -2090,14 +2098,20 @@ mozilla::pkix::Result ClientAuthCertNonverifyingTrustDomain::GetCertTrust(
   // If this certificate's issuer distinguished name is in the set of acceptable
   // CA names, we say this is a trust anchor so that the client certificate
   // issued from this certificate will be presented as an option for the user.
+  // We also check the certificate's subject distinguished name to account for
+  // the case where client certificates that have the id-kp-OCSPSigning EKU
+  // can't be trust anchors according to mozilla::pkix, and thus we may be
+  // looking directly at the issuer.
   Input issuer(cert.GetIssuer());
+  Input subject(cert.GetSubject());
   for (const auto& caName : mCollectedCANames) {
     Input caNameInput;
     rv = caNameInput.Init(caName.Elements(), caName.Length());
     if (rv != Success) {
       continue;  // probably too big
     }
-    if (InputsAreEqual(issuer, caNameInput)) {
+    if (InputsAreEqual(issuer, caNameInput) ||
+        InputsAreEqual(subject, caNameInput)) {
       trustLevel = TrustLevel::TrustAnchor;
       return Success;
     }
@@ -2106,11 +2120,20 @@ mozilla::pkix::Result ClientAuthCertNonverifyingTrustDomain::GetCertTrust(
   return Success;
 }
 
+// In theory this implementation should only need to consider intermediate
+// certificates, since in theory it should only need to look at the issuer
+// distinguished name of each certificate to determine if the client
+// certificate is considered acceptable to the server.
+// However, because we need to account for client certificates with the
+// id-kp-OCSPSigning EKU, and because mozilla::pkix doesn't allow such
+// certificates to be trust anchors, we need to consider the issuers of such
+// certificates directly. These issuers could be roots, so we have to consider
+// roots here.
 mozilla::pkix::Result ClientAuthCertNonverifyingTrustDomain::FindIssuer(
     Input encodedIssuerName, IssuerChecker& checker, Time time) {
   // First try all relevant certificates known to Gecko, which avoids calling
   // CERT_CreateSubjectCertList, because that can be expensive.
-  Vector<Input> geckoIntermediateCandidates;
+  Vector<Input> geckoCandidates;
 #ifdef MOZ_NEW_CERT_STORAGE
   if (!mCertStorage) {
     return mozilla::pkix::Result::FATAL_ERROR_LIBRARY_FAILURE;
@@ -2129,27 +2152,26 @@ mozilla::pkix::Result ClientAuthCertNonverifyingTrustDomain::FindIssuer(
     if (rv != Success) {
       continue;  // probably too big
     }
-    // Currently we're only expecting intermediate certificates in cert storage.
-    if (!geckoIntermediateCandidates.append(certDER)) {
+    if (!geckoCandidates.append(certDER)) {
       return mozilla::pkix::Result::FATAL_ERROR_NO_MEMORY;
     }
   }
 #endif
 
-  for (const auto& thirdPartyIntermediate : mThirdPartyIntermediates) {
-    Input thirdPartyIntermediateInput;
-    mozilla::pkix::Result rv = thirdPartyIntermediateInput.Init(
-        thirdPartyIntermediate.Elements(), thirdPartyIntermediate.Length());
+  for (const auto& thirdPartyCertificate : mThirdPartyCertificates) {
+    Input thirdPartyCertificateInput;
+    mozilla::pkix::Result rv = thirdPartyCertificateInput.Init(
+        thirdPartyCertificate.Elements(), thirdPartyCertificate.Length());
     if (rv != Success) {
       continue;  // probably too big
     }
-    if (!geckoIntermediateCandidates.append(thirdPartyIntermediateInput)) {
+    if (!geckoCandidates.append(thirdPartyCertificateInput)) {
       return mozilla::pkix::Result::FATAL_ERROR_NO_MEMORY;
     }
   }
 
   bool keepGoing = true;
-  for (Input candidate : geckoIntermediateCandidates) {
+  for (Input candidate : geckoCandidates) {
     mozilla::pkix::Result rv = checker.Check(candidate, nullptr, keepGoing);
     if (rv != Success) {
       return rv;
@@ -2165,7 +2187,7 @@ mozilla::pkix::Result ClientAuthCertNonverifyingTrustDomain::FindIssuer(
   // there was no error if CERT_CreateSubjectCertList returns nullptr.
   UniqueCERTCertList candidates(CERT_CreateSubjectCertList(
       nullptr, CERT_GetDefaultCertDB(), &encodedIssuerNameItem, 0, false));
-  Vector<Input> nssIntermediateCandidates;
+  Vector<Input> nssCandidates;
   if (candidates) {
     for (CERTCertListNode* n = CERT_LIST_HEAD(candidates);
          !CERT_LIST_END(n, candidates); n = CERT_LIST_NEXT(n)) {
@@ -2175,15 +2197,13 @@ mozilla::pkix::Result ClientAuthCertNonverifyingTrustDomain::FindIssuer(
       if (rv != Success) {
         continue;  // probably too big
       }
-      if (!n->cert->isRoot) {
-        if (!nssIntermediateCandidates.append(certDER)) {
-          return mozilla::pkix::Result::FATAL_ERROR_NO_MEMORY;
-        }
+      if (!nssCandidates.append(certDER)) {
+        return mozilla::pkix::Result::FATAL_ERROR_NO_MEMORY;
       }
     }
   }
 
-  for (Input candidate : nssIntermediateCandidates) {
+  for (Input candidate : nssCandidates) {
     mozilla::pkix::Result rv = checker.Check(candidate, nullptr, keepGoing);
     if (rv != Success) {
       return rv;
@@ -2207,33 +2227,43 @@ mozilla::pkix::Result ClientAuthCertNonverifyingTrustDomain::IsChainValid(
 mozilla::pkix::Result ClientAuthDataRunnable::BuildChainForCertificate(
     CERTCertificate* cert, UniqueCERTCertList& builtChain) {
   ClientAuthCertNonverifyingTrustDomain trustDomain(mCollectedCANames,
-                                                    mEnterpriseIntermediates);
+                                                    mEnterpriseCertificates);
   Input certDER;
   mozilla::pkix::Result result =
       certDER.Init(cert->derCert.data, cert->derCert.len);
   if (result != Success) {
     return result;
   }
-  mozilla::pkix::Result eeResult = BuildCertChain(
-      trustDomain, certDER, Now(), EndEntityOrCA::MustBeEndEntity,
-      KeyUsage::noParticularKeyUsageRequired, KeyPurposeId::anyExtendedKeyUsage,
-      CertPolicyId::anyPolicy, nullptr);
-  if (eeResult == Success) {
-    builtChain = trustDomain.TakeBuiltChain();
-    return Success;
+  // Client certificates shouldn't be CAs, but for interoperability reasons we
+  // attempt to build a path with each certificate as an end entity and then as
+  // a CA if that fails.
+  const EndEntityOrCA kEndEntityOrCAParams[] = {EndEntityOrCA::MustBeEndEntity,
+                                                EndEntityOrCA::MustBeCA};
+  // mozilla::pkix rejects certificates with id-kp-OCSPSigning unless it is
+  // specifically required. A client certificate should never have this EKU.
+  // Unfortunately, there are some client certificates in private PKIs that
+  // have this EKU. For interoperability, we attempt to work around this
+  // restriction in mozilla::pkix by first building the certificate chain with
+  // no particular EKU required and then again with id-kp-OCSPSigning required
+  // if that fails.
+  const KeyPurposeId kKeyPurposeIdParams[] = {KeyPurposeId::anyExtendedKeyUsage,
+                                              KeyPurposeId::id_kp_OCSPSigning};
+  for (const auto& endEntityOrCAParam : kEndEntityOrCAParams) {
+    for (const auto& keyPurposeIdParam : kKeyPurposeIdParams) {
+      mozilla::pkix::Result result =
+          BuildCertChain(trustDomain, certDER, Now(), endEntityOrCAParam,
+                         KeyUsage::noParticularKeyUsageRequired,
+                         keyPurposeIdParam, CertPolicyId::anyPolicy, nullptr);
+      if (result == Success) {
+        builtChain = trustDomain.TakeBuiltChain();
+        return Success;
+      }
+      MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
+              ("client cert non-validation returned %d for '%s'",
+               static_cast<int>(result), cert->subjectName));
+    }
   }
-  mozilla::pkix::Result caResult = BuildCertChain(
-      trustDomain, certDER, Now(), EndEntityOrCA::MustBeCA,
-      KeyUsage::noParticularKeyUsageRequired, KeyPurposeId::anyExtendedKeyUsage,
-      CertPolicyId::anyPolicy, nullptr);
-  if (caResult == Success) {
-    builtChain = trustDomain.TakeBuiltChain();
-    return Success;
-  }
-  MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
-          ("client cert non-validation returned %d %d\n",
-           static_cast<int>(eeResult), static_cast<int>(caResult)));
-  return eeResult;
+  return mozilla::pkix::Result::ERROR_UNKNOWN_ISSUER;
 }
 
 void ClientAuthDataRunnable::RunOnTargetThread() {
@@ -2245,10 +2275,16 @@ void ClientAuthDataRunnable::RunOnTargetThread() {
   if (NS_WARN_IF(!component)) {
     return;
   }
-  nsresult rv = component->GetEnterpriseIntermediates(mEnterpriseIntermediates);
+  nsresult rv = component->GetEnterpriseIntermediates(mEnterpriseCertificates);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return;
   }
+  nsTArray<nsTArray<uint8_t>> enterpriseRoots;
+  rv = component->GetEnterpriseRoots(enterpriseRoots);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return;
+  }
+  mEnterpriseCertificates.AppendElements(enterpriseRoots);
 
   if (NS_WARN_IF(NS_FAILED(CheckForSmartCardChanges()))) {
     return;
@@ -2279,8 +2315,7 @@ void ClientAuthDataRunnable::RunOnTargetThread() {
         BuildChainForCertificate(n->cert, unusedBuiltChain);
     if (result != Success) {
       MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
-              ("removing cert '%s' (result=%d)", n->cert->subjectName,
-               static_cast<int>(result)));
+              ("removing cert '%s'", n->cert->subjectName));
       CERTCertListNode* toRemove = n;
       n = CERT_LIST_NEXT(n);
       CERT_RemoveCertListNode(toRemove);
@@ -2335,10 +2370,10 @@ void ClientAuthDataRunnable::RunOnTargetThread() {
   // Not Auto => ask
   // Get the SSL Certificate
   const nsACString& hostname = mInfo.HostName();
-  nsCOMPtr<nsIClientAuthRemember> cars = nullptr;
+  nsCOMPtr<nsIClientAuthRememberService> cars = nullptr;
 
   if (mInfo.ProviderTlsFlags() == 0) {
-    cars = do_GetService(NS_CLIENTAUTHREMEMBER_CONTRACTID);
+    cars = do_GetService(NS_CLIENTAUTHREMEMBERSERVICE_CONTRACTID);
   }
 
   if (cars) {
@@ -2350,7 +2385,12 @@ void ClientAuthDataRunnable::RunOnTargetThread() {
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return;
     }
-    if (found && !rememberedDBKey.IsEmpty()) {
+    if (found) {
+      // An empty dbKey indicates that the user chose not to use a certificate
+      // and chose to remember this decision
+      if (rememberedDBKey.IsEmpty()) {
+        return;
+      }
       nsCOMPtr<nsIX509CertDB> certdb = do_GetService(NS_X509CERTDB_CONTRACTID);
       if (NS_WARN_IF(!certdb)) {
         return;
@@ -2553,7 +2593,7 @@ loser:
 }
 
 // Please change getSignatureName in nsNSSCallbacks.cpp when changing the list
-// here.
+// here. See NOTE at SSL_SignatureSchemePrefSet call site.
 static const SSLSignatureScheme sEnabledSignatureSchemes[] = {
     ssl_sig_ecdsa_secp256r1_sha256, ssl_sig_ecdsa_secp384r1_sha384,
     ssl_sig_ecdsa_secp521r1_sha512, ssl_sig_rsa_pss_sha256,
@@ -2628,7 +2668,7 @@ static nsresult nsSSLIOLayerSetOptions(PRFileDesc* fd, bool forSTARTTLS,
   // we've now set the maximum to, this will result in an inconsistent version
   // range unless we fix it up. This will override their preference, but we only
   // do this for sites critical to the operation of the browser (e.g. update
-  // servers) and telemetry experiments.
+  // servers).
   if (range.min > range.max) {
     range.min = range.max;
   }
@@ -2671,6 +2711,12 @@ static nsresult nsSSLIOLayerSetOptions(PRFileDesc* fd, bool forSTARTTLS,
     return NS_ERROR_FAILURE;
   }
 
+  // NOTE: Should this list ever include ssl_sig_rsa_pss_pss_sha* (or should
+  // it become possible to enable this scheme via a pref), it is required
+  // to test that a Delegated Credential containing a small-modulus RSA-PSS SPKI
+  // is properly rejected. NSS will not advertise PKCS1 or RSAE schemes (which
+  // the |ssl_sig_rsa_pss_*| defines alias, meaning we will not currently accept
+  // any RSA DC.
   if (SECSuccess != SSL_SignatureSchemePrefSet(
                         fd, sEnabledSignatureSchemes,
                         mozilla::ArrayLength(sEnabledSignatureSchemes))) {

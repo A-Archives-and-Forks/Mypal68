@@ -12,11 +12,9 @@
 #ifdef MOZ_NEW_CERT_STORAGE
 #  include "nsDirectoryServiceUtils.h"
 #endif
-#include "nsNSSCertificate.h"
 #include "nsNSSComponent.h"
 #include "NSSCertDBTrustDomain.h"
 #include "nsServiceManagerUtils.h"
-#include "nsThreadUtils.h"
 #include "mozpkix/pkixnss.h"
 
 using namespace mozilla::pkix;
@@ -27,8 +25,8 @@ namespace psm {
 static LazyLogModule gTrustDomainPRLog("CSTrustDomain");
 #define CSTrust_LOG(args) MOZ_LOG(gTrustDomainPRLog, LogLevel::Debug, args)
 
-CSTrustDomain::CSTrustDomain(UniqueCERTCertList& certChain)
-    : mCertChain(certChain),
+CSTrustDomain::CSTrustDomain(nsTArray<nsTArray<uint8_t>>& certList)
+    : mCertList(certList),
 #ifdef MOZ_NEW_CERT_STORAGE
       mCertBlocklist(do_GetService(NS_CERT_STORAGE_CID)) {
 }
@@ -44,13 +42,6 @@ Result CSTrustDomain::GetCertTrust(EndEntityOrCA endEntityOrCA,
   MOZ_ASSERT(policy.IsAnyPolicy());
   if (!policy.IsAnyPolicy()) {
     return Result::FATAL_ERROR_INVALID_ARGS;
-  }
-
-  SECItem candidateCertDERSECItem = UnsafeMapInputToSECItem(candidateCertDER);
-  UniqueCERTCertificate candidateCert(CERT_NewTempCertificate(
-      CERT_GetDefaultCertDB(), &candidateCertDERSECItem, nullptr, false, true));
-  if (!candidateCert) {
-    return MapPRErrorCodeToResult(PR_GetError());
   }
 
 #ifdef MOZ_NEW_CERT_STORAGE
@@ -104,7 +95,9 @@ Result CSTrustDomain::GetCertTrust(EndEntityOrCA endEntityOrCA,
   if (!component) {
     return Result::FATAL_ERROR_LIBRARY_FAILURE;
   }
-  nsrv = component->IsCertContentSigningRoot(candidateCert.get(), &isRoot);
+  nsTArray<uint8_t> candidateCert(candidateCertDER.UnsafeGetData(),
+                                  candidateCertDER.GetLength());
+  nsrv = component->IsCertContentSigningRoot(candidateCert, &isRoot);
   if (NS_FAILED(nsrv)) {
     return Result::FATAL_ERROR_LIBRARY_FAILURE;
   }
@@ -122,28 +115,14 @@ Result CSTrustDomain::GetCertTrust(EndEntityOrCA endEntityOrCA,
 Result CSTrustDomain::FindIssuer(Input encodedIssuerName,
                                  IssuerChecker& checker, Time time) {
   // Loop over the chain, look for a matching subject
-  for (CERTCertListNode* n = CERT_LIST_HEAD(mCertChain);
-       !CERT_LIST_END(n, mCertChain); n = CERT_LIST_NEXT(n)) {
-    Input certDER;
-    Result rv = certDER.Init(n->cert->derCert.data, n->cert->derCert.len);
+  for (const auto& certBytes : mCertList) {
+    Input certInput;
+    Result rv = certInput.Init(certBytes.Elements(), certBytes.Length());
     if (rv != Success) {
       continue;  // probably too big
     }
-
-    // if the subject does not match, try the next certificate
-    Input subjectDER;
-    rv = subjectDER.Init(n->cert->derSubject.data, n->cert->derSubject.len);
-    if (rv != Success) {
-      continue;  // just try the next one
-    }
-    if (!InputsAreEqual(subjectDER, encodedIssuerName)) {
-      CSTrust_LOG(("CSTrustDomain: subjects don't match\n"));
-      continue;
-    }
-
-    // If the subject does match, try the next step
     bool keepGoing;
-    rv = checker.Check(certDER, nullptr /*additionalNameConstraints*/,
+    rv = checker.Check(certInput, nullptr /*additionalNameConstraints*/,
                        keepGoing);
     if (rv != Success) {
       return rv;
@@ -159,9 +138,10 @@ Result CSTrustDomain::FindIssuer(Input encodedIssuerName,
 
 Result CSTrustDomain::CheckRevocation(
     EndEntityOrCA endEntityOrCA, const CertID& certID, Time time,
-    Time validityPeriodBeginning, Duration validityDuration,
+    Duration validityDuration,
     /*optional*/ const Input* stapledOCSPresponse,
-    /*optional*/ const Input* aiaExtension) {
+    /*optional*/ const Input* aiaExtension,
+    /*optional*/ const Input* sctExtension) {
   // We're relying solely on the CertBlocklist for revocation - and we're
   // performing checks on this in GetCertTrust (as per nsNSSCertDBTrustDomain)
   return Success;
@@ -195,10 +175,20 @@ Result CSTrustDomain::CheckRSAPublicKeyModulusSizeInBits(
   return Success;
 }
 
-Result CSTrustDomain::VerifyRSAPKCS1SignedDigest(
-    const SignedDigest& signedDigest, Input subjectPublicKeyInfo) {
-  return VerifyRSAPKCS1SignedDigestNSS(signedDigest, subjectPublicKeyInfo,
-                                       nullptr);
+Result CSTrustDomain::VerifyRSAPKCS1SignedData(Input data,
+                                               DigestAlgorithm digestAlgorithm,
+                                               Input signature,
+                                               Input subjectPublicKeyInfo) {
+  return VerifyRSAPKCS1SignedDataNSS(data, digestAlgorithm, signature,
+                                     subjectPublicKeyInfo, nullptr);
+}
+
+Result CSTrustDomain::VerifyRSAPSSSignedData(Input data,
+                                             DigestAlgorithm digestAlgorithm,
+                                             Input signature,
+                                             Input subjectPublicKeyInfo) {
+  return VerifyRSAPSSSignedDataNSS(data, digestAlgorithm, signature,
+                                   subjectPublicKeyInfo, nullptr);
 }
 
 Result CSTrustDomain::CheckECDSACurveIsAcceptable(EndEntityOrCA endEntityOrCA,
@@ -213,10 +203,12 @@ Result CSTrustDomain::CheckECDSACurveIsAcceptable(EndEntityOrCA endEntityOrCA,
   return Result::ERROR_UNSUPPORTED_ELLIPTIC_CURVE;
 }
 
-Result CSTrustDomain::VerifyECDSASignedDigest(const SignedDigest& signedDigest,
-                                              Input subjectPublicKeyInfo) {
-  return VerifyECDSASignedDigestNSS(signedDigest, subjectPublicKeyInfo,
-                                    nullptr);
+Result CSTrustDomain::VerifyECDSASignedData(Input data,
+                                            DigestAlgorithm digestAlgorithm,
+                                            Input signature,
+                                            Input subjectPublicKeyInfo) {
+  return VerifyECDSASignedDataNSS(data, digestAlgorithm, signature,
+                                  subjectPublicKeyInfo, nullptr);
 }
 
 Result CSTrustDomain::CheckValidityIsAcceptable(Time notBefore, Time notAfter,

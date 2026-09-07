@@ -8,6 +8,9 @@ certmgr-title =
 certmgr-tab-mine =
     .label = Your Certificates
 
+certmgr-tab-remembered =
+    .label = Authentication Decisions
+
 certmgr-tab-people =
     .label = People
 
@@ -18,6 +21,7 @@ certmgr-tab-ca =
     .label = Authorities
 
 certmgr-mine = You have certificates from these organizations that identify you
+certmgr-remembered = These certificates are used to identify you to websites
 certmgr-people = You have certificates on file that identify these people
 certmgr-servers = You have certificates on file that identify these servers
 certmgr-ca = You have certificates on file that identify these certificate authorities
@@ -73,6 +77,9 @@ certmgr-edit-cert-trust-email =
 certmgr-delete-cert =
     .title = Delete Certificate
     .style = width: 48em; height: 24em;
+
+certmgr-cert-host =
+    .label = Host
 
 certmgr-cert-name =
     .label = Certificate Name
@@ -228,6 +235,9 @@ delete-email-cert-impact = If you delete a person’s e-mail certificate, you wi
 #   $serialNumber : the serial number of the cert in AA:BB:CC hex format.
 cert-with-serial =
     .value = Certificate with serial number: { $serialNumber }
+
+# Used to indicate that the user chose not to send a client authentication certificate to a server that requested one in a TLS handshake.
+send-no-client-certificate = Send no client certificate
 
 ## Cert Viewer
 

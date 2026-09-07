@@ -11,7 +11,7 @@ XPIDL_SOURCES += [
     'nsICertificateDialogs.idl',
     'nsICertOverrideService.idl',
     'nsIClientAuthDialogs.idl',
-    'nsIClientAuthRemember.idl',
+    'nsIClientAuthRememberService.idl',
     'nsIContentSignatureVerifier.idl',
     'nsICryptoHash.idl',
     'nsICryptoHMAC.idl',
@@ -29,7 +29,6 @@ XPIDL_SOURCES += [
     'nsIPKCS11Slot.idl',
     'nsIProtectedAuthThread.idl',
     'nsISecretDecoderRing.idl',
-    'nsISecurityUITelemetry.idl',
     'nsISiteSecurityService.idl',
     'nsITokenDialogs.idl',
     'nsITokenPasswordDialogs.idl',
@@ -67,7 +66,6 @@ EXPORTS += [
     'NSSErrorsService.h',
     'nsSSLSocketProvider.h',
     'nsTLSSocketProvider.h',
-    'RootCertificateTelemetryUtils.h',
     'ScopedNSSTypes.h',
     'SharedCertVerifier.h',
     'SSLServerCertVerification.h',
@@ -129,7 +127,6 @@ UNIFIED_SOURCES += [
     'PSMIPCCommon.cpp',
     'PSMRunnable.cpp',
     'PublicKeyPinningService.cpp',
-    'RootCertificateTelemetryUtils.cpp',
     'SecretDecoderRing.cpp',
     'SharedSSLState.cpp',
     'SSLServerCertVerification.cpp',
@@ -187,31 +184,28 @@ if CONFIG['MOZ_XUL']:
     ]
 
 UNIFIED_SOURCES += [
-    'md4.c',
+    "md4.c",
 ]
 
-if CONFIG['MOZ_NEW_CERT_STORAGE']:
+if CONFIG["MOZ_NEW_CERT_STORAGE"]:
     XPIDL_SOURCES += [
-        'nsICertStorage.idl',
-    ]
-    UNIFIED_SOURCES += [
-        'cert_storage/src/cert_storage.cpp',
+        "nsICertStorage.idl",
     ]
 else:
     XPIDL_SOURCES += [
-        'nsICertBlocklist.idl',
+        "nsICertBlocklist.idl",
     ]
     UNIFIED_SOURCES += [
-        'CertBlocklist.cpp',
+        "CertBlocklist.cpp",
     ]
 
-FINAL_LIBRARY = 'xul'
+FINAL_LIBRARY = "xul"
 
 LOCAL_INCLUDES += [
-    '/dom/base',
-    '/dom/crypto',
-    '/netwerk/base',
-    '/security/certverifier',
+    "/dom/base",
+    "/dom/crypto",
+    "/netwerk/base",
+    "/security/certverifier",
 ]
 
 LOCAL_INCLUDES += [

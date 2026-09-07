@@ -10,7 +10,6 @@
 #include "CTVerifyResult.h"
 #include "EnterpriseRoots.h"
 #include "OCSPCache.h"
-#include "RootCertificateTelemetryUtils.h"
 #include "ScopedNSSTypes.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"

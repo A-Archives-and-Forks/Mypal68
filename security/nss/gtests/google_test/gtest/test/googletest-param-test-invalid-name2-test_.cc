@@ -41,15 +41,13 @@ std::string StringParamTestSuffix(
 TEST_P(DummyTest, Dummy) {
 }
 
-INSTANTIATE_TEST_CASE_P(DuplicateTestNames,
-                        DummyTest,
-                        ::testing::Values("a", "b", "a", "c"),
-                        StringParamTestSuffix);
+INSTANTIATE_TEST_SUITE_P(DuplicateTestNames,
+                         DummyTest,
+                         ::testing::Values("a", "b", "a", "c"),
+                         StringParamTestSuffix);
 }  // namespace
 
 int main(int argc, char *argv[]) {
   testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
-
-

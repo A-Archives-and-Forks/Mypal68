@@ -14,7 +14,6 @@
 #include "mozilla/NSPRLogModulesParser.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/WindowsVersion.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsCOMPtr.h"
@@ -250,14 +249,8 @@ bool SandboxBroker::LaunchApp(const wchar_t* aPath, const wchar_t* aArguments,
     // Only accumulate for each combination once per session.
     if (sLaunchErrors) {
       if (!sLaunchErrors->Contains(key)) {
-        Telemetry::Accumulate(Telemetry::SANDBOX_FAILED_LAUNCH_KEYED, key,
-                              result);
         sLaunchErrors->PutEntry(key);
       }
-    } else {
-      // If sLaunchErrors not created yet then always accumulate.
-      Telemetry::Accumulate(Telemetry::SANDBOX_FAILED_LAUNCH_KEYED, key,
-                            result);
     }
 
     LOG_E(
@@ -383,17 +376,6 @@ static bool CanUseJob() {
       JOB_OBJECT_LIMIT_BREAKAWAY_OK) {
     return true;
   }
-
-  // Chromium added a command line flag to allow no job to be used, which was
-  // originally supposed to only be used for remote sessions. If you use runas
-  // to start Firefox then this also uses a separate job and we would fail to
-  // start on Windows 7. An unknown number of people use (or used to use) runas
-  // with Firefox for some security benefits (see bug 1228880). This is now a
-  // counterproductive technique, but allowing both the remote and local case
-  // for now and adding telemetry to see if we can restrict this to just remote.
-  nsAutoString localRemote(::GetSystemMetrics(SM_REMOTESESSION) ? u"remote"
-                                                                : u"local");
-  Telemetry::ScalarSet(Telemetry::ScalarID::SANDBOX_NO_JOB, localRemote, true);
 
   // Allow running without the job object in this case. This slightly reduces
   // the ability of the sandbox to protect its children from spawning new

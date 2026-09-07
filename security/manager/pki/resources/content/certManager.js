@@ -44,7 +44,120 @@ var emailTreeView;
  */
 var userTreeView;
 
-function LoadCerts() {
+var clientAuthRememberService;
+
+var richlist;
+
+var rememberedDecisionsRichList = {
+  async buildRichList() {
+    let rememberedDecisions = clientAuthRememberService.getDecisions();
+
+    let oldItems = richlist.querySelectorAll("richlistitem");
+    for (let item of oldItems) {
+      item.remove();
+    }
+
+    let frag = document.createDocumentFragment();
+    for (let decision of rememberedDecisions) {
+      let richlistitem = await this._richBoxAddItem(decision);
+      frag.appendChild(richlistitem);
+    }
+    richlist.appendChild(frag);
+
+    richlist.addEventListener("select", () => this.setButtonState());
+  },
+
+  _createItem(item) {
+    let innerHbox = document.createXULElement("hbox");
+    innerHbox.setAttribute("align", "center");
+    innerHbox.setAttribute("flex", "1");
+
+    let row = document.createXULElement("label");
+    row.setAttribute("flex", "1");
+    row.setAttribute("crop", "right");
+    row.setAttribute("style", "margin-inline-start: 15px;");
+    row.setAttribute("value", item);
+    row.setAttribute("ordinal", "1");
+    innerHbox.appendChild(row);
+
+    return innerHbox;
+  },
+
+  async _richBoxAddItem(item) {
+    let richlistitem = document.createXULElement("richlistitem");
+
+    richlistitem.setAttribute("entryKey", item.entryKey);
+    richlistitem.setAttribute("dbKey", item.dbKey);
+
+    let hbox = document.createXULElement("hbox");
+    hbox.setAttribute("flex", "1");
+    hbox.setAttribute("equalsize", "always");
+
+    hbox.appendChild(this._createItem(item.asciiHost));
+    if (item.dbKey == "") {
+      let noCertSpecified = await document.l10n.formatValue(
+        "send-no-client-certificate"
+      );
+
+      hbox.appendChild(this._createItem(noCertSpecified));
+
+      hbox.appendChild(this._createItem(""));
+    } else {
+      let tmpCert = certdb.findCertByDBKey(item.dbKey);
+
+      hbox.appendChild(this._createItem(tmpCert.commonName));
+
+      hbox.appendChild(this._createItem(tmpCert.serialNumber));
+    }
+
+    richlistitem.appendChild(hbox);
+
+    return richlistitem;
+  },
+
+  async deleteSelectedRichListItem() {
+    let selectedItem = richlist.selectedItem;
+    let index = richlist.selectedIndex;
+    if (index < 0) {
+      return;
+    }
+
+    clientAuthRememberService.forgetRememberedDecision(
+      selectedItem.attributes.entryKey.value
+    );
+
+    await this.buildRichList();
+    this.setButtonState();
+  },
+
+  viewSelectedRichListItem() {
+    let selectedItem = richlist.selectedItem;
+    let index = richlist.selectedIndex;
+    if (index < 0) {
+      return;
+    }
+
+    if (selectedItem.attributes.dbKey.value != "") {
+      let cert = certdb.findCertByDBKey(selectedItem.attributes.dbKey.value);
+      viewCertHelper(window, cert);
+    }
+  },
+
+  setButtonState() {
+    let rememberedDeleteButton = document.getElementById(
+      "remembered_deleteButton"
+    );
+    let rememberedViewButton = document.getElementById("remembered_viewButton");
+
+    rememberedDeleteButton.disabled = richlist.selectedIndex < 0;
+    rememberedViewButton.disabled =
+      richlist.selectedItem == null
+        ? true
+        : richlist.selectedItem.attributes.dbKey.value == "";
+  },
+};
+
+async function LoadCerts() {
   certdb = Cc["@mozilla.org/security/x509certdb;1"].getService(
     Ci.nsIX509CertDB
   );
@@ -73,6 +186,16 @@ function LoadCerts() {
   );
   userTreeView.loadCertsFromCache(certcache, Ci.nsIX509Cert.USER_CERT);
   document.getElementById("user-tree").view = userTreeView;
+
+  clientAuthRememberService = Cc[
+    "@mozilla.org/security/clientAuthRememberService;1"
+  ].getService(Ci.nsIClientAuthRememberService);
+
+  richlist = document.getElementById("rememberedList");
+
+  await rememberedDecisionsRichList.buildRichList();
+
+  rememberedDecisionsRichList.setButtonState();
 
   enableBackupAllButton();
 }
@@ -332,7 +455,7 @@ function editCerts() {
   getSelectedCerts();
 
   for (let cert of selected_certs) {
-    window.openDialog(
+    window.docShell.rootTreeItem.domWindow.openDialog(
       "chrome://pippki/content/editcacert.xhtml",
       "",
       "chrome,centerscreen,modal",
@@ -460,7 +583,7 @@ function deleteCerts() {
   let retVals = {
     deleteConfirmed: false,
   };
-  window.openDialog(
+  window.docShell.rootTreeItem.domWindow.openDialog(
     "chrome://pippki/content/deletecert.xhtml",
     "",
     "chrome,centerscreen,modal",
@@ -533,7 +656,7 @@ async function addEmailCert() {
 }
 
 function addException() {
-  window.openDialog(
+  window.docShell.rootTreeItem.domWindow.openDialog(
     "chrome://pippki/content/exceptionDialog.xhtml",
     "",
     "chrome,centerscreen,modal"

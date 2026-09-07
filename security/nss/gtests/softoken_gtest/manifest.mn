@@ -1,4 +1,3 @@
-# -*- makefile -*-
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -25,11 +24,14 @@ INCLUDES += \
 	-I$(CORE_DEPTH)/cpputil \
 	$(NULL)
 
-REQUIRES = nspr gtest
+REQUIRES = nspr gtest cpputil
 
 PROGRAM = softoken_gtest
 
 EXTRA_LIBS = \
 	$(DIST)/lib/$(LIB_PREFIX)gtest.$(LIB_SUFFIX) \
+	$(DIST)/lib/$(LIB_PREFIX)cpputil.$(LIB_SUFFIX) \
 	$(DIST)/lib/$(LIB_PREFIX)gtestutil.$(LIB_SUFFIX) \
 	$(NULL)
+
+USE_STATIC_LIBS = 1

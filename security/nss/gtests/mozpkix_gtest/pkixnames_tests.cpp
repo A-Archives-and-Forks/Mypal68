@@ -946,7 +946,7 @@ TEST_P(pkixnames_MatchPresentedDNSIDWithReferenceDNSID,
   }
 }
 
-INSTANTIATE_TEST_CASE_P(pkixnames_MatchPresentedDNSIDWithReferenceDNSID,
+INSTANTIATE_TEST_SUITE_P(pkixnames_MatchPresentedDNSIDWithReferenceDNSID,
                         pkixnames_MatchPresentedDNSIDWithReferenceDNSID,
                         testing::ValuesIn(DNSID_MATCH_PARAMS));
 
@@ -993,7 +993,7 @@ TEST_P(pkixnames_Turkish_I_Comparison, MatchPresentedDNSIDWithReferenceDNSID)
   }
 }
 
-INSTANTIATE_TEST_CASE_P(pkixnames_Turkish_I_Comparison,
+INSTANTIATE_TEST_SUITE_P(pkixnames_Turkish_I_Comparison,
                         pkixnames_Turkish_I_Comparison,
                         testing::ValuesIn(DNSNAMES_VALIDITY_TURKISH_I));
 
@@ -1016,10 +1016,10 @@ TEST_P(pkixnames_IsValidReferenceDNSID, IsValidReferenceDNSID)
   ASSERT_EQ(inputValidity.isValidPresentedID, IsValidPresentedDNSID(input));
 }
 
-INSTANTIATE_TEST_CASE_P(pkixnames_IsValidReferenceDNSID,
+INSTANTIATE_TEST_SUITE_P(pkixnames_IsValidReferenceDNSID,
                         pkixnames_IsValidReferenceDNSID,
                         testing::ValuesIn(DNSNAMES_VALIDITY));
-INSTANTIATE_TEST_CASE_P(pkixnames_IsValidReferenceDNSID_Turkish_I,
+INSTANTIATE_TEST_SUITE_P(pkixnames_IsValidReferenceDNSID_Turkish_I,
                         pkixnames_IsValidReferenceDNSID,
                         testing::ValuesIn(DNSNAMES_VALIDITY_TURKISH_I));
 
@@ -1047,7 +1047,7 @@ TEST_P(pkixnames_ParseIPv4Address, ParseIPv4Address)
   }
 }
 
-INSTANTIATE_TEST_CASE_P(pkixnames_ParseIPv4Address,
+INSTANTIATE_TEST_SUITE_P(pkixnames_ParseIPv4Address,
                         pkixnames_ParseIPv4Address,
                         testing::ValuesIn(IPV4_ADDRESSES));
 
@@ -1075,7 +1075,7 @@ TEST_P(pkixnames_ParseIPv6Address, ParseIPv6Address)
   }
 }
 
-INSTANTIATE_TEST_CASE_P(pkixnames_ParseIPv6Address,
+INSTANTIATE_TEST_SUITE_P(pkixnames_ParseIPv6Address,
                         pkixnames_ParseIPv6Address,
                         testing::ValuesIn(IPV6_ADDRESSES));
 
@@ -1614,7 +1614,7 @@ TEST_P(pkixnames_CheckCertHostname, CheckCertHostname)
                                             mNameMatchingPolicy));
 }
 
-INSTANTIATE_TEST_CASE_P(pkixnames_CheckCertHostname,
+INSTANTIATE_TEST_SUITE_P(pkixnames_CheckCertHostname,
                         pkixnames_CheckCertHostname,
                         testing::ValuesIn(CHECK_CERT_HOSTNAME_PARAMS));
 
@@ -1699,7 +1699,7 @@ TEST_P(pkixnames_CheckCertHostname_PresentedMatchesReference,
                                               mNameMatchingPolicy));
 }
 
-INSTANTIATE_TEST_CASE_P(pkixnames_CheckCertHostname_DNSID_MATCH_PARAMS,
+INSTANTIATE_TEST_SUITE_P(pkixnames_CheckCertHostname_DNSID_MATCH_PARAMS,
                         pkixnames_CheckCertHostname_PresentedMatchesReference,
                         testing::ValuesIn(DNSID_MATCH_PARAMS));
 
@@ -1818,7 +1818,7 @@ TEST_P(pkixnames_CheckCertHostname_IPV4_Addresses,
                                               mNameMatchingPolicy));
 }
 
-INSTANTIATE_TEST_CASE_P(pkixnames_CheckCertHostname_IPV4_ADDRESSES,
+INSTANTIATE_TEST_SUITE_P(pkixnames_CheckCertHostname_IPV4_ADDRESSES,
                         pkixnames_CheckCertHostname_IPV4_Addresses,
                         testing::ValuesIn(IPV4_ADDRESSES));
 
@@ -2678,7 +2678,7 @@ TEST_P(pkixnames_CheckNameConstraints,
   }
 }
 
-INSTANTIATE_TEST_CASE_P(pkixnames_CheckNameConstraints,
+INSTANTIATE_TEST_SUITE_P(pkixnames_CheckNameConstraints,
                         pkixnames_CheckNameConstraints,
                         testing::ValuesIn(NAME_CONSTRAINT_PARAMS));
 
@@ -2770,7 +2770,7 @@ TEST_P(pkixnames_CheckNameConstraintsOnIntermediate,
   }
 }
 
-INSTANTIATE_TEST_CASE_P(pkixnames_CheckNameConstraintsOnIntermediate,
+INSTANTIATE_TEST_SUITE_P(pkixnames_CheckNameConstraintsOnIntermediate,
                         pkixnames_CheckNameConstraintsOnIntermediate,
                         testing::ValuesIn(NO_FALLBACK_NAME_CONSTRAINT_PARAMS));
 
@@ -2831,6 +2831,6 @@ TEST_P(pkixnames_CheckNameConstraintsForNonServerAuthUsage,
   }
 }
 
-INSTANTIATE_TEST_CASE_P(pkixnames_CheckNameConstraintsForNonServerAuthUsage,
+INSTANTIATE_TEST_SUITE_P(pkixnames_CheckNameConstraintsForNonServerAuthUsage,
                         pkixnames_CheckNameConstraintsForNonServerAuthUsage,
                         testing::ValuesIn(NO_FALLBACK_NAME_CONSTRAINT_PARAMS));

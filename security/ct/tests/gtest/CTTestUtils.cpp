@@ -673,8 +673,9 @@ class OCSPExtensionTrustDomain : public TrustDomain {
     return pkix::Result::FATAL_ERROR_LIBRARY_FAILURE;
   }
 
-  pkix::Result CheckRevocation(EndEntityOrCA, const CertID&, Time, Time,
-                               Duration, const Input*, const Input*) override {
+  pkix::Result CheckRevocation(EndEntityOrCA, const CertID&, Time, Duration,
+                               const Input*, const Input*,
+                               const Input*) override {
     ADD_FAILURE();
     return pkix::Result::FATAL_ERROR_LIBRARY_FAILURE;
   }
@@ -702,10 +703,12 @@ class OCSPExtensionTrustDomain : public TrustDomain {
     return pkix::Result::FATAL_ERROR_LIBRARY_FAILURE;
   }
 
-  pkix::Result VerifyECDSASignedDigest(const SignedDigest& signedDigest,
-                                       Input subjectPublicKeyInfo) override {
-    return VerifyECDSASignedDigestNSS(signedDigest, subjectPublicKeyInfo,
-                                      nullptr);
+  pkix::Result VerifyECDSASignedData(Input data,
+                                     DigestAlgorithm digestAlgorithm,
+                                     Input signature,
+                                     Input subjectPublicKeyInfo) override {
+    return VerifyECDSASignedDataNSS(data, digestAlgorithm, signature,
+                                    subjectPublicKeyInfo, nullptr);
   }
 
   pkix::Result CheckRSAPublicKeyModulusSizeInBits(EndEntityOrCA,
@@ -714,10 +717,20 @@ class OCSPExtensionTrustDomain : public TrustDomain {
     return pkix::Result::FATAL_ERROR_LIBRARY_FAILURE;
   }
 
-  pkix::Result VerifyRSAPKCS1SignedDigest(const SignedDigest& signedDigest,
-                                          Input subjectPublicKeyInfo) override {
-    return VerifyRSAPKCS1SignedDigestNSS(signedDigest, subjectPublicKeyInfo,
-                                         nullptr);
+  pkix::Result VerifyRSAPKCS1SignedData(Input data,
+                                        DigestAlgorithm digestAlgorithm,
+                                        Input signature,
+                                        Input subjectPublicKeyInfo) override {
+    return VerifyRSAPKCS1SignedDataNSS(data, digestAlgorithm, signature,
+                                       subjectPublicKeyInfo, nullptr);
+  }
+
+  pkix::Result VerifyRSAPSSSignedData(Input data,
+                                      DigestAlgorithm digestAlgorithm,
+                                      Input signature,
+                                      Input subjectPublicKeyInfo) override {
+    return VerifyRSAPSSSignedDataNSS(data, digestAlgorithm, signature,
+                                     subjectPublicKeyInfo, nullptr);
   }
 
   pkix::Result CheckValidityIsAcceptable(Time, Time, EndEntityOrCA,

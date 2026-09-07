@@ -29,7 +29,7 @@ function viewCertHelper(parent, cert) {
   }
 
   Services.ww.openWindow(
-    parent,
+    parent && parent.docShell.rootTreeItem.domWindow,
     "chrome://pippki/content/certViewer.xhtml",
     "_blank",
     "centerscreen,chrome",

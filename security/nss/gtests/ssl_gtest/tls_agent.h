@@ -7,10 +7,12 @@
 
 #include "prio.h"
 #include "ssl.h"
+#include "sslproto.h"
 
 #include <functional>
 #include <iostream>
 
+#include "nss_policy.h"
 #include "test_io.h"
 
 #define GTEST_HAS_RTTI 0
@@ -155,6 +157,9 @@ class TlsAgent : public PollTarget {
   void SetServerKeyBits(uint16_t bits);
   void ExpectReadWriteError();
   void EnableFalseStart();
+  void ExpectEch(bool expected = true);
+  bool GetEchExpected() const { return expect_ech_; }
+  void ExpectPsk(SSLPskType psk = ssl_psk_external);
   void ExpectResumption();
   void SkipVersionChecks();
   void SetSignatureSchemes(const SSLSignatureScheme* schemes, size_t count);
@@ -174,15 +179,19 @@ class TlsAgent : public PollTarget {
   // Send data directly to the underlying socket, skipping the TLS layer.
   void SendDirect(const DataBuffer& buf);
   void SendRecordDirect(const TlsRecord& record);
+  void AddPsk(const ScopedPK11SymKey& psk, std::string label, SSLHashType hash,
+              uint16_t zeroRttSuite = TLS_NULL_WITH_NULL_NULL);
+  void RemovePsk(std::string label);
   void ReadBytes(size_t max = 16384U);
-  void ResetSentBytes();  // Hack to test drops.
+  void ResetSentBytes(size_t bytes = 0);  // Hack to test drops.
   void EnableExtendedMasterSecret();
   void CheckExtendedMasterSecret(bool expected);
   void CheckEarlyDataAccepted(bool expected);
+  void CheckEchAccepted(bool expected);
   void SetDowngradeCheckVersion(uint16_t version);
   void CheckSecretsDestroyed();
   void ConfigNamedGroups(const std::vector<SSLNamedGroup>& groups);
-  void DisableECDHEServerKeyReuse();
+  void EnableECDHEServerKeyReuse();
   bool GetPeerChainLength(size_t* count);
   void CheckCipherSuite(uint16_t cipher_suite);
   void SetResumptionTokenCallback();
@@ -221,7 +230,9 @@ class TlsAgent : public PollTarget {
 
   static const char* state_str(State state) { return states[state]; }
 
-  PRFileDesc* ssl_fd() const { return ssl_fd_.get(); }
+  NssManagedFileDesc ssl_fd() const {
+    return NssManagedFileDesc(ssl_fd_.get(), policy_, option_);
+  }
   std::shared_ptr<DummyPrSocket>& adapter() { return adapter_; }
 
   const SSLChannelInfo& info() const {
@@ -245,6 +256,8 @@ class TlsAgent : public PollTarget {
     *suite = info_.cipherSuite;
     return true;
   }
+
+  void expected_cipher_suite(uint16_t suite) { expected_cipher_suite_ = suite; }
 
   std::string cipher_suite_name() const {
     if (state_ != STATE_CONNECTED) return "UNKNOWN";
@@ -295,6 +308,13 @@ class TlsAgent : public PollTarget {
   void ExpectSendAlert(uint8_t alert, uint8_t level = 0);
 
   std::string alpn_value_to_use_ = "";
+  // set the given policy before this agent runs
+  void SetPolicy(SECOidTag oid, PRUint32 set, PRUint32 clear) {
+    policy_ = NssPolicy(oid, set, clear);
+  }
+  void SetNssOption(PRInt32 id, PRInt32 value) {
+    option_ = NssOption(id, value);
+  }
 
  private:
   const static char* states[];
@@ -416,8 +436,9 @@ class TlsAgent : public PollTarget {
   bool falsestart_enabled_;
   uint16_t expected_version_;
   uint16_t expected_cipher_suite_;
-  bool expect_resumption_;
   bool expect_client_auth_;
+  bool expect_ech_;
+  SSLPskType expect_psk_;
   bool can_falsestart_hook_called_;
   bool sni_hook_called_;
   bool auth_certificate_hook_called_;
@@ -440,6 +461,8 @@ class TlsAgent : public PollTarget {
   SniCallbackFunction sni_callback_;
   bool skip_version_checks_;
   std::vector<uint8_t> resumption_token_;
+  NssPolicy policy_;
+  NssOption option_;
 };
 
 inline std::ostream& operator<<(std::ostream& stream,

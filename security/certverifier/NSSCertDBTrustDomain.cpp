@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include "ExtendedValidation.h"
+#include "MultiLogCTVerifier.h"
 #include "NSSErrorsService.h"
 #include "OCSPVerificationTrustDomain.h"
 #include "PublicKeyPinningService.h"
@@ -46,6 +47,7 @@
 #include "TrustOverride-SymantecData.inc"
 
 using namespace mozilla;
+using namespace mozilla::ct;
 using namespace mozilla::pkix;
 
 extern LazyLogModule gCertVerifierLog;
@@ -158,15 +160,8 @@ static bool ShouldSkipSelfSignedNonTrustAnchor(TrustDomain& trustDomain,
   if (trust != TrustLevel::InheritsTrust) {
     return false;
   }
-  uint8_t digestBuf[MAX_DIGEST_SIZE_IN_BYTES];
-  pkix::der::PublicKeyAlgorithm publicKeyAlg;
-  SignedDigest signature;
-  if (DigestSignedData(trustDomain, cert.GetSignedData(), digestBuf,
-                       publicKeyAlg, signature) != Success) {
-    return false;
-  }
-  if (VerifySignedDigest(trustDomain, publicKeyAlg, signature,
-                         cert.GetSubjectPublicKeyInfo()) != Success) {
+  if (VerifySignedData(trustDomain, cert.GetSignedData(),
+                       cert.GetSubjectPublicKeyInfo()) != Success) {
     return false;
   }
   // This is a self-signed, non-trust-anchor certificate, so we shouldn't use it
@@ -593,9 +588,10 @@ static Result GetOCSPAuthorityInfoAccessLocation(const UniquePLArenaPool& arena,
 
 Result NSSCertDBTrustDomain::CheckRevocation(
     EndEntityOrCA endEntityOrCA, const CertID& certID, Time time,
-    Time validityPeriodBeginning, Duration validityDuration,
+    Duration validityDuration,
     /*optional*/ const Input* stapledOCSPResponse,
-    /*optional*/ const Input* aiaExtension) {
+    /*optional*/ const Input* aiaExtension,
+    /*optional*/ const Input* sctExtension) {
   // Actively distrusted certificates will have already been blocked by
   // GetCertTrust.
 
@@ -1202,10 +1198,18 @@ Result NSSCertDBTrustDomain::CheckRSAPublicKeyModulusSizeInBits(
   return Success;
 }
 
-Result NSSCertDBTrustDomain::VerifyRSAPKCS1SignedDigest(
-    const SignedDigest& signedDigest, Input subjectPublicKeyInfo) {
-  return VerifyRSAPKCS1SignedDigestNSS(signedDigest, subjectPublicKeyInfo,
-                                       mPinArg);
+Result NSSCertDBTrustDomain::VerifyRSAPKCS1SignedData(
+    Input data, DigestAlgorithm digestAlgorithm, Input signature,
+    Input subjectPublicKeyInfo) {
+  return VerifyRSAPKCS1SignedDataNSS(data, digestAlgorithm, signature,
+                                     subjectPublicKeyInfo, mPinArg);
+}
+
+Result NSSCertDBTrustDomain::VerifyRSAPSSSignedData(
+    Input data, DigestAlgorithm digestAlgorithm, Input signature,
+    Input subjectPublicKeyInfo) {
+  return VerifyRSAPSSSignedDataNSS(data, digestAlgorithm, signature,
+                                   subjectPublicKeyInfo, mPinArg);
 }
 
 Result NSSCertDBTrustDomain::CheckECDSACurveIsAcceptable(
@@ -1220,10 +1224,11 @@ Result NSSCertDBTrustDomain::CheckECDSACurveIsAcceptable(
   return Result::ERROR_UNSUPPORTED_ELLIPTIC_CURVE;
 }
 
-Result NSSCertDBTrustDomain::VerifyECDSASignedDigest(
-    const SignedDigest& signedDigest, Input subjectPublicKeyInfo) {
-  return VerifyECDSASignedDigestNSS(signedDigest, subjectPublicKeyInfo,
-                                    mPinArg);
+Result NSSCertDBTrustDomain::VerifyECDSASignedData(
+    Input data, DigestAlgorithm digestAlgorithm, Input signature,
+    Input subjectPublicKeyInfo) {
+  return VerifyECDSASignedDataNSS(data, digestAlgorithm, signature,
+                                  subjectPublicKeyInfo, mPinArg);
 }
 
 Result NSSCertDBTrustDomain::CheckValidityIsAcceptable(

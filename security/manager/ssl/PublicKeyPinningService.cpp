@@ -4,13 +4,11 @@
 
 #include "PublicKeyPinningService.h"
 
-#include "RootCertificateTelemetryUtils.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Base64.h"
 #include "mozilla/BinarySearch.h"
 #include "mozilla/Casting.h"
 #include "mozilla/Logging.h"
-#include "mozilla/Telemetry.h"
 #include "nsDependentString.h"
 #include "nsServiceManagerUtils.h"
 #include "mozpkix/pkixtypes.h"

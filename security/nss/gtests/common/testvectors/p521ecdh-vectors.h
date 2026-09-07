@@ -11,7 +11,7 @@
 
 #include "testvectors_base/test-structs.h"
 
-const EcdhTestVectorStr kP521EcdhWycheproofVectors[] = {
+const EcdhTestVector kP521EcdhWycheproofVectors[] = {
 
     // Comment: normal case
     // tcID: 1

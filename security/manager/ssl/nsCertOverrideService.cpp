@@ -10,7 +10,6 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/TaskQueue.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/TextUtils.h"
 #include "mozilla/Unused.h"
 #include "nsAppDirectoryServiceDefs.h"
@@ -208,7 +207,6 @@ nsCertOverrideService::Observe(nsISupports*, const char* aTopic,
       mSettingsFile = nullptr;
     }
     Read(lock);
-    CountPermanentOverrideTelemetry(lock);
   }
 
   return NS_OK;
@@ -621,18 +619,6 @@ nsCertOverrideService::ClearAllOverrides() {
   }
 
   return NS_OK;
-}
-
-void nsCertOverrideService::CountPermanentOverrideTelemetry(
-    const MutexAutoLock& aProofOfLock) {
-  uint32_t overrideCount = 0;
-  for (auto iter = mSettingsTable.Iter(); !iter.Done(); iter.Next()) {
-    if (!iter.Get()->mSettings.mIsTemporary) {
-      overrideCount++;
-    }
-  }
-  Telemetry::Accumulate(Telemetry::SSL_PERMANENT_CERT_ERROR_OVERRIDES,
-                        overrideCount);
 }
 
 static bool matchesDBKey(nsIX509Cert* cert, const nsCString& matchDbKey) {

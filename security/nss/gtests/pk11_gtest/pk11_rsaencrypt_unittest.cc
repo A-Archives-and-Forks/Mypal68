@@ -11,8 +11,61 @@
 #include "nss.h"
 #include "nss_scoped_ptrs.h"
 #include "pk11pub.h"
+#include "databuffer.h"
+
+#include "testvectors/rsa_pkcs1_2048_test-vectors.h"
+#include "testvectors/rsa_pkcs1_3072_test-vectors.h"
+#include "testvectors/rsa_pkcs1_4096_test-vectors.h"
 
 namespace nss_test {
+
+class RsaDecryptWycheproofTest
+    : public ::testing::TestWithParam<RsaDecryptTestVector> {
+ protected:
+  void TestDecrypt(const RsaDecryptTestVector vec) {
+    SECItem pkcs8_item = {siBuffer, toUcharPtr(vec.priv_key.data()),
+                          static_cast<unsigned int>(vec.priv_key.size())};
+
+    ScopedPK11SlotInfo slot(PK11_GetInternalKeySlot());
+    EXPECT_NE(nullptr, slot);
+
+    SECKEYPrivateKey* key = nullptr;
+    SECStatus rv = PK11_ImportDERPrivateKeyInfoAndReturnKey(
+        slot.get(), &pkcs8_item, nullptr, nullptr, false, false, KU_ALL, &key,
+        nullptr);
+    ASSERT_EQ(SECSuccess, rv);
+    ASSERT_NE(nullptr, key);
+    ScopedSECKEYPrivateKey priv_key(key);
+
+    // Decrypt
+    std::vector<uint8_t> decrypted(PR_MAX(1, vec.ct.size()));
+    unsigned int decrypted_len = 0;
+    rv = PK11_PrivDecryptPKCS1(priv_key.get(), decrypted.data(), &decrypted_len,
+                               decrypted.size(), vec.ct.data(), vec.ct.size());
+
+    if (vec.valid) {
+      EXPECT_EQ(SECSuccess, rv);
+      decrypted.resize(decrypted_len);
+      EXPECT_EQ(vec.msg, decrypted);
+    } else {
+      DataBuffer::SetLogLimit(512);
+      decrypted.resize(decrypted_len);
+      EXPECT_EQ(SECFailure, rv)
+          << "Returned:" << DataBuffer(decrypted.data(), decrypted.size());
+    }
+  };
+};
+
+TEST_P(RsaDecryptWycheproofTest, Pkcs1Decrypt) { TestDecrypt(GetParam()); }
+
+INSTANTIATE_TEST_SUITE_P(WycheproofRsa2048DecryptTest, RsaDecryptWycheproofTest,
+                         ::testing::ValuesIn(kRsa2048DecryptWycheproofVectors));
+
+INSTANTIATE_TEST_SUITE_P(WycheproofRsa3072DecryptTest, RsaDecryptWycheproofTest,
+                         ::testing::ValuesIn(kRsa3072DecryptWycheproofVectors));
+
+INSTANTIATE_TEST_SUITE_P(WycheproofRsa4096DecryptTest, RsaDecryptWycheproofTest,
+                         ::testing::ValuesIn(kRsa4096DecryptWycheproofVectors));
 
 TEST(RsaEncryptTest, MessageLengths) {
   const uint8_t spki[] = {
@@ -72,4 +125,4 @@ TEST(RsaEncryptTest, MessageLengths) {
                        &ctxt_len, UINT_MAX, msg.data(), UINT_MAX, nullptr);
   ASSERT_EQ(SECFailure, rv);
 }
-}
+}  // namespace nss_test

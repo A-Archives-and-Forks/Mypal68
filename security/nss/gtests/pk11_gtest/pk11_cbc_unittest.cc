@@ -254,8 +254,8 @@ TEST_F(Pkcs11CbcPadTest, FailEncryptShortParam) {
   unsigned int encrypted_len = 0;
   size_t input_len = AES_BLOCK_SIZE;
 
-  // CK_GCM_PARAMS is the largest param struct used across AES modes
-  uint8_t param_buf[sizeof(CK_GCM_PARAMS)];
+  // CK_NSS_GCM_PARAMS is the largest param struct used across AES modes
+  uint8_t param_buf[sizeof(CK_NSS_GCM_PARAMS)];
   SECItem param = {siBuffer, param_buf, sizeof(param_buf)};
   SECItem key_item = {siBuffer, const_cast<uint8_t*>(kKeyData), 16};
 
@@ -279,18 +279,18 @@ TEST_F(Pkcs11CbcPadTest, FailEncryptShortParam) {
                     sizeof(encrypted), kInput, input_len);
   EXPECT_EQ(SECSuccess, rv);
 
-  // GCM should have a CK_GCM_PARAMS
-  param.len = sizeof(CK_GCM_PARAMS) - 1;
+  // GCM should have a CK_NSS_GCM_PARAMS
+  param.len = sizeof(CK_NSS_GCM_PARAMS) - 1;
   rv = PK11_Encrypt(key.get(), CKM_AES_GCM, &param, encrypted, &encrypted_len,
                     sizeof(encrypted), kInput, input_len);
   EXPECT_EQ(SECFailure, rv);
 
   param.len++;
-  reinterpret_cast<CK_GCM_PARAMS*>(param.data)->pIv = param_buf;
-  reinterpret_cast<CK_GCM_PARAMS*>(param.data)->ulIvLen = 12;
-  reinterpret_cast<CK_GCM_PARAMS*>(param.data)->pAAD = nullptr;
-  reinterpret_cast<CK_GCM_PARAMS*>(param.data)->ulAADLen = 0;
-  reinterpret_cast<CK_GCM_PARAMS*>(param.data)->ulTagBits = 128;
+  reinterpret_cast<CK_NSS_GCM_PARAMS*>(param.data)->pIv = param_buf;
+  reinterpret_cast<CK_NSS_GCM_PARAMS*>(param.data)->ulIvLen = 12;
+  reinterpret_cast<CK_NSS_GCM_PARAMS*>(param.data)->pAAD = nullptr;
+  reinterpret_cast<CK_NSS_GCM_PARAMS*>(param.data)->ulAADLen = 0;
+  reinterpret_cast<CK_NSS_GCM_PARAMS*>(param.data)->ulTagBits = 128;
   rv = PK11_Encrypt(key.get(), CKM_AES_GCM, &param, encrypted, &encrypted_len,
                     sizeof(encrypted), kInput, input_len);
   EXPECT_EQ(SECSuccess, rv);
@@ -551,9 +551,9 @@ TEST_P(Pkcs11CbcPadTest, EncryptDecrypt_ShortValidPadding) {
   EXPECT_EQ(0, memcmp(decrypted.data(), input.data(), decrypted_len));
 }
 
-INSTANTIATE_TEST_CASE_P(EncryptDecrypt, Pkcs11CbcPadTest,
-                        ::testing::Values(CKM_AES_CBC_PAD, CKM_AES_CBC,
-                                          CKM_DES3_CBC_PAD, CKM_DES3_CBC));
+INSTANTIATE_TEST_SUITE_P(EncryptDecrypt, Pkcs11CbcPadTest,
+                         ::testing::Values(CKM_AES_CBC_PAD, CKM_AES_CBC,
+                                           CKM_DES3_CBC_PAD, CKM_DES3_CBC));
 
 class Pkcs11AesCbcWycheproofTest
     : public ::testing::TestWithParam<AesCbcTestVector> {
@@ -600,7 +600,7 @@ class Pkcs11AesCbcWycheproofTest
 
 TEST_P(Pkcs11AesCbcWycheproofTest, TestVectors) { RunTest(GetParam()); }
 
-INSTANTIATE_TEST_CASE_P(WycheproofTestVector, Pkcs11AesCbcWycheproofTest,
-                        ::testing::ValuesIn(kCbcWycheproofVectors));
+INSTANTIATE_TEST_SUITE_P(WycheproofTestVector, Pkcs11AesCbcWycheproofTest,
+                         ::testing::ValuesIn(kCbcWycheproofVectors));
 
 }  // namespace nss_test

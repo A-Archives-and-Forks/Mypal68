@@ -28,6 +28,7 @@ const isDebugBuild = Cc["@mozilla.org/xpcom/debug;1"].getService(Ci.nsIDebug2)
 // The test EV roots are only enabled in debug builds as a security measure.
 const gEVExpected = isDebugBuild;
 
+const CLIENT_AUTH_FILE_NAME = "ClientAuthRememberList.txt";
 const SSS_STATE_FILE_NAME = "SiteSecurityServiceState.txt";
 const PRELOAD_STATE_FILE_NAME = "SecurityPreloadState.txt";
 
@@ -411,7 +412,6 @@ function getSSLStatistics() {
 // Your test script should look something like this:
 /*
 
-// -*- Mode: javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -526,10 +526,6 @@ function add_connection_test(
       if (aAfterStreamOpen) {
         aAfterStreamOpen(this.transport);
       }
-      let sslSocketControl = this.transport.securityInfo.QueryInterface(
-        Ci.nsISSLSocketControl
-      );
-      sslSocketControl.proxyStartSSL();
       this.outputStream.write("0", 1);
       let inStream = this.transport
         .openInputStream(0, 0, 0)

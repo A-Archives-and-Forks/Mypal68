@@ -275,6 +275,17 @@ typedef struct inheritanceStr inheritance;
 
 /************************************************************************/
 
+/* SSL Session Cache has a smaller set of functions to initialize than
+ * ssl does. some ssl_functions can't be initialized before NSS has been
+ * initialized, and the cache may be configured before NSS is initialized
+ * so thus the special init function */
+static SECStatus
+ssl_InitSessionCache()
+{
+    /* currently only one function, which is itself idempotent */
+    return ssl_InitializePRErrorTable();
+}
+
 /* This is used to set locking times for the cache.  It is not used to set the
  * PRTime attributes of sessions, which are driven by ss->now(). */
 static PRUint32
@@ -691,7 +702,7 @@ ServerSessionIDLookup(PRTime sslNow, const PRIPv6Addr *addr,
                 /* what the ??.  Didn't get the cert cache lock.
                 ** Don't invalidate the SID cache entry, but don't find it.
                 */
-                PORT_Assert(!("Didn't get cert Cache Lock!"));
+                PORT_AssertNotReached("Didn't get cert Cache Lock!");
                 psce = 0;
                 pcce = 0;
             }
@@ -718,7 +729,7 @@ ServerSessionIDLookup(PRTime sslNow, const PRIPv6Addr *addr,
                 /* what the ??.  Didn't get the cert cache lock.
                 ** Don't invalidate the SID cache entry, but don't find it.
                 */
-                PORT_Assert(!("Didn't get name Cache Lock!"));
+                PORT_AssertNotReached("Didn't get name Cache Lock!");
                 psce = 0;
                 psnce = 0;
             }
@@ -1164,7 +1175,7 @@ ssl_ConfigServerSessionIDCacheInstanceWithOpt(cacheDesc *cache,
 {
     SECStatus rv;
 
-    rv = ssl_Init();
+    rv = ssl_InitSessionCache();
     if (rv != SECSuccess) {
         return rv;
     }
@@ -1340,7 +1351,7 @@ SSL_InheritMPServerSIDCacheInstance(cacheDesc *cache, const char *envString)
     int locks_initialized = 0;
     int locks_to_initialize = 0;
 #endif
-    SECStatus status = ssl_Init();
+    SECStatus status = ssl_InitSessionCache();
 
     if (status != SECSuccess) {
         return status;

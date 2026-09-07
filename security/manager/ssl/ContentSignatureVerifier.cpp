@@ -12,15 +12,14 @@
 #include "cryptohi.h"
 #include "keyhi.h"
 #include "mozilla/Base64.h"
-#include "mozilla/Unused.h"
 #include "mozilla/dom/Promise.h"
 #include "nsCOMPtr.h"
 #include "nsPromiseFlatString.h"
-#include "nsProxyRelease.h"
 #include "nsSecurityHeaderParser.h"
 #include "nsWhitespaceTokenizer.h"
 #include "mozpkix/pkix.h"
 #include "mozpkix/pkixtypes.h"
+#include "mozpkix/pkixutil.h"
 #include "secerr.h"
 #include "ssl.h"
 
@@ -98,29 +97,18 @@ ContentSignatureVerifier::AsyncVerifyContentSignature(
 static nsresult VerifyContentSignatureInternal(
     const nsACString& aData, const nsACString& aCSHeader,
     const nsACString& aCertChain, const nsACString& aHostname,
-    /* out */
-    mozilla::Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS&
-        aErrorLabel,
-    /* out */ nsACString& aCertFingerprint, /* out */ uint32_t& aErrorValue);
+    /* out */ nsACString& aCertFingerprint);
 static nsresult ParseContentSignatureHeader(
     const nsACString& aContentSignatureHeader,
     /* out */ nsCString& aSignature);
 
 nsresult VerifyContentSignatureTask::CalculateResult() {
-  // 3 is the default, non-specific, "something failed" error.
-  Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS errorLabel =
-      Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS::err3;
   nsAutoCString certFingerprint;
-  uint32_t errorValue = 3;
   nsresult rv =
       VerifyContentSignatureInternal(mData, mCSHeader, mCertChain, mHostname,
-                                     errorLabel, certFingerprint, errorValue);
+                                     certFingerprint);
   if (NS_FAILED(rv)) {
     CSVerifier_LOG(("CSVerifier: Signature verification failed"));
-    if (certFingerprint.Length() > 0) {
-      Telemetry::AccumulateCategoricalKeyed(certFingerprint, errorLabel);
-    }
-    Accumulate(Telemetry::CONTENT_SIGNATURE_VERIFICATION_STATUS, errorValue);
     if (rv == NS_ERROR_INVALID_SIGNATURE) {
       return NS_OK;
     }
@@ -128,7 +116,6 @@ nsresult VerifyContentSignatureTask::CalculateResult() {
   }
 
   mSignatureVerified = true;
-  Accumulate(Telemetry::CONTENT_SIGNATURE_VERIFICATION_STATUS, 0);
 
   return NS_OK;
 }
@@ -144,7 +131,7 @@ void VerifyContentSignatureTask::CallCallback(nsresult rv) {
 bool IsNewLine(char16_t c) { return c == '\n' || c == '\r'; }
 
 nsresult ReadChainIntoCertList(const nsACString& aCertChain,
-                               CERTCertList* aCertList) {
+                               nsTArray<nsTArray<uint8_t>>& aCertList) {
   bool inBlock = false;
   bool certFound = false;
 
@@ -170,22 +157,8 @@ nsresult ReadChainIntoCertList(const nsACString& aCertChain,
           CSVerifier_LOG(("CSVerifier: decoding the signature failed"));
           return rv;
         }
-        SECItem der = {
-            siBuffer,
-            BitwiseCast<unsigned char*, const char*>(derString.get()),
-            derString.Length(),
-        };
-        UniqueCERTCertificate tmpCert(CERT_NewTempCertificate(
-            CERT_GetDefaultCertDB(), &der, nullptr, false, true));
-        if (!tmpCert) {
-          return NS_ERROR_FAILURE;
-        }
-        // if adding tmpCert succeeds, tmpCert will now be owned by aCertList
-        SECStatus res = CERT_AddCertToListTail(aCertList, tmpCert.get());
-        if (res != SECSuccess) {
-          return MapSECStatus(res);
-        }
-        Unused << tmpCert.release();
+        nsTArray<uint8_t> derBytes(derString.Data(), derString.Length());
+        aCertList.AppendElement(std::move(derBytes));
       } else {
         blockData.Append(token);
       }
@@ -212,53 +185,45 @@ nsresult ReadChainIntoCertList(const nsACString& aCertChain,
 static nsresult VerifyContentSignatureInternal(
     const nsACString& aData, const nsACString& aCSHeader,
     const nsACString& aCertChain, const nsACString& aHostname,
-    /* out */
-    Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS& aErrorLabel,
-    /* out */ nsACString& aCertFingerprint,
-    /* out */ uint32_t& aErrorValue) {
-  UniqueCERTCertList certCertList(CERT_NewCertList());
-  if (!certCertList) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  nsresult rv = ReadChainIntoCertList(aCertChain, certCertList.get());
+    /* out */ nsACString& aCertFingerprint) {
+  nsTArray<nsTArray<uint8_t>> certList;
+  nsresult rv = ReadChainIntoCertList(aCertChain, certList);
   if (NS_FAILED(rv)) {
     return rv;
   }
-
-  CERTCertListNode* node = CERT_LIST_HEAD(certCertList.get());
-  if (!node || CERT_LIST_END(node, certCertList.get()) || !node->cert) {
+  if (certList.Length() < 1) {
     return NS_ERROR_FAILURE;
   }
-
-  SECItem* certSecItem = &node->cert->derCert;
-
-  Input certDER;
+  // The 0th element should be the end-entity that issued the content
+  // signature.
+  nsTArray<uint8_t>& certBytes(certList.ElementAt(0));
+  Input certInput;
   mozilla::pkix::Result result =
-      certDER.Init(BitwiseCast<uint8_t*, unsigned char*>(certSecItem->data),
-                   certSecItem->len);
+      certInput.Init(certBytes.Elements(), certBytes.Length());
   if (result != Success) {
     return NS_ERROR_FAILURE;
   }
 
   // Get EE certificate fingerprint for telemetry.
   unsigned char fingerprint[SHA256_LENGTH] = {0};
-  SECStatus srv = PK11_HashBuf(SEC_OID_SHA256, fingerprint, certSecItem->data,
-                               AssertedCast<int32_t>(certSecItem->len));
+  SECStatus srv =
+      PK11_HashBuf(SEC_OID_SHA256, fingerprint, certInput.UnsafeGetData(),
+                   certInput.GetLength());
   if (srv != SECSuccess) {
     return NS_ERROR_FAILURE;
   }
   SECItem fingerprintItem = {siBuffer, fingerprint, SHA256_LENGTH};
-  UniquePORTString tmpFingerprintString(CERT_Hexify(&fingerprintItem, 0));
+  UniquePORTString tmpFingerprintString(
+      CERT_Hexify(&fingerprintItem, false /* don't use colon delimiters */));
   if (!tmpFingerprintString) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
   aCertFingerprint.Assign(tmpFingerprintString.get());
 
   // Check the signerCert chain is good
-  CSTrustDomain trustDomain(certCertList);
+  CSTrustDomain trustDomain(certList);
   result = BuildCertChain(
-      trustDomain, certDER, Now(), EndEntityOrCA::MustBeEndEntity,
+      trustDomain, certInput, Now(), EndEntityOrCA::MustBeEndEntity,
       KeyUsage::noParticularKeyUsageRequired, KeyPurposeId::id_kp_codeSigning,
       CertPolicyId::anyPolicy, nullptr /*stapledOCSPResponse*/);
   if (result != Success) {
@@ -267,21 +232,6 @@ static nsresult VerifyContentSignatureInternal(
       return NS_ERROR_FAILURE;
     }
     // otherwise, assume the signature was invalid
-    if (result == mozilla::pkix::Result::ERROR_EXPIRED_CERTIFICATE) {
-      aErrorLabel =
-          Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS::err4;
-      aErrorValue = 4;
-    } else if (result ==
-               mozilla::pkix::Result::ERROR_NOT_YET_VALID_CERTIFICATE) {
-      aErrorLabel =
-          Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS::err5;
-      aErrorValue = 5;
-    } else {
-      // Building cert chain failed for some other reason.
-      aErrorLabel =
-          Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS::err6;
-      aErrorValue = 6;
-    }
     CSVerifier_LOG(("CSVerifier: The supplied chain is bad (%s)",
                     MapResultToName(result)));
     return NS_ERROR_INVALID_SIGNATURE;
@@ -298,19 +248,31 @@ static nsresult VerifyContentSignatureInternal(
   }
 
   BRNameMatchingPolicy nameMatchingPolicy(BRNameMatchingPolicy::Mode::Enforce);
-  result = CheckCertHostname(certDER, hostnameInput, nameMatchingPolicy);
+  result = CheckCertHostname(certInput, hostnameInput, nameMatchingPolicy);
   if (result != Success) {
     // EE cert isnot valid for the given host name.
-    aErrorLabel = Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS::err7;
-    aErrorValue = 7;
     return NS_ERROR_INVALID_SIGNATURE;
   }
 
-  mozilla::UniqueSECKEYPublicKey key(CERT_ExtractPublicKey(node->cert));
-  // in case we were not able to extract a key
+  pkix::BackCert backCert(certInput, EndEntityOrCA::MustBeEndEntity, nullptr);
+  result = backCert.Init();
+  // This should never fail, because we've already built a verified certificate
+  // chain with this certificate.
+  if (result != Success) {
+    CSVerifier_LOG(("CSVerifier: couldn't decode certificate to get spki"));
+    return NS_ERROR_INVALID_SIGNATURE;
+  }
+  Input spkiInput = backCert.GetSubjectPublicKeyInfo();
+  SECItem spkiItem = {siBuffer, const_cast<uint8_t*>(spkiInput.UnsafeGetData()),
+                      spkiInput.GetLength()};
+  UniqueCERTSubjectPublicKeyInfo spki(
+      SECKEY_DecodeDERSubjectPublicKeyInfo(&spkiItem));
+  if (!spki) {
+    CSVerifier_LOG(("CSVerifier: couldn't decode spki"));
+    return NS_ERROR_INVALID_SIGNATURE;
+  }
+  mozilla::UniqueSECKEYPublicKey key(SECKEY_ExtractPublicKey(spki.get()));
   if (!key) {
-    aErrorLabel = Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS::err8;
-    aErrorValue = 8;
     CSVerifier_LOG(("CSVerifier: unable to extract a key"));
     return NS_ERROR_INVALID_SIGNATURE;
   }
@@ -355,32 +317,22 @@ static nsresult VerifyContentSignatureInternal(
       VFY_CreateContext(key.get(), &signatureItem, oid, nullptr));
   if (!cx) {
     // Creating context failed.
-    aErrorLabel = Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS::err9;
-    aErrorValue = 9;
     return NS_ERROR_INVALID_SIGNATURE;
   }
 
   if (VFY_Begin(cx.get()) != SECSuccess) {
     // Creating context failed.
-    aErrorLabel = Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS::err9;
-    aErrorValue = 9;
     return NS_ERROR_INVALID_SIGNATURE;
   }
   if (VFY_Update(cx.get(), kPREFIX, sizeof(kPREFIX)) != SECSuccess) {
-    aErrorLabel = Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS::err1;
-    aErrorValue = 1;
     return NS_ERROR_INVALID_SIGNATURE;
   }
   if (VFY_Update(cx.get(),
                  reinterpret_cast<const unsigned char*>(aData.BeginReading()),
                  aData.Length()) != SECSuccess) {
-    aErrorLabel = Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS::err1;
-    aErrorValue = 1;
     return NS_ERROR_INVALID_SIGNATURE;
   }
   if (VFY_End(cx.get()) != SECSuccess) {
-    aErrorLabel = Telemetry::LABELS_CONTENT_SIGNATURE_VERIFICATION_ERRORS::err1;
-    aErrorValue = 1;
     return NS_ERROR_INVALID_SIGNATURE;
   }
 
