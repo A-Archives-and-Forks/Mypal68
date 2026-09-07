@@ -91,6 +91,7 @@ with Files("nsVideoFrame.*"):
 
 EXPORTS += [
     "JustificationUtils.h",
+    "nsAtomicContainerFrame.h",
     "nsCanvasFrame.h",
     "nsContainerFrame.h",
     "nsDirection.h",

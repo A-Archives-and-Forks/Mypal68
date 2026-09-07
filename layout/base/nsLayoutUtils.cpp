@@ -36,6 +36,7 @@
 #include "mozilla/DisplayPortUtils.h"
 #include "mozilla/dom/AnonymousContent.h"
 #include "mozilla/dom/CanvasUtils.h"
+#include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/DOMRect.h"
@@ -1007,17 +1008,31 @@ nsIFrame* nsLayoutUtils::GetFloatFromPlaceholder(nsIFrame* aFrame) {
 nsIFrame* nsLayoutUtils::GetCrossDocParentFrame(const nsIFrame* aFrame,
                                                 nsPoint* aExtraOffset) {
   nsIFrame* p = aFrame->GetParent();
-  if (p) return p;
+  if (p) {
+    return p;
+  }
 
   nsView* v = aFrame->GetView();
-  if (!v) return nullptr;
+  if (!v) {
+    return nullptr;
+  }
   v = v->GetParent();  // anonymous inner view
-  if (!v) return nullptr;
-  if (aExtraOffset) {
-    *aExtraOffset += v->GetPosition();
+  if (!v) {
+    return nullptr;
   }
   v = v->GetParent();  // subdocumentframe's view
-  return v ? v->GetFrame() : nullptr;
+  if (!v) {
+    return nullptr;
+  }
+
+  p = v->GetFrame();
+  if (p && aExtraOffset) {
+    nsSubDocumentFrame* subdocumentFrame = do_QueryFrame(p);
+    MOZ_ASSERT(subdocumentFrame);
+    *aExtraOffset += subdocumentFrame->GetExtraOffset();
+  }
+
+  return p;
 }
 
 // static
@@ -3023,6 +3038,17 @@ struct TemporaryDisplayListBuilder {
   RetainedDisplayListMetrics mMetrics;
 };
 
+// Apply a batch of effects updates generated during a paint to their
+// respective remote browsers.
+static void ApplyEffectsUpdates(
+    const nsTHashMap<nsPtrHashKey<RemoteBrowser>, EffectsInfo>& aUpdates) {
+  for (const auto& entry : aUpdates) {
+    auto* browser = entry.GetKey();
+    const auto& update = entry.GetData();
+    browser->UpdateEffects(update);
+  }
+}
+
 nsresult nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext,
                                    nsIFrame* aFrame,
                                    const nsRegion& aDirtyRegion,
@@ -3136,12 +3162,23 @@ nsresult nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext,
     builder->SetInActiveDocShell(isActive);
   }
 
+  nsRect rootVisualOverflow = aFrame->InkOverflowRectRelativeToSelf();
+
+  // If we are in a remote browser, then apply clipping from ancestor browsers
+  if (BrowserChild* browserChild = BrowserChild::GetFrom(presShell)) {
+    LayoutDeviceIntRect unscaledVisibleRect = browserChild->GetVisibleRect();
+    CSSRect visibleRect =
+        unscaledVisibleRect / presContext->CSSToDevPixelScale();
+    rootVisualOverflow.IntersectRect(rootVisualOverflow,
+                                     CSSPixel::ToAppUnits(visibleRect));
+  }
+
   nsIFrame* rootScrollFrame = presShell->GetRootScrollFrame();
   if (rootScrollFrame && !aFrame->GetParent()) {
     nsIScrollableFrame* rootScrollableFrame =
         presShell->GetRootScrollFrameAsScrollable();
     MOZ_ASSERT(rootScrollableFrame);
-    nsRect displayPortBase = aFrame->InkOverflowRectRelativeToSelf();
+    nsRect displayPortBase = rootVisualOverflow;
     nsRect temp = displayPortBase;
     Unused << rootScrollableFrame->DecideScrollableLayer(
         builder, &displayPortBase, &temp,
@@ -3156,7 +3193,7 @@ nsresult nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext,
     // |ignoreViewportScrolling| and |usingDisplayPort| are persistent
     // document-rendering state.  We rely on PresShell to flush
     // retained layers as needed when that persistent state changes.
-    visibleRegion = aFrame->InkOverflowRectRelativeToSelf();
+    visibleRegion = rootVisualOverflow;
   } else {
     visibleRegion = aDirtyRegion;
   }
@@ -3499,6 +3536,11 @@ nsresult nsLayoutUtils::PaintFrame(gfxContext* aRenderingContext,
     // Disable partial updates for the following paint as well, as we now have
     // a plugin-specific display list.
     builder->SetDisablePartialUpdates(true);
+  }
+
+  // Apply effects updates if we were actually painting
+  if (isForPainting) {
+    ApplyEffectsUpdates(builder->GetEffectUpdates());
   }
 
   builder->Check();

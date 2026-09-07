@@ -263,11 +263,11 @@ static LanguageSpecificCasingBehavior GetCasingFor(const nsAtom* aLang) {
 }
 
 bool nsCaseTransformTextRunFactory::TransformString(
-    const nsAString& aString, nsString& aConvertedString, bool aAllUppercase,
-    bool aCaseTransformsOnly, const nsAtom* aLanguage,
-    nsTArray<bool>& aCharsToMergeArray, nsTArray<bool>& aDeletedCharsArray,
-    const nsTransformedTextRun* aTextRun, uint32_t aOffsetInTextRun,
-    nsTArray<uint8_t>* aCanBreakBeforeArray,
+    const nsAString& aString, nsString& aConvertedString,
+    const Maybe<StyleTextTransform>& aGlobalTransform, bool aCaseTransformsOnly,
+    const nsAtom* aLanguage, nsTArray<bool>& aCharsToMergeArray,
+    nsTArray<bool>& aDeletedCharsArray, const nsTransformedTextRun* aTextRun,
+    uint32_t aOffsetInTextRun, nsTArray<uint8_t>* aCanBreakBeforeArray,
     nsTArray<RefPtr<nsTransformedCharStyle>>* aStyleArray) {
   bool auxiliaryOutputArrays = aCanBreakBeforeArray && aStyleArray;
   MOZ_ASSERT(!auxiliaryOutputArrays || aTextRun,
@@ -287,9 +287,7 @@ bool nsCaseTransformTextRunFactory::TransformString(
   nsUGenCategory cat;
 
   StyleTextTransform style =
-      aAllUppercase ? StyleTextTransform{StyleTextTransformCase::Uppercase,
-                                         StyleTextTransformOther()}
-                    : StyleTextTransform::None();
+      aGlobalTransform.valueOr(StyleTextTransform::None());
   bool forceNonFullWidth = false;
   const nsAtom* lang = aLanguage;
 
@@ -311,10 +309,7 @@ bool nsCaseTransformTextRunFactory::TransformString(
     RefPtr<nsTransformedCharStyle> charStyle;
     if (aTextRun) {
       charStyle = aTextRun->mStyles[aOffsetInTextRun];
-      style = aAllUppercase
-                  ? StyleTextTransform{StyleTextTransformCase::Uppercase,
-                                       StyleTextTransformOther()}
-                  : charStyle->mTextTransform;
+      style = aGlobalTransform.valueOr(charStyle->mTextTransform);
       forceNonFullWidth = charStyle->mForceNonFullWidth;
 
       nsAtom* newLang =
@@ -709,8 +704,12 @@ void nsCaseTransformTextRunFactory::RebuildTextRun(
   AutoTArray<uint8_t, 50> canBreakBeforeArray;
   AutoTArray<RefPtr<nsTransformedCharStyle>, 50> styleArray;
 
+  auto globalTransform =
+      mAllUppercase
+          ? Some(StyleTextTransform{StyleTextTransformCase::Uppercase, {}})
+          : Nothing();
   bool mergeNeeded = TransformString(
-      aTextRun->mString, convertedString, mAllUppercase,
+      aTextRun->mString, convertedString, globalTransform,
       /* aCaseTransformsOnly = */ false, nullptr, charsToMergeArray,
       deletedCharsArray, aTextRun, 0, &canBreakBeforeArray, &styleArray);
 

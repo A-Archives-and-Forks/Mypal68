@@ -1567,7 +1567,7 @@ class nsCSSFrameConstructor final : public nsFrameManager {
   void AddFCItemsForAnonymousContent(
       nsFrameConstructorState& aState, nsContainerFrame* aFrame,
       const nsTArray<nsIAnonymousContentCreator::ContentInfo>& aAnonymousItems,
-      FrameConstructionItemList& aItemsToConstruct, ItemFlags aExtraFlags = {});
+      FrameConstructionItemList& aItemsToConstruct);
 
   /**
    * Construct the frames for the children of aContent.  "children" is defined

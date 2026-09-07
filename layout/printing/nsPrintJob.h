@@ -169,9 +169,6 @@ class nsPrintJob final : public nsIObserver,
    */
   void SuppressPrintPreviewUserEvents();
 
-  void BuildNestedPrintObjects(nsIDocShell* aParentNode,
-                               nsTArray<nsPrintObject*>* aDocList,
-                               const mozilla::UniquePtr<nsPrintObject>& aPO);
   nsresult ReflowDocList(const mozilla::UniquePtr<nsPrintObject>& aPO,
                          bool aSetPixelScale);
 

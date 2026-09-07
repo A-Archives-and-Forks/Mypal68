@@ -4,17 +4,20 @@
 
 #include "nsPrintJob.h"
 
+#include "nsDocShell.h"
 #include "nsReadableUtils.h"
 #include "nsCRT.h"
 
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/ComputedStyleInlines.h"
+#include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/CustomEvent.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/IntegerRange.h"
 #include "mozilla/StaticPrefs_print.h"
+#include "nsIBrowserChild.h"
 #include "nsIOService.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsPIDOMWindow.h"
@@ -86,7 +89,6 @@ static const char kPrintingPromptService[] =
 #include "nsPageSequenceFrame.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsIDocShellTreeOwner.h"
 #include "nsIWebBrowserChrome.h"
 #include "nsFrameManager.h"
 #include "mozilla/ReflowInput.h"
@@ -283,6 +285,50 @@ GetSeqFrameAndCountPagesInternal(const UniquePtr<nsPrintObject>& aPO) {
 }
 
 /**
+ * The outparam aDocList returns a (depth first) flat list of all the
+ * nsPrintObjects created.
+ */
+static void BuildNestedPrintObjects(BrowsingContext* aBrowsingContext,
+                                    const UniquePtr<nsPrintObject>& aPO,
+                                    nsTArray<nsPrintObject*>* aDocList) {
+  MOZ_ASSERT(aBrowsingContext, "Pointer is null!");
+  MOZ_ASSERT(aDocList, "Pointer is null!");
+  MOZ_ASSERT(aPO, "Pointer is null!");
+
+  for (auto& childBC : aBrowsingContext->GetChildren()) {
+    // if we no longer have a nsFrameLoader for this BrowsingContext, it's
+    // probably being torn down.
+    nsCOMPtr<nsFrameLoaderOwner> flo =
+        do_QueryInterface(childBC->GetEmbedderElement());
+    RefPtr<nsFrameLoader> frameLoader = flo ? flo->GetFrameLoader() : nullptr;
+    if (!frameLoader) {
+      continue;
+    }
+
+    // Finish performing the static clone for this BrowsingContext.
+    nsresult rv = frameLoader->FinishStaticClone();
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      continue;
+    }
+
+    auto window = childBC->GetDOMWindow();
+    if (!window) {
+      // XXXfission - handle OOP-iframes
+      continue;
+    }
+    auto childPO = MakeUnique<nsPrintObject>();
+    rv = childPO->InitAsNestedObject(childBC->GetDocShell(),
+                                     window->GetExtantDoc(), aPO.get());
+    if (NS_FAILED(rv)) {
+      MOZ_ASSERT_UNREACHABLE("Init failed?");
+    }
+    aPO->mKids.AppendElement(std::move(childPO));
+    aDocList->AppendElement(aPO->mKids.LastElement().get());
+    BuildNestedPrintObjects(childBC, aPO->mKids.LastElement(), aDocList);
+  }
+}
+
+/**
  * On platforms that support it, sets the printer name stored in the
  * nsIPrintSettings to the default printer if a printer name is not already
  * set.
@@ -385,11 +431,13 @@ nsresult nsPrintJob::Initialize(nsIDocumentViewerPrint* aDocViewerPrint,
       root &&
       root->HasAttr(kNameSpaceID_None, nsGkAtoms::mozdisallowselectionprint);
 
-  nsCOMPtr<nsIDocShellTreeOwner> owner;
-  aDocShell->GetTreeOwner(getter_AddRefs(owner));
-  nsCOMPtr<nsIWebBrowserChrome> browserChrome = do_GetInterface(owner);
-  if (browserChrome) {
-    browserChrome->IsWindowModal(&mIsForModalWindow);
+  if (nsPIDOMWindowOuter* window = aOriginalDoc->GetWindow()) {
+    if (nsCOMPtr<nsIWebBrowserChrome> wbc = window->GetWebBrowserChrome()) {
+      // We only get this in order to skip opening the progress dialog when
+      // the window is modal.  Once the platform code stops opening the
+      // progress dialog (bug 1558907), we can get rid of this.
+      wbc->IsWindowModal(&mIsForModalWindow);
+    }
   }
 
   return NS_OK;
@@ -514,11 +562,6 @@ nsresult nsPrintJob::DoCommonPrint(bool aIsPrintPreview,
     // to mPrtPreview once we've finish creating the print preview. We must
     // clear mPtrPreview so that code will use mPtr until that happens.
     mPrtPreview = nullptr;
-    nsCOMPtr<nsIContentViewer> viewer = do_QueryInterface(mDocViewerPrint);
-    if (viewer) {
-      viewer->SetTextZoom(1.0f);
-      viewer->SetFullZoom(1.0f);
-    }
 
     // ensures docShell tree navigation in frozen
     SetIsPrintPreview(true);
@@ -566,8 +609,9 @@ nsresult nsPrintJob::DoCommonPrint(bool aIsPrintPreview,
     printData->mPrintObject->mFrameType =
         printData->mIsParentAFrameSet ? eFrameSet : eDoc;
 
-    BuildNestedPrintObjects(printData->mPrintObject->mDocShell,
-                            &printData->mPrintDocList, printData->mPrintObject);
+    BuildNestedPrintObjects(
+        printData->mPrintObject->mDocShell->GetBrowsingContext(),
+        printData->mPrintObject, &printData->mPrintDocList);
   }
 
   if (!aSourceDoc->IsStaticDocument()) {
@@ -949,41 +993,6 @@ bool nsPrintJob::IsThereARangeSelection(nsPIDOMWindowOuter* aDOMWin) {
 
   // check to make sure it isn't an insertion selection
   return selection->GetRangeAt(0) && !selection->IsCollapsed();
-}
-
-//---------------------------------------------------------------------
-// Recursively build a list of sub documents to be printed
-// that mirrors the document tree
-void nsPrintJob::BuildNestedPrintObjects(nsIDocShell* aParentNode,
-                                         nsTArray<nsPrintObject*>* aDocList,
-                                         const UniquePtr<nsPrintObject>& aPO) {
-  NS_ASSERTION(aParentNode, "Pointer is null!");
-  NS_ASSERTION(aDocList, "Pointer is null!");
-  NS_ASSERTION(aPO, "Pointer is null!");
-
-  int32_t childWebshellCount;
-  aParentNode->GetInProcessChildCount(&childWebshellCount);
-  if (childWebshellCount > 0) {
-    for (int32_t i = 0; i < childWebshellCount; i++) {
-      nsCOMPtr<nsIDocShellTreeItem> child;
-      aParentNode->GetInProcessChildAt(i, getter_AddRefs(child));
-      nsCOMPtr<nsIDocShell> childAsShell(do_QueryInterface(child));
-
-      nsCOMPtr<nsIContentViewer> viewer;
-      childAsShell->GetContentViewer(getter_AddRefs(viewer));
-      if (viewer) {
-        nsCOMPtr<Document> doc = do_GetInterface(childAsShell);
-        auto childPO = MakeUnique<nsPrintObject>();
-        childPO->mParent = aPO.get();
-        nsresult rv = childPO->InitAsNestedObject(childAsShell, doc, aPO.get());
-        if (NS_FAILED(rv)) MOZ_ASSERT_UNREACHABLE("Init failed?");
-        aPO->mKids.AppendElement(std::move(childPO));
-        aDocList->AppendElement(aPO->mKids.LastElement().get());
-        BuildNestedPrintObjects(childAsShell, aDocList,
-                                aPO->mKids.LastElement());
-      }
-    }
-  }
 }
 
 //---------------------------------------------------------------------
@@ -2408,33 +2417,20 @@ already_AddRefed<nsPIDOMWindowOuter> nsPrintJob::FindFocusedDOMWindow() const {
 
 //---------------------------------------------------------------------
 bool nsPrintJob::IsWindowsInOurSubTree(nsPIDOMWindowOuter* window) const {
-  bool found = false;
-
-  // now check to make sure it is in "our" tree of docshells
   if (window) {
-    nsCOMPtr<nsIDocShell> docShell = window->GetDocShell();
-
-    if (docShell) {
-      // get this DocViewer docshell
-      nsCOMPtr<nsIDocShell> thisDVDocShell(do_QueryReferent(mDocShell));
-      while (!found) {
-        if (docShell) {
-          if (docShell == thisDVDocShell) {
-            found = true;
-            break;
-          }
-        } else {
-          break;  // at top of tree
+    nsCOMPtr<nsIDocShell> ourDocShell(do_QueryReferent(mDocShell));
+    if (ourDocShell) {
+      BrowsingContext* ourBC = ourDocShell->GetBrowsingContext();
+      BrowsingContext* bc = window->GetBrowsingContext();
+      while (bc) {
+        if (bc == ourBC) {
+          return true;
         }
-        nsCOMPtr<nsIDocShellTreeItem> docShellItemParent;
-        docShell->GetInProcessSameTypeParent(
-            getter_AddRefs(docShellItemParent));
-        docShell = do_QueryInterface(docShellItemParent);
-      }  // while
+        bc = bc->GetParent();
+      }
     }
-  }  // scriptobj
-
-  return found;
+  }
+  return false;
 }
 
 //-------------------------------------------------------
@@ -2895,12 +2891,9 @@ static void DumpViews(nsIDocShell* aDocShell, FILE* out) {
 
     // dump the views of the sub documents
     int32_t i, n;
-    aDocShell->GetInProcessChildCount(&n);
-    for (i = 0; i < n; i++) {
-      nsCOMPtr<nsIDocShellTreeItem> child;
-      aDocShell->GetInProcessChildAt(i, getter_AddRefs(child));
-      nsCOMPtr<nsIDocShell> childAsShell(do_QueryInterface(child));
-      if (childAsShell) {
+    BrowsingContext* bc = nsDocShell::Cast(aDocShell)->GetBrowsingContext();
+    for (auto& child : bc->GetChildren()) {
+      if (auto childDS = child->GetDocShell()) {
         DumpViews(childAsShell, out);
       }
     }

@@ -2653,8 +2653,8 @@ void ScrollFrameHelper::MarkRecentlyScrolled() {
     gScrollFrameActivityTracker->MarkUsed(this);
   } else {
     if (!gScrollFrameActivityTracker) {
-      gScrollFrameActivityTracker = new ScrollFrameActivityTracker(
-          SystemGroup::EventTargetFor(TaskCategory::Other));
+      gScrollFrameActivityTracker =
+          new ScrollFrameActivityTracker(GetMainThreadSerialEventTarget());
     }
     gScrollFrameActivityTracker->AddObject(this);
   }
@@ -4137,8 +4137,12 @@ bool ScrollFrameHelper::DecideScrollableLayer(
     if (aSetBase) {
       nsRect displayportBase = *aVisibleRect;
       nsPresContext* pc = mOuter->PresContext();
-      if (mIsRoot &&
-          (pc->IsRootContentDocument() || !pc->GetParentPresContext())) {
+
+      bool isContentRootDoc = pc->IsRootContentDocumentCrossProcess();
+      bool isChromeRootDoc =
+          !pc->Document()->IsContentDocument() && !pc->GetParentPresContext();
+
+      if (mIsRoot && (isContentRootDoc || isChromeRootDoc)) {
         displayportBase =
             nsRect(nsPoint(0, 0),
                    nsLayoutUtils::CalculateCompositionSizeForFrame(mOuter));
@@ -6082,7 +6086,7 @@ void ScrollFrameHelper::UpdateMinimumScaleSize(
   }
 
   nsPresContext* pc = mOuter->PresContext();
-  MOZ_ASSERT(pc->IsRootContentDocument(),
+  MOZ_ASSERT(pc->IsRootContentDocumentCrossProcess(),
              "The pres context should be for the root content document");
 
   RefPtr<MobileViewportManager> manager =

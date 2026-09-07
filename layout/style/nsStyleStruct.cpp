@@ -35,6 +35,7 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/GeckoBindings.h"
 #include "mozilla/PreferenceSheet.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticPresData.h"
 #include "mozilla/Likely.h"
 #include "nsIURI.h"
@@ -188,7 +189,7 @@ void Gecko_LoadData_Drop(StyleLoadData* aData) {
     // We want to dispatch this async to prevent reentrancy issues, as
     // imgRequestProxy going away can destroy documents, etc, see bug 1677555.
     auto task = MakeRefPtr<StyleImageRequestCleanupTask>(*aData);
-    SystemGroup::Dispatch(TaskCategory::Other, task.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, task.forget());
   }
 
   // URIs are safe to refcount from any thread.

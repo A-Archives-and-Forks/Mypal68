@@ -666,6 +666,7 @@ void nsDisplayListBuilder::EndFrame() {
   mFrameToAnimatedGeometryRootMap.Clear();
   mAGRBudgetSet.Clear();
   mActiveScrolledRoots.Clear();
+  mEffectsUpdates.Clear();
   FreeClipChains();
   FreeTemporaryItems();
   nsCSSRendering::EndFrameTreesLocked();
@@ -2284,6 +2285,7 @@ FrameLayerBuilder* nsDisplayList::BuildLayers(nsDisplayListBuilder* aBuilder,
                                               bool aIsWidgetTransaction) {
   nsIFrame* frame = aBuilder->RootReferenceFrame();
   nsPresContext* presContext = frame->PresContext();
+  PresShell* presShell = presContext->PresShell();
 
   FrameLayerBuilder* layerBuilder = new FrameLayerBuilder();
   layerBuilder->Init(aBuilder, aLayerManager);
@@ -2316,9 +2318,17 @@ FrameLayerBuilder* nsDisplayList::BuildLayers(nsDisplayListBuilder* aBuilder,
       rootLayer->SetScrollMetadata(nsTArray<ScrollMetadata>());
     }
 
-    float rootLayerResolution = 1.0f;
-    ContainerLayerParameters containerParameters(rootLayerResolution,
-                                                 rootLayerResolution);
+    float resolutionUniform = 1.0f;
+    float resolutionX = resolutionUniform;
+    float resolutionY = resolutionUniform;
+
+    // If we are in a remote browser, then apply scaling from ancestor browsers
+    if (BrowserChild* browserChild = BrowserChild::GetFrom(presShell)) {
+      resolutionX *= browserChild->GetEffectsInfo().mScaleX;
+      resolutionY *= browserChild->GetEffectsInfo().mScaleY;
+    }
+
+    ContainerLayerParameters containerParameters(resolutionX, resolutionY);
 
     {
       PaintTelemetry::AutoRecord record(PaintTelemetry::Metric::Layerization);
@@ -2341,6 +2351,8 @@ FrameLayerBuilder* nsDisplayList::BuildLayers(nsDisplayListBuilder* aBuilder,
     if (!root) {
       return nullptr;
     }
+    // Root is being scaled up by the X/Y resolution. Scale it back down.
+    root->SetPostScale(1.0f / resolutionX, 1.0f / resolutionY);
 
     auto callback = [root](ScrollableLayerGuid::ViewID aScrollId) -> bool {
       return nsLayoutUtils::ContainsMetricsWithId(root, aScrollId);

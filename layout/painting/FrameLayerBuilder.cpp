@@ -40,7 +40,9 @@
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/SVGIntegrationUtils.h"
 #include "mozilla/Unused.h"
+#include "mozilla/dom/EffectsInfo.h"
 #include "mozilla/dom/ProfileTimelineMarkerBinding.h"
+#include "mozilla/dom/RemoteBrowser.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/Matrix.h"
 #include "mozilla/gfx/Tools.h"
@@ -54,6 +56,7 @@
 #include "nsDocShell.h"
 #include "nsIScrollableFrame.h"
 #include "nsImageFrame.h"
+#include "nsSubDocumentFrame.h"
 #include "nsLayoutUtils.h"
 #include "nsPresContext.h"
 #include "nsPrintfCString.h"
@@ -407,7 +410,7 @@ DisplayItemData::~DisplayItemData() {
   }
 }
 
-void DisplayItemData::ClearAnimationCompositorState() {
+void DisplayItemData::NotifyRemoved() {
   if (mDisplayItemKey > static_cast<uint8_t>(DisplayItemType::TYPE_MAX)) {
     // This is sort of a hack. The display item key has higher bits set, which
     // means that it is not the only display item for the frame.
@@ -416,6 +419,24 @@ void DisplayItemData::ClearAnimationCompositorState() {
   }
 
   const DisplayItemType type = GetDisplayItemTypeFromKey(mDisplayItemKey);
+
+  if (type == DisplayItemType::TYPE_REMOTE) {
+    // TYPE_REMOTE doesn't support merging, so access it directly
+    MOZ_ASSERT(mFrameList.Length() == 1);
+    if (mFrameList.Length() != 1) {
+      return;
+    }
+
+    // This is a remote browser that is going away, notify it that it is now
+    // hidden
+    nsIFrame* frame = mFrameList[0];
+    nsSubDocumentFrame* subdoc = static_cast<nsSubDocumentFrame*>(frame);
+    nsFrameLoader* frameLoader = subdoc->FrameLoader();
+    if (frameLoader && frameLoader->GetRemoteBrowser()) {
+      frameLoader->GetRemoteBrowser()->UpdateEffects(
+          mozilla::dom::EffectsInfo::FullyHidden());
+    }
+  }
 
   if (type != DisplayItemType::TYPE_TRANSFORM &&
       type != DisplayItemType::TYPE_OPACITY &&
@@ -2258,6 +2279,18 @@ void FrameLayerBuilder::RemoveFrameFromLayerManager(nsIFrame* aFrame) {
     data->mParent->mDisplayItems.pop_back();
   }
 
+  if (aFrame->IsSubDocumentFrame()) {
+    const nsSubDocumentFrame* subdoc =
+        static_cast<const nsSubDocumentFrame*>(aFrame);
+    nsFrameLoader* frameLoader = subdoc->FrameLoader();
+    if (frameLoader && frameLoader->GetRemoteBrowser()) {
+      // This is a remote browser that is going away, notify it that it is now
+      // hidden
+      frameLoader->GetRemoteBrowser()->UpdateEffects(
+          mozilla::dom::EffectsInfo::FullyHidden());
+    }
+  }
+
   arrayCopy.Clear();
   delete array;
   sDestroyedFrame = nullptr;
@@ -2311,7 +2344,7 @@ void FrameLayerBuilder::WillEndTransaction() {
             GetLastPaintOffset(t), did->mTransform);
       }
 
-      did->ClearAnimationCompositorState();
+      did->NotifyRemoved();
 
       // Remove this item. Swapping it with the last element first is
       // quicker than erasing from the middle.
@@ -4625,6 +4658,7 @@ void ContainerState::ProcessDisplayItems(nsDisplayList* aList) {
       transformNode = transformNode->Parent();
     }
 
+    nsRect itemVisibleRectAu = itemContent;
     if (transformNode) {
       // If we are within transform, transform itemContent and itemDrawRect.
       MOZ_ASSERT(transformNode);
@@ -4790,6 +4824,15 @@ void ContainerState::ProcessDisplayItems(nsDisplayList* aList) {
       ContainerLayerParameters params = mParameters;
       params.mBackgroundColor = uniformColor;
       params.mLayerCreationHint = GetLayerCreationHint(itemAGR);
+      if (!transformNode) {
+        params.mItemVisibleRect = &itemVisibleRectAu;
+      } else {
+        // We only use mItemVisibleRect for getting the visible rect for
+        // remote browsers (which should never have inactive transforms), so we
+        // avoid doing transforms on itemVisibleRectAu above and can't report
+        // an accurate bounds here.
+        params.mItemVisibleRect = nullptr;
+      }
       params.mScrollMetadataASR =
           ActiveScrolledRoot::IsAncestor(scrollMetadataASR,
                                          mContainerScrollMetadataASR)

@@ -9514,7 +9514,7 @@ inline void nsCSSFrameConstructor::ConstructFramesFromItemList(
 void nsCSSFrameConstructor::AddFCItemsForAnonymousContent(
     nsFrameConstructorState& aState, nsContainerFrame* aFrame,
     const nsTArray<nsIAnonymousContentCreator::ContentInfo>& aAnonymousItems,
-    FrameConstructionItemList& aItemsToConstruct, ItemFlags aExtraFlags) {
+    FrameConstructionItemList& aItemsToConstruct) {
   for (const auto& info : aAnonymousItems) {
     nsIContent* content = info.mContent;
     // Gecko-styled nodes should have no pending restyle flags.
@@ -9532,11 +9532,9 @@ void nsCSSFrameConstructor::AddFCItemsForAnonymousContent(
 
     RefPtr<ComputedStyle> computedStyle = ResolveComputedStyle(content);
 
-    ItemFlags flags = aExtraFlags;
-    flags += ItemFlag::AllowPageBreak;
-
     AddFrameConstructionItemsInternal(aState, content, aFrame, true,
-                                      computedStyle, flags, aItemsToConstruct);
+                                      computedStyle, {ItemFlag::AllowPageBreak},
+                                      aItemsToConstruct);
   }
 }
 

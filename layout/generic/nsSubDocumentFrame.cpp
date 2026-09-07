@@ -12,6 +12,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/Unused.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/HTMLFrameElement.h"
 #include "mozilla/dom/BrowserParent.h"
@@ -55,7 +56,6 @@ using namespace mozilla;
 using namespace mozilla::layers;
 using namespace mozilla::dom;
 using namespace mozilla::gfx;
-using mozilla::layout::RenderFrame;
 
 static Document* GetDocumentFromView(nsView* aView) {
   MOZ_ASSERT(aView, "null view");
@@ -1135,6 +1135,11 @@ nsView* nsSubDocumentFrame::EnsureInnerView() {
   return mInnerView;
 }
 
+nsPoint nsSubDocumentFrame::GetExtraOffset() const {
+  MOZ_ASSERT(mInnerView);
+  return mInnerView->GetPosition();
+}
+
 nsIFrame* nsSubDocumentFrame::ObtainIntrinsicSizeFrame() const {
   if (StyleDisplay()->IsContainSize()) {
     // Intrinsic size of 'contain:size' replaced elements is 0,0. So, don't use
@@ -1218,14 +1223,9 @@ nsDisplayRemote::nsDisplayRemote(nsDisplayListBuilder* aBuilder,
 
   nsFrameLoader* frameLoader = GetFrameLoader();
   MOZ_ASSERT(frameLoader && frameLoader->IsRemoteFrame());
-  mLayersId = frameLoader->GetLayersId();
-
-  if (nsFrameLoader* frameLoader = GetFrameLoader()) {
-    // TODO: We need to handle acquiring a TabId in the remote sub-frame case
-    // for fission.
-    if (BrowserParent* browser = BrowserParent::GetFrom(frameLoader)) {
-      mTabId = browser->GetTabId();
-    }
+  if (frameLoader->GetRemoteBrowser()) {
+    mLayersId = frameLoader->GetLayersId();
+    mTabId = frameLoader->GetRemoteBrowser()->GetTabId();
   }
 }
 
@@ -1256,6 +1256,26 @@ already_AddRefed<mozilla::layers::Layer> nsDisplayRemote::BuildLayer(
 
   if (!mLayersId.IsValid()) {
     return nullptr;
+  }
+
+  if (RefPtr<RemoteBrowser> remoteBrowser =
+          GetFrameLoader()->GetRemoteBrowser()) {
+    // Adjust mItemVisibleRect, which is relative to the reference frame, to be
+    // relative to this frame
+    nsRect visibleRect;
+    if (aContainerParameters.mItemVisibleRect) {
+      visibleRect = *aContainerParameters.mItemVisibleRect - ToReferenceFrame();
+    } else {
+      visibleRect = mFrame->GetContentRectRelativeToSelf();
+    }
+
+    // Generate an effects update notifying the browser it is visible
+    aBuilder->AddEffectUpdate(remoteBrowser,
+                              EffectsInfo::VisibleWithinRect(
+                                  visibleRect, aContainerParameters.mXScale,
+                                  aContainerParameters.mYScale));
+    // FrameLayerBuilder will take care of notifying the browser when it is no
+    // longer visible
   }
 
   RefPtr<Layer> layer =
@@ -1310,6 +1330,25 @@ bool nsDisplayRemote::CreateWebRenderCommands(
   if (!mLayersId.IsValid()) {
     return true;
   }
+
+#ifdef MOZ_BUILD_WEBRENDER
+  if (RefPtr<RemoteBrowser> remoteBrowser =
+          GetFrameLoader()->GetRemoteBrowser()) {
+    // Generate an effects update notifying the browser it is visible
+    // TODO - Gather visibleRect and scaling factors
+    aDisplayListBuilder->AddEffectUpdate(
+        remoteBrowser, EffectsInfo::VisibleWithinRect(
+                           mFrame->GetContentRectRelativeToSelf(), 1.0f, 1.0f));
+
+    // Create a WebRenderRemoteData to notify the RemoteBrowser when it is no
+    // longer visible
+    RefPtr<WebRenderRemoteData> userData =
+        aManager->CommandBuilder()
+            .CreateOrRecycleWebRenderUserData<WebRenderRemoteData>(
+                this, aBuilder.GetRenderRoot(), nullptr);
+    userData->SetRemoteBrowser(remoteBrowser);
+  }
+#endif
 
   mOffset = GetContentRectLayerOffset(mFrame, aDisplayListBuilder);
 

@@ -82,11 +82,9 @@ bool nsDisplayColumnRule::CreateWebRenderCommands(
     return true;
   }
 
-#  ifdef MOZ_BUILD_WEBRENDER
   for (auto& renderer : mBorderRenderers) {
     renderer.CreateWebRenderCommands(this, aBuilder, aResources, aSc);
   }
-#  endif
 
   return true;
 }

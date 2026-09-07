@@ -7,6 +7,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/BrowserParent.h"
+#include "mozilla/dom/EffectsInfo.h"
 #include "mozilla/layers/CompositorBridgeParent.h"
 #include "mozilla/layers/CompositorTypes.h"
 #include "mozilla/layers/LayerTransactionParent.h"

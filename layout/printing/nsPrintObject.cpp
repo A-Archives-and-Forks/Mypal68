@@ -11,7 +11,6 @@
 #include "nsPresContext.h"
 #include "nsGkAtoms.h"
 #include "nsComponentManagerUtils.h"
-#include "nsIDocShellTreeItem.h"
 #include "nsIBaseWindow.h"
 #include "nsDocShell.h"
 
@@ -48,10 +47,9 @@ nsPrintObject::~nsPrintObject() {
 
   DestroyPresentation();
   if (mDidCreateDocShell && mDocShell) {
-    nsCOMPtr<nsIBaseWindow> baseWin(do_QueryInterface(mDocShell));
-    if (baseWin) {
-      baseWin->Destroy();
-    }
+    RefPtr<BrowsingContext> bc(mDocShell->GetBrowsingContext());
+    nsDocShell::Cast(mDocShell)->Destroy();
+    bc->Detach();
   }
   mDocShell = nullptr;
   mTreeOwner = nullptr;  // mTreeOwner must be released after mDocShell;
@@ -77,12 +75,10 @@ nsresult nsPrintObject::InitAsRootObject(nsIDocShell* aDocShell, Document* aDoc,
     // is detached from any browser window or tab.
 
     // Create a new BrowsingContext to create our DocShell in.
-    RefPtr<BrowsingContext> bc = BrowsingContext::Create(
+    RefPtr<BrowsingContext> bc = BrowsingContext::CreateWindowless(
         /* aParent */ nullptr,
         /* aOpener */ nullptr, EmptyString(),
-        aDocShell->ItemType() == nsIDocShellTreeItem::typeContent
-            ? BrowsingContext::Type::Content
-            : BrowsingContext::Type::Chrome);
+        nsDocShell::Cast(aDocShell)->GetBrowsingContext()->GetType());
 
     // Create a container docshell for printing.
     mDocShell = nsDocShell::Create(bc);

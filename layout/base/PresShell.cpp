@@ -38,7 +38,6 @@
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Unused.h"
 #include "mozilla/ViewportUtils.h"
-#include "MobileViewportManager.h"
 #include <algorithm>
 
 #ifdef XP_WIN
@@ -1050,7 +1049,7 @@ void PresShell::Init(nsPresContext* aPresContext, nsViewManager* aViewManager) {
 
   mTouchManager.Init(this, mDocument);
 
-  if (mPresContext->IsRootContentDocument()) {
+  if (mPresContext->IsRootContentDocumentCrossProcess()) {
     mZoomConstraintsClient = new ZoomConstraintsClient();
     mZoomConstraintsClient->Init(this, mDocument);
 
@@ -1059,7 +1058,7 @@ void PresShell::Init(nsPresContext* aPresContext, nsViewManager* aViewManager) {
   }
 
   if (nsCOMPtr<nsIDocShell> docShell = mPresContext->GetDocShell()) {
-    BrowsingContext* bc = nsDocShell::Cast(docShell)->GetBrowsingContext();
+    BrowsingContext* bc = docShell->GetBrowsingContext();
     bool embedderFrameIsHidden = true;
     if (Element* embedderElement = bc->GetEmbedderElement()) {
       if (auto embedderFrame = embedderElement->GetPrimaryFrame()) {
@@ -3583,12 +3582,20 @@ bool PresShell::ScrollFrameRectIntoView(nsIFrame* aFrame, const nsRect& aRect,
     }
     if (!parent && !(aScrollFlags & ScrollFlags::ScrollNoParentFrames)) {
       nsPoint extraOffset(0, 0);
+      int32_t APD = container->PresContext()->AppUnitsPerDevPixel();
       parent = nsLayoutUtils::GetCrossDocParentFrame(container, &extraOffset);
       if (parent) {
-        int32_t APD = container->PresContext()->AppUnitsPerDevPixel();
         int32_t parentAPD = parent->PresContext()->AppUnitsPerDevPixel();
         rect = rect.ScaleToOtherAppUnitsRoundOut(APD, parentAPD);
         rect += extraOffset;
+      } else {
+        nsCOMPtr<nsIDocShell> docShell =
+            container->PresContext()->GetDocShell();
+        if (BrowserChild* browserChild = BrowserChild::GetFrom(docShell)) {
+          // Defer to the parent document if this is an out-of-process iframe.
+          Unused << browserChild->SendScrollRectIntoView(
+              rect, aVertical, aHorizontal, aScrollFlags, APD);
+        }
       }
     }
     container = parent;
@@ -5176,7 +5183,7 @@ void PresShell::UpdateCanvasBackground() {
           drawBackgroundColor);
     }
     mHasCSSBackgroundColor = drawBackgroundColor;
-    if (mPresContext->IsRootContentDocument() &&
+    if (mPresContext->IsRootContentDocumentCrossProcess() &&
         !IsTransparentContainerElement(mPresContext)) {
       mCanvasBackgroundColor = NS_ComposeColors(
           GetDefaultBackgroundColorToDraw(), mCanvasBackgroundColor);
@@ -5802,7 +5809,7 @@ bool PresShell::AssumeAllFramesVisible() {
   // Note that it's not safe to call IsRootContentDocument() if we're
   // currently being destroyed, so we have to check that first.
   if (!mHaveShutDown && !mIsDestroying &&
-      !mPresContext->IsRootContentDocument()) {
+      !mPresContext->IsRootContentDocumentInProcess()) {
     nsPresContext* presContext =
         mPresContext->GetInProcessRootContentDocumentPresContext();
     if (presContext && presContext->PresShell()->AssumeAllFramesVisible()) {
@@ -10494,7 +10501,7 @@ void PresShell::UpdateViewportOverridden(bool aAfterInitialization) {
     // have one.
     MOZ_ASSERT(!mMobileViewportManager);
 
-    if (mPresContext->IsRootContentDocument()) {
+    if (mPresContext->IsRootContentDocumentCrossProcess()) {
       // Store the resolution so we can restore to this resolution when
       // the MVM is destroyed.
       mDocument->SetSavedResolutionBeforeMVM(mResolution.valueOr(1.0f));
@@ -10944,7 +10951,7 @@ void PresShell::SetIsUnderHiddenEmbedderElement(
   mUnderHiddenEmbedderElement = aUnderHiddenEmbedderElement;
 
   if (nsCOMPtr<nsIDocShell> docShell = mPresContext->GetDocShell()) {
-    BrowsingContext* bc = nsDocShell::Cast(docShell)->GetBrowsingContext();
+    BrowsingContext* bc = docShell->GetBrowsingContext();
 
     // Propagate to children.
     for (BrowsingContext* child : bc->GetChildren()) {

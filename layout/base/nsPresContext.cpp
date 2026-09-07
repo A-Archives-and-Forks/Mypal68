@@ -27,6 +27,7 @@
 #include "mozilla/MediaFeatureChange.h"
 #include "nsIContent.h"
 #include "nsIFrame.h"
+#include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "nsIPrintSettings.h"
@@ -325,6 +326,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsPresContext)
   // NS_RELEASE(tmp->mLanguage); // an atom
   // NS_IMPL_CYCLE_COLLECTION_UNLINK(mTheme); // a service
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPrintSettings);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_PTR
 
   tmp->Destroy();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
@@ -647,18 +649,15 @@ nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
         "How did we end up with a presshell if our parent doesn't "
         "have one?");
     if (parent && parent->GetPresContext()) {
-      nsCOMPtr<nsIDocShellTreeItem> ourItem = mDocument->GetDocShell();
-      if (ourItem) {
-        nsCOMPtr<nsIDocShellTreeItem> parentItem;
-        ourItem->GetInProcessSameTypeParent(getter_AddRefs(parentItem));
-        if (parentItem) {
-          Element* containingElement =
-              parent->FindContentForSubDocument(mDocument);
-          if (!containingElement->IsXULElement() ||
-              !containingElement->HasAttr(kNameSpaceID_None,
-                                          nsGkAtoms::forceOwnRefreshDriver)) {
-            mRefreshDriver = parent->GetPresContext()->RefreshDriver();
-          }
+      // XXX the document can change in AttachPresShell, does this work?
+      dom::BrowsingContext* browsingContext = mDocument->GetBrowsingContext();
+      if (browsingContext && !browsingContext->IsTop()) {
+        Element* containingElement =
+            parent->FindContentForSubDocument(mDocument);
+        if (!containingElement->IsXULElement() ||
+            !containingElement->HasAttr(kNameSpaceID_None,
+                                        nsGkAtoms::forceOwnRefreshDriver)) {
+          mRefreshDriver = parent->GetPresContext()->RefreshDriver();
         }
       }
     }
@@ -762,6 +761,30 @@ void nsPresContext::AttachPresShell(mozilla::PresShell* aPresShell) {
   }
 
   UpdateCharSet(doc->GetDocumentCharacterSet());
+}
+
+void nsPresContext::RecomputeBrowsingContextDependentData() {
+  MOZ_ASSERT(mDocument);
+  dom::Document* doc = mDocument;
+  // Resource documents inherit all this state from their display document.
+  while (dom::Document* outer = doc->GetDisplayDocument()) {
+    doc = outer;
+  }
+  auto* browsingContext = doc->GetBrowsingContext();
+  if (!browsingContext) {
+    // This can legitimately happen for e.g. SVG images. Those just get scaled
+    // as a result of the zoom on the embedder document so it doesn't really
+    // matter...
+    return;
+  }
+  SetFullZoom(browsingContext->FullZoom());
+  SetTextZoom(browsingContext->TextZoom());
+  mDocument->EnumerateExternalResources([](dom::Document& aSubResource) {
+    if (nsPresContext* subResourcePc = aSubResource.GetPresContext()) {
+      subResourcePc->RecomputeBrowsingContextDependentData();
+    }
+    return false;
+  });
 }
 
 void nsPresContext::DetachPresShell() {
@@ -1021,8 +1044,13 @@ void nsPresContext::SetFullZoom(float aZoom) {
   mDeviceContext->SetFullZoom(aZoom);
 
   NS_ASSERTION(!mSuppressResizeReflow,
-               "two zooms happening at the same time? impossible!");
-  mSuppressResizeReflow = true;
+               "two zooms happening at the same time? Impossible!");
+
+  // We can't suppress the resize reflow if we support APZ zooming, as MVM
+  // relies on ResizeReflowIgnoreOverride() actually updating layout to update
+  // the viewport based on that.
+  RefPtr<MobileViewportManager> mvm = mPresShell->GetMobileViewportManager();
+  mSuppressResizeReflow = !mvm;
 
   mFullZoom = aZoom;
 
@@ -1384,8 +1412,8 @@ void nsPresContext::UIResolutionChangedSync() {
   }
 }
 
-static void NotifyTabUIResolutionChanged(BrowserParent* aTab, void* aArg) {
-  aTab->UIResolutionChanged();
+static void NotifyTabUIResolutionChanged(nsIRemoteTab* aTab, void* aArg) {
+  aTab->NotifyResolutionChanged();
 }
 
 static void NotifyChildrenUIResolutionChanged(nsPIDOMWindowOuter* aWindow) {
@@ -2310,8 +2338,12 @@ size_t nsPresContext::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const {
 }
 
 bool nsPresContext::IsRootContentDocument() const {
-  // We are a root content document if: we are not a resource doc, we are
-  // not chrome, and we either have no parent or our parent is chrome.
+  // Default to the in process version for now, but we should try
+  // to remove callers of this.
+  return IsRootContentDocumentInProcess();
+}
+
+bool nsPresContext::IsRootContentDocumentInProcess() const {
   if (mDocument->IsResourceDoc()) {
     return false;
   }
@@ -2334,6 +2366,14 @@ bool nsPresContext::IsRootContentDocument() const {
 
   nsIFrame* f = view->GetFrame();
   return (f && f->PresContext()->IsChrome());
+}
+
+bool nsPresContext::IsRootContentDocumentCrossProcess() const {
+  if (mDocument->IsResourceDoc()) {
+    return false;
+  }
+
+  return mDocument->IsTopLevelContentDocument();
 }
 
 void nsPresContext::NotifyNonBlankPaint() {
