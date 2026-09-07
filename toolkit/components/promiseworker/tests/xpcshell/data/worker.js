@@ -33,4 +33,8 @@ var Agent = {
   throwError(msg, ...args) {
     throw new Error(msg);
   },
+
+  throwValue(value) {
+    throw value;
+  },
 };

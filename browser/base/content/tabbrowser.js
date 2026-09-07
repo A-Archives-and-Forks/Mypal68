@@ -850,6 +850,27 @@
     },
 
     /**
+     * Returns true when the browser is displaying an internal error page.
+     */
+    isErrorPage(aBrowser) {
+      let isErrorURI = aURI =>
+        aURI &&
+        /^(?:about:(?:neterror|certerror|blocked)|moz-neterror:)/.test(
+          aURI.spec
+        );
+
+      if (isErrorURI(aBrowser.documentURI)) {
+        return true;
+      }
+
+      // During an E10S location/icon notification race, documentURI can still
+      // refer to the previous document while the content principal already
+      // belongs to the error page.
+      let principal = aBrowser.contentPrincipal;
+      return !!(principal && isErrorURI(principal.URI));
+    },
+
+    /**
      * Sets an icon for the tab if the URI is defined in FAVICON_DEFAULTS.
      */
     setDefaultIcon(aTab, aURI) {
@@ -869,6 +890,16 @@
       aIconURL = makeString(aIconURL);
       aOriginalURL = makeString(aOriginalURL);
 
+      let browser = this.getBrowserForTab(aTab);
+      if (
+        this.isErrorPage(browser) &&
+        (browser.mIconURL || aTab.hasAttribute("image"))
+      ) {
+        // Keep the previous site icon on an error page. If there was no
+        // previous icon, the error page's warning icon is still allowed.
+        return;
+      }
+
       let LOCAL_PROTOCOLS = ["chrome:", "about:", "resource:", "data:"];
 
       if (
@@ -882,7 +913,6 @@
         return;
       }
 
-      let browser = this.getBrowserForTab(aTab);
       browser.mIconURL = aIconURL;
 
       if (aIconURL != aTab.getAttribute("image")) {
@@ -2700,6 +2730,7 @@
         }
       } catch (e) {
         Cu.reportError("Failed to create tab");
+        this._invalidateCachedTabs();
         Cu.reportError(e);
         t.remove();
         if (t.linkedBrowser) {
@@ -5897,7 +5928,9 @@
         // flickering. Don't clear the icon if we already set it from one of the
         // known defaults. Note we use the original URL since about:newtab
         // redirects to a prerendered page.
+        let isErrorPage = gBrowser.isErrorPage(this.mBrowser);
         if (
+          !isErrorPage &&
           !this.mBrowser.mIconURL &&
           !ignoreBlank &&
           !(originalLocation.spec in FAVICON_DEFAULTS)
@@ -6029,6 +6062,7 @@
           // if onLocationChange was triggered by a pushState or a
           // replaceState (bug 550565) or a hash change (bug 408415).
           if (
+            !isErrorPage &&
             !this.mTab.hasAttribute("pending") &&
             aWebProgress.isLoadingDocument
           ) {

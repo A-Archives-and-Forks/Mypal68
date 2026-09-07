@@ -88,6 +88,11 @@ function compressFileContent(array, options = {}) {
   } else {
     throw new TypeError("compressFileContent requires a size");
   }
+  let stageCallback = options._compressionStageCallback;
+  if (typeof stageCallback == "function") {
+    stageCallback("before", inputBytes, 0);
+  }
+
   let maxCompressedSize = Primitives.maxCompressedSize(inputBytes);
   let outputArray = new Uint8Array(HEADER_SIZE + maxCompressedSize);
 
@@ -103,7 +108,15 @@ function compressFileContent(array, options = {}) {
   let view = new DataView(outputArray.buffer);
   view.setUint32(MAGIC_NUMBER.byteLength, inputBytes, true);
 
-  return new Uint8Array(outputArray.buffer, 0, HEADER_SIZE + compressedSize);
+  let result = new Uint8Array(
+    outputArray.buffer,
+    0,
+    HEADER_SIZE + compressedSize
+  );
+  if (typeof stageCallback == "function") {
+    stageCallback("after", inputBytes, result.byteLength);
+  }
+  return result;
 }
 exports.compressFileContent = compressFileContent;
 

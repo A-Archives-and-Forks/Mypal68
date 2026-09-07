@@ -128,6 +128,76 @@
 #  include "ProfilerMarkerPayload.h"
 #endif
 
+#include "nsITimer.h"
+
+// Check if destination is loopback/localhost
+static bool IsTargetLocalhost(nsIURI* aURI) {
+  if (!aURI) return false;
+  nsAutoCString host;
+  if (NS_FAILED(aURI->GetAsciiHost(host)) || host.IsEmpty()) return false;
+
+  return host.LowerCaseEqualsLiteral("localhost") ||
+         StringEndsWith(host, ".localhost"_ns) ||
+         host.EqualsLiteral("127.0.0.1") || host.EqualsLiteral("0.0.0.0") ||
+         host.EqualsLiteral("::1") || host.EqualsLiteral("[::1]") ||
+         host.Find("127.") == 0;
+}
+
+// Check if initiator is a third-party/remote web origin
+static bool IsRemoteOriginInitiator(nsILoadInfo* aLoadInfo) {
+  if (!aLoadInfo) return false;
+
+  // Allow top-level user address bar navigation (typing localhost:8080)
+  if (aLoadInfo->GetExternalContentPolicyType() == ExtContentPolicy::TYPE_DOCUMENT) {
+    return false;
+  }
+
+  nsIPrincipal* trigPrin = aLoadInfo->TriggeringPrincipal();
+  if (!trigPrin || trigPrin->IsSystemPrincipal()) {
+    return false;  // Browser internal / Chrome
+  }
+
+  nsCOMPtr<nsIURI> trigURI;
+  BasePrincipal::Cast(trigPrin)->GetURI(getter_AddRefs(trigURI));
+  if (trigURI) {
+    // Allow local development (e.g. localhost:3000 fetching localhost:8080)
+    if (IsTargetLocalhost(trigURI) || trigURI->SchemeIs("file") ||
+        trigURI->SchemeIs("moz-extension") || trigURI->SchemeIs("about")) {
+      return false;
+    }
+    // Remote web page (http:// or https://) attempting to probe localhost
+    if (trigURI->SchemeIs("http") || trigURI->SchemeIs("https")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+namespace {
+
+class TimeoutsCallback final : public nsITimerCallback {
+ public:
+  explicit TimeoutsCallback(nsHttpChannel* aChan) : mChan(aChan) {}
+
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSITIMERCALLBACK
+
+ private:
+  ~TimeoutsCallback() = default;
+  RefPtr<nsHttpChannel> mChan;
+};
+
+NS_IMPL_ISUPPORTS(TimeoutsCallback, nsITimerCallback)
+
+NS_IMETHODIMP
+TimeoutsCallback::Notify(nsITimer* aTimer) {
+  mChan->CloseCacheEntry(false);
+  Unused << mChan->AsyncAbort(NS_ERROR_NET_TIMEOUT);
+  return NS_OK;
+}
+
+}  // namespace
+
 namespace mozilla {
 
 using namespace dom;
@@ -5913,6 +5983,22 @@ nsresult nsHttpChannel::AsyncOpenFinal(TimeStamp aTimeStamp) {
   // Remember we have Authorization header set here.  We need to check on it
   // just once and early, AsyncOpen is the best place.
   StoreCustomAuthHeader(mRequestHead.HasHeader(nsHttp::Authorization));
+
+  // --- LOCALHOST PORTSCAN TIMEOUT DEFENSE ---
+  bool blockPortScan = Preferences::GetBool(
+      "network.security.localhost_portscan_delay.enabled", false);
+  if (blockPortScan && IsTargetLocalhost(mURI) &&
+      IsRemoteOriginInitiator(mLoadInfo)) {
+    uint32_t delayMs = Preferences::GetUint(
+        "network.security.localhost_portscan_delay.ms", 5000);
+    nsCOMPtr<nsITimerCallback> callback = new TimeoutsCallback(this);
+    nsCOMPtr<nsITimer> timer;
+    NS_NewTimerWithCallback(getter_AddRefs(timer), callback, delayMs,
+                            nsITimer::TYPE_ONE_SHOT);
+
+    return NS_OK;  // Keep channel pending until timer fires or script times out
+  }
+  // ------------------------------------------
 
   if (!NS_ShouldClassifyChannel(this)) {
     return MaybeResolveProxyAndBeginConnect();

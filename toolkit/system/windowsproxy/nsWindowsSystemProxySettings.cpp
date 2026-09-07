@@ -82,7 +82,24 @@ static nsresult ReadInternetOption(uint32_t aOption, uint32_t& aFlags,
   unsigned long size = sizeof(INTERNET_PER_CONN_OPTION_LISTW);
   if (!InternetQueryOptionW(nullptr, INTERNET_OPTION_PER_CONNECTION_OPTION,
                             &list, &size)) {
-    return NS_ERROR_FAILURE;
+    // Bug 1366133 / Windows XP: INTERNET_PER_CONN_FLAGS_UI is only
+    // available on Windows 7 / IE8+.  On older systems (notably Windows XP,
+    // which ships IE6/IE7) the query fails with ERROR_INVALID_PARAMETER and
+    // we must fall back to the plain INTERNET_PER_CONN_FLAGS option.
+    // (This is the same fallback that shipped in the last XP-supporting
+    // Firefox release, 52.x ESR.)
+    if (GetLastError() != ERROR_INVALID_PARAMETER) {
+      return NS_ERROR_FAILURE;
+    }
+    options[0].dwOption = INTERNET_PER_CONN_FLAGS;
+    size = sizeof(INTERNET_PER_CONN_OPTION_LISTW);
+    MOZ_SEH_TRY {
+      if (!InternetQueryOptionW(nullptr, INTERNET_OPTION_PER_CONNECTION_OPTION,
+                                &list, &size)) {
+        return NS_ERROR_FAILURE;
+      }
+    }
+    MOZ_SEH_EXCEPT(EXCEPTION_EXECUTE_HANDLER) { return NS_ERROR_FAILURE; }
   }
 
   aFlags = options[0].Value.dwValue;

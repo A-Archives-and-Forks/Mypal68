@@ -103,6 +103,14 @@ RefPtr<GenericPromise> FileMediaResource::Close() {
     mChannel->Cancel(NS_ERROR_PARSED_DATA_CACHED);
     mChannel = nullptr;
   }
+  {
+    MutexAutoLock lock(mLock);
+    if (mInput) {
+       mInput->Close();
+       mInput = nullptr;
+    }
+    mSeekable = nullptr;
+  }
 
   return GenericPromise::CreateAndResolve(true, __func__);
 }
@@ -215,6 +223,17 @@ nsresult FileMediaResource::UnsafeSeek(int32_t aWhence, int64_t aOffset) {
   if (!mSeekable) return NS_ERROR_FAILURE;
   EnsureSizeInitialized();
   return mSeekable->Seek(aWhence, aOffset);
+}
+
+void FileMediaResource::Suspend(bool aCloseImmediately) {
+  MutexAutoLock lock(mLock);
+  if (aCloseImmediately && mInput) {
+    if (nsCOMPtr<nsIInputStream> input = mInput) {
+      input->Close();
+    }
+    mInput = nullptr;
+    mSeekable = nullptr;
+  }
 }
 
 }  // namespace mozilla

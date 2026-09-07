@@ -29,6 +29,13 @@ worker.close = function() {
   self.close();
 };
 
+let Debugging = false;
+worker.log = function(...args) {
+  if (Debugging) {
+    dump("SessionWorker: " + args.join(" ") + "\n");
+  }
+};
+
 self.addEventListener("message", msg => worker.handleMessage(msg));
 
 // The various possible states
@@ -108,6 +115,7 @@ var Agent = {
       "maxUpgradeBackups",
       "maxSerializeBack",
       "maxSerializeForward",
+      "debug",
     ]) {
       if (!prefs.hasOwnProperty(pref)) {
         throw new TypeError(`Missing preference value for ${pref}`);
@@ -120,6 +128,7 @@ var Agent = {
     this.maxUpgradeBackups = prefs.maxUpgradeBackups;
     this.maxSerializeBack = prefs.maxSerializeBack;
     this.maxSerializeForward = prefs.maxSerializeForward;
+    Debugging = prefs.debug;
     this.upgradeBackupNeeded = paths.nextUpgradeBackup != paths.upgradeBackup;
     return { result: true };
   },
@@ -160,8 +169,32 @@ var Agent = {
       }
     }
 
+    worker.log("write: before JSON.stringify");
     let stateString = JSON.stringify(state);
+    worker.log(
+      "write: after JSON.stringify; stateString.length =",
+      stateString.length
+    );
+    worker.log(
+      "write: before TextEncoder.encode; stateString.length =",
+      stateString.length
+    );
     let data = Encoder.encode(stateString);
+    worker.log(
+      "write: after TextEncoder.encode; data.byteLength =",
+      data.byteLength
+    );
+
+    let compressionStageCallback = Debugging
+      ? (stage, inputBytes, outputBytes) => {
+          worker.log(
+            `write: ${stage} LZ4 compression; input bytes =`,
+            inputBytes,
+            "; output bytes =",
+            outputBytes
+          );
+        }
+      : null;
 
     try {
       if (this.state == STATE_CLEAN || this.state == STATE_EMPTY) {
@@ -198,6 +231,7 @@ var Agent = {
         File.writeAtomic(this.Paths.clean, data, {
           tmpPath: this.Paths.clean + ".tmp",
           compression: "lz4",
+          _compressionStageCallback: compressionStageCallback,
         });
         fileStat = File.stat(this.Paths.clean);
       } else if (this.state == STATE_RECOVERY) {
@@ -211,6 +245,7 @@ var Agent = {
           tmpPath: this.Paths.recovery + ".tmp",
           backupTo: this.Paths.recoveryBackup,
           compression: "lz4",
+          _compressionStageCallback: compressionStageCallback,
         });
         fileStat = File.stat(this.Paths.recovery);
       } else {
@@ -220,6 +255,7 @@ var Agent = {
         File.writeAtomic(this.Paths.recovery, data, {
           tmpPath: this.Paths.recovery + ".tmp",
           compression: "lz4",
+          _compressionStageCallback: compressionStageCallback,
         });
         fileStat = File.stat(this.Paths.recovery);
       }

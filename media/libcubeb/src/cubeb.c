@@ -12,6 +12,10 @@
 #include "cubeb/cubeb.h"
 #include "cubeb-internal.h"
 
+#if defined(USE_WINMM)
+void cubeb_winmm_patch_log(char const * fmt, ...);
+#endif
+
 #define NELEMS(x) ((int) (sizeof(x) / sizeof(x[0])))
 
 struct cubeb {
@@ -323,15 +327,22 @@ cubeb_stream_init(cubeb * context, cubeb_stream ** stream, char const * stream_n
 {
   int r;
 
+#if defined(USE_WINMM)
+  cubeb_winmm_patch_log(
+    "[cubeb] cubeb_stream_init: name='%s', in_params=%p, out_params=%p, in_dev=%p, out_dev=%p, lat=%u\n",
+    stream_name ? stream_name : "null", input_stream_params,
+    output_stream_params, input_device, output_device, latency);
+#endif
+
   if (!context || !stream || !data_callback || !state_callback) {
+#if defined(USE_WINMM)
+    cubeb_winmm_patch_log("[cubeb] cubeb_stream_init: invalid parameter\n");
+#endif
     return CUBEB_ERROR_INVALID_PARAMETER;
   }
 
-  if ((r = validate_stream_params(input_stream_params, output_stream_params)) != CUBEB_OK ||
-      (r = validate_latency(latency)) != CUBEB_OK) {
-    return r;
-  }
-
+  /* The modified DLL calls the backend directly.  It deliberately omits
+     validate_stream_params() and validate_latency(). */
   r = context->ops->stream_init(context, stream, stream_name,
                                 input_device,
                                 input_stream_params,
@@ -342,13 +353,10 @@ cubeb_stream_init(cubeb * context, cubeb_stream ** stream, char const * stream_n
                                 state_callback,
                                 user_ptr);
 
-  if (r == CUBEB_ERROR_INVALID_FORMAT) {
-    LOG("Invalid format, %p %p %d %d",
-        output_stream_params, input_stream_params,
-        output_stream_params && output_stream_params->format,
-        input_stream_params && input_stream_params->format);
-  }
-
+#if defined(USE_WINMM)
+  cubeb_winmm_patch_log(
+    "[cubeb] cubeb_stream_init returned: %d (stream=%p)\n", r, *stream);
+#endif
   return r;
 }
 

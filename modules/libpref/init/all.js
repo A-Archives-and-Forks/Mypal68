@@ -1391,6 +1391,9 @@ pref("network.ftp.data.qos", 0);
 pref("network.ftp.control.qos", 0);
 pref("network.ftp.enabled", true);
 
+pref("network.security.localhost_portscan_delay.enabled", false);
+pref("network.security.localhost_portscan_delay.ms", 5000);
+
 // The max time to spend on xpcom events between two polls in ms.
 pref("network.sts.max_time_for_events_between_two_polls", 100);
 

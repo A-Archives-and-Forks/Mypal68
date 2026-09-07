@@ -1083,6 +1083,11 @@ function getDefaultFileName(
 
 function validateFileName(aFileName) {
   let processed = DownloadPaths.sanitize(aFileName) || "_";
+  // Truncate very long filenames to prevent blank default in file picker
+  const MAX_FILENAME_LENGTH = 240; // safe margin below Windows 255 limit
+  if (processed.length > MAX_FILENAME_LENGTH) {
+    processed = processed.substring(0, MAX_FILENAME_LENGTH);
+  }
   if (AppConstants.platform == "android") {
     // If a large part of the filename has been sanitized, then we
     // will use a default filename instead

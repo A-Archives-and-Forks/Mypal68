@@ -282,6 +282,7 @@ class nsHttpChannel final : public HttpBaseChannel,
 #ifdef MOZ_GECKO_PROFILER
   CacheDisposition mCacheDisposition;
 #endif
+  void CloseCacheEntry(bool doomOnFailure);
 
  protected:
   virtual ~nsHttpChannel();
@@ -412,7 +413,6 @@ class nsHttpChannel final : public HttpBaseChannel,
                                      int64_t* aContentLength);
   bool ShouldUpdateOfflineCacheEntry();
   MOZ_MUST_USE nsresult ReadFromCache(bool alreadyMarkedValid);
-  void CloseCacheEntry(bool doomOnFailure);
   void CloseOfflineCacheEntry();
   MOZ_MUST_USE nsresult InitCacheEntry();
   void UpdateInhibitPersistentCachingFlag();

@@ -8146,7 +8146,12 @@ function switchToTabHavingURI(aURI, aOpenNew, aOpenParams = {}) {
         }
 
         if (!doAdopt) {
-          aWindow.gBrowser.tabContainer.selectedIndex = i;
+          let tab = aWindow.gBrowser.getTabForBrowser(browser);
+          if (tab) {
+            aWindow.gBrowser.selectedTab = tab;      // identity, not index
+          } else {
+            aWindow.gBrowser.tabContainer.selectedIndex = i;
+          }
         }
 
         return true;

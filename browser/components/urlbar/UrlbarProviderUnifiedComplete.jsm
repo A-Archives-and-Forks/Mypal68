@@ -95,16 +95,49 @@ class ProviderUnifiedComplete extends UrlbarProvider {
     let instance = {};
     this.queries.set(queryContext, instance);
     let urls = new Set();
-    await unifiedComplete.wrappedJSObject.startQuery(queryContext, acResult => {
-      let results = convertLegacyAutocompleteResult(
-        queryContext,
-        acResult,
-        urls
+    let addedAny = false;
+    try {
+      await unifiedComplete.wrappedJSObject.startQuery(queryContext, acResult => {
+        let results = convertLegacyAutocompleteResult(
+          queryContext,
+          acResult,
+          urls
+        );
+        for (let result of results) {
+          addedAny = true;
+          addCallback(this, result);
+        }
+      });
+    } catch (ex) {
+      Cu.reportError(
+        `[urlbar-keyword-fix] UnifiedComplete query threw for "` +
+          queryContext.searchString + `": ${ex}`
       );
-      for (let result of results) {
-        addCallback(this, result);
+      try {
+        if (!addedAny) {
+          let engine = Services.search.defaultEngine;
+          let fallback = new UrlbarResult(
+            UrlbarUtils.RESULT_TYPE.SEARCH,
+            UrlbarUtils.RESULT_SOURCE.SEARCH,
+            ...UrlbarResult.payloadAndSimpleHighlights(
+              queryContext.tokens || [],
+              {
+                engine: [engine && engine.name, true],
+                suggestion: [undefined, true],
+                keyword: [undefined, true],
+                query: [queryContext.searchString.trim(), true],
+                icon: [null, false],
+                keywordOffer: UrlbarUtils.KEYWORD_OFFER.NONE,
+              }
+            )
+          );
+          fallback.heuristic = true;
+          addCallback(this, fallback);
+        }
+      } catch (ex2) {
+        Cu.reportError(`[urlbar-keyword-fix] fallback heuristic failed: ${ex2}`);
       }
-    });
+    }
     this.queries.delete(queryContext);
   }
 

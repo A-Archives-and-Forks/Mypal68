@@ -100,6 +100,32 @@
       this._setupTextboxEventListeners();
       this._initTextbox();
 
+      // If the searchbar was moved between the toolbar and the overflow panel,
+      // custom element disconnection removed the old input element. Restore the
+      // user's pending query into the freshly-created input.
+      if (this._savedTextboxValue !== undefined) {
+        this._textbox.value = this._savedTextboxValue;
+        this.updateGoButtonVisibility();
+
+        if (
+          typeof this._savedTextboxSelectionStart == "number" &&
+          typeof this._savedTextboxSelectionEnd == "number"
+        ) {
+          try {
+            this._textbox.setSelectionRange(
+             this._savedTextboxSelectionStart,
+              this._savedTextboxSelectionEnd,
+              this._savedTextboxSelectionDirection || "none"
+            );
+          } catch (ex) {}
+        }
+
+        delete this._savedTextboxValue;
+        delete this._savedTextboxSelectionStart;
+        delete this._savedTextboxSelectionEnd;
+        delete this._savedTextboxSelectionDirection;
+      }
+
       window.addEventListener("unload", this.destroy);
 
       this.FormHistory = ChromeUtils.import(
@@ -376,6 +402,16 @@
     }
 
     disconnectedCallback() {
+      // Moving the searchbar into/out of the toolbar overflow disconnects this
+      // custom element. The markup is destroyed below, so save the live input
+      // state on the persistent <searchbar> element first.
+      if (this._textbox) {
+        this._savedTextboxValue = this._textbox.value;
+        this._savedTextboxSelectionStart = this._textbox.selectionStart;
+        this._savedTextboxSelectionEnd = this._textbox.selectionEnd;
+        this._savedTextboxSelectionDirection = this._textbox.selectionDirection;
+      }
+
       this.destroy();
       while (this.firstChild) {
         this.firstChild.remove();

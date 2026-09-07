@@ -127,6 +127,26 @@ add_task(async function test_throw_error() {
   }
 });
 
+add_task(async function test_throw_primitive_value() {
+  let rejection = null;
+  try {
+    await worker.post("throwValue", ["primitive worker error"]);
+  } catch (ex) {
+    rejection = ex;
+  }
+
+  Assert.ok(rejection, "A primitive value thrown by the worker should reject");
+  let message = String(rejection);
+  Assert.ok(
+    message.includes("primitive worker error"),
+    "The original primitive exception should be reported"
+  );
+  Assert.ok(
+    !message.includes("toMsg"),
+    "Exception handling should not mask the primitive exception"
+  );
+});
+
 add_task(async function test_terminate() {
   let previousWorker = worker._worker;
 

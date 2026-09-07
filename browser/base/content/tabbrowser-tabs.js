@@ -916,10 +916,8 @@
     // Accessor for tabs.  arrowScrollbox has two non-tab elements at the
     // end, everything else is <tab>s
     get allTabs() {
-      let children = Array.from(this.arrowScrollbox.children);
-      children.pop();
-      children.pop();
-      return children;
+      return Array.from(this.arrowScrollbox.children)
+                  .filter(n => n.tagName === "tab");
     }
 
     appendChild(tab) {

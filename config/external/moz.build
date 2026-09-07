@@ -49,8 +49,10 @@ if CONFIG['CPU_ARCH'] == 'arm':
 if CONFIG['MOZ_FFVPX']:
     external_dirs += ['media/ffvpx']
 
+if not CONFIG['MOZ_LIBAV_FFT']:
+    external_dirs += ['media/kiss_fft']
+
 external_dirs += [
-    'media/kiss_fft',
     'media/libcubeb',
     'media/libnestegg',
     'media/libogg',

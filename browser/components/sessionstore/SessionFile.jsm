@@ -376,6 +376,10 @@ var SessionFileInternal = {
             PREF_MAX_SERIALIZE_FWD,
             -1
           ),
+          debug: Services.prefs.getBoolPref(
+            "browser.sessionstore.debug",
+            false
+          ),
         },
       ])
         .catch(err => {
@@ -404,6 +408,10 @@ var SessionFileInternal = {
       // Flag as not-initialized, to ensure that the worker state init is performed
       // upon the next request.
       this._initializationStarted = false;
+      // The replacement worker starts with a clean health record. Without
+      // resetting this counter, every subsequent write terminates its worker,
+      // even when that write succeeded.
+      this._workerHealth.failures = 0;
     }
   },
 

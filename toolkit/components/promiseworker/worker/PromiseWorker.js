@@ -167,7 +167,12 @@ AbstractWorker.prototype = {
       } else {
         this.postMessage({ ok: result, id, durationMs });
       }
-    } else if (exn.constructor.name in EXCEPTION_NAMES) {
+    } else if (
+      exn !== null &&
+      (typeof exn == "object" || typeof exn == "function") &&
+      exn.constructor &&
+      exn.constructor.name in EXCEPTION_NAMES
+    ) {
       // Rather than letting the DOM mechanism [de]serialize built-in
       // JS errors, which loses lots of information (in particular,
       // the constructor name, the moduleName and the moduleStack),
@@ -181,7 +186,11 @@ AbstractWorker.prototype = {
         stack: exn.moduleStack,
       };
       this.postMessage({ fail: error, id, durationMs });
-    } else if ("toMsg" in exn) {
+    } else if (
+      exn !== null &&
+      (typeof exn == "object" || typeof exn == "function") &&
+      "toMsg" in exn
+    ) {
       // Extension mechanism for exception [de]serialization. We
       // assume that any exception with a method `toMsg()` knows how
       // to serialize itself. The other side is expected to have

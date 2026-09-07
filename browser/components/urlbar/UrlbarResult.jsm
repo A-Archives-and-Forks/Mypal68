@@ -207,11 +207,23 @@ class UrlbarResult {
 
     let entries = Object.entries(payloadInfo);
     return [
-      entries.reduce((payload, [name, [val, _]]) => {
-        payload[name] = val;
+      entries.reduce((payload, [name, entryValue]) => {
+        // [urlbar-keyword-fix #682/#620] Tolerate bare (non-array) payload
+        // values. The search-engine result passes `keywordOffer` as a bare
+        // enum number; destructuring it as [val, _] threw "is not iterable"
+        // (here, UrlbarResult.jsm:210), aborting the whole urlbar query so the
+        // suggestions box never opened when keyword.enabled was true.
+        payload[name] = Array.isArray(entryValue) ? entryValue[0] : entryValue;
         return payload;
       }, {}),
-      entries.reduce((highlights, [name, [val, shouldHighlight]]) => {
+      entries.reduce((highlights, [name, entryValue]) => {
+        let val, shouldHighlight;
+        if (Array.isArray(entryValue)) {
+          [val, shouldHighlight] = entryValue;
+        } else {
+          val = entryValue;
+          shouldHighlight = false;
+        }
         if (shouldHighlight) {
           highlights[name] = !Array.isArray(val)
             ? UrlbarUtils.getTokenMatches(tokens, val || "")
