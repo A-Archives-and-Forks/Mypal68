@@ -140,7 +140,7 @@ static void freeCurrencyFormat(CURRENCYFMTW *fmt)
 }
 
 Win32NumberFormat::Win32NumberFormat(const Locale &locale, UBool currency, UErrorCode &status)
-  : NumberFormat(), fCurrency(currency), fFormatInfo(NULL), fFractionDigitsSet(FALSE)
+  : NumberFormat(), fCurrency(currency), fFormatInfo(NULL), fFractionDigitsSet(false)
 {
     if (!U_FAILURE(status)) {
         fLCID = locale.getLCID();
@@ -238,13 +238,13 @@ void Win32NumberFormat::parse(const UnicodeString& text, Formattable& result, Pa
 }
 void Win32NumberFormat::setMaximumFractionDigits(int32_t newValue)
 {
-    fFractionDigitsSet = TRUE;
+    fFractionDigitsSet = true;
     NumberFormat::setMaximumFractionDigits(newValue);
 }
 
 void Win32NumberFormat::setMinimumFractionDigits(int32_t newValue)
 {
-    fFractionDigitsSet = TRUE;
+    fFractionDigitsSet = true;
     NumberFormat::setMinimumFractionDigits(newValue);
 }
 

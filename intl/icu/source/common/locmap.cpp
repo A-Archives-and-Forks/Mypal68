@@ -1053,7 +1053,7 @@ uprv_convertToPosix(uint32_t hostid, char *posixID, int32_t posixIDCapacity, UEr
 {
     uint16_t langID;
     uint32_t localeIndex;
-    UBool bLookup = TRUE;
+    UBool bLookup = true;
     const char *pPosixID = NULL;
 
 #if U_PLATFORM_HAS_WIN32_API && UCONFIG_USE_WINDOWS_LCID_MAPPING_API
@@ -1191,7 +1191,7 @@ uprv_convertToLCIDPlatform(const char* localeID, UErrorCode* status)
 
     char asciiBCP47Tag[LOCALE_NAME_MAX_LENGTH] = {};
     // this will change it from de_DE@collation=phonebook to de-DE-u-co-phonebk form
-    (void)uloc_toLanguageTag(mylocaleID, asciiBCP47Tag, UPRV_LENGTHOF(asciiBCP47Tag), FALSE, status);
+    (void)uloc_toLanguageTag(mylocaleID, asciiBCP47Tag, UPRV_LENGTHOF(asciiBCP47Tag), false, status);
 
     if (U_SUCCESS(*status))
     {

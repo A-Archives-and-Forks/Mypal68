@@ -84,7 +84,7 @@ UnicodeString* Win32DateFormat::getTimeDateFormat(const Calendar *cal, const Loc
     }
     const UChar *resStr = ures_getStringByIndex(patBundle, glueIndex, &resStrLen, &status);
 
-    result = new UnicodeString(TRUE, resStr, resStrLen);
+    result = new UnicodeString(true, resStr, resStrLen);
 
     ures_close(patBundle);
     ures_close(typBundle);
@@ -294,7 +294,7 @@ UnicodeString Win32DateFormat::setTimeZoneInfo(TIME_ZONE_INFORMATION *tzi, const
 
         zone.getID(icuid);
         if (! uprv_getWindowsTimeZoneInfo(tzi, icuid.getBuffer(), icuid.length())) {
-            UBool found = FALSE;
+            UBool found = false;
             int32_t ec = TimeZone::countEquivalentIDs(icuid);
 
             for (int z = 0; z < ec; z += 1) {
