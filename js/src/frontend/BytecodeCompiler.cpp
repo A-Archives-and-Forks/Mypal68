@@ -178,8 +178,8 @@ class MOZ_STACK_CLASS ScriptCompiler : public SourceAwareCompiler<Unit> {
 
 #ifdef JS_ENABLE_SMOOSH
 [[nodiscard]] static bool TrySmoosh(
-    JSContext* cx, ErrorContext* ec, CompilationInput& input,
-    JS::SourceText<mozilla::Utf8Unit>& srcBuf,
+    JSContext* cx, ErrorContext* ec, JS::NativeStackLimit stackLimit,
+    CompilationInput& input, JS::SourceText<mozilla::Utf8Unit>& srcBuf,
     UniquePtr<ExtensibleCompilationStencil>& stencilOut) {
   MOZ_ASSERT(!stencilOut);
 
@@ -188,8 +188,8 @@ class MOZ_STACK_CLASS ScriptCompiler : public SourceAwareCompiler<Unit> {
   }
 
   JSRuntime* rt = cx->runtime();
-  if (!Smoosh::tryCompileGlobalScriptToExtensibleStencil(cx, ec, input, srcBuf,
-                                                         stencilOut)) {
+  if (!Smoosh::tryCompileGlobalScriptToExtensibleStencil(
+          cx, ec, stackLimit, input, srcBuf, stencilOut)) {
     return false;
   }
 
@@ -210,8 +210,8 @@ class MOZ_STACK_CLASS ScriptCompiler : public SourceAwareCompiler<Unit> {
 }
 
 [[nodiscard]] static bool TrySmoosh(
-    JSContext* cx, ErrorContext* ec, CompilationInput& input,
-    JS::SourceText<char16_t>& srcBuf,
+    JSContext* cx, ErrorContext* ec, JS::NativeStackLimit stackLimit,
+    CompilationInput& input, JS::SourceText<char16_t>& srcBuf,
     UniquePtr<ExtensibleCompilationStencil>& stencilOut) {
   MOZ_ASSERT(!stencilOut);
   return true;
@@ -235,7 +235,7 @@ template <typename Unit>
 #ifdef JS_ENABLE_SMOOSH
   {
     UniquePtr<ExtensibleCompilationStencil> extensibleStencil;
-    if (!TrySmoosh(cx, ec, input, srcBuf, extensibleStencil)) {
+    if (!TrySmoosh(cx, ec, stackLimit, input, srcBuf, extensibleStencil)) {
       return false;
     }
     if (extensibleStencil) {

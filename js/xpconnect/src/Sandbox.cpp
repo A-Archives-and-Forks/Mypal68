@@ -104,7 +104,8 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(SandboxPrivate)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(SandboxPrivate)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
-  // NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_PTR 1645510 1535617
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_REFERENCE
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_PTR
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mModuleLoader)
   tmp->UnlinkObjectsInGlobal();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
@@ -966,6 +967,8 @@ bool xpc::GlobalProperties::Parse(JSContext* cx, JS::HandleObject obj) {
       structuredClone = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "indexedDB")) {
       indexedDB = true;
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "isSecureContext")) {
+      isSecureContext = true;
 #ifdef MOZ_WEBRTC
     } else if (JS_LinearStringEqualsLiteral(nameStr, "rtcIdentityProvider")) {
       rtcIdentityProvider = true;
@@ -1125,6 +1128,15 @@ bool xpc::GlobalProperties::Define(JSContext* cx, JS::HandleObject obj) {
     return false;
   }
 
+  // Note that isSecureContext here doesn't mean the context is actually secure
+  // - just that the caller wants the property defined
+  if (isSecureContext) {
+    bool hasSecureContext = IsSecureContextOrObjectIsFromSecureContext(cx, obj);
+    JS::Rooted<JS::Value> secureJsValue(cx, JS::BooleanValue(hasSecureContext));
+    return JS_DefineProperty(cx, obj, "isSecureContext", secureJsValue,
+                             JSPROP_ENUMERATE);
+  }
+
 #ifdef MOZ_WEBRTC
   if (rtcIdentityProvider && !SandboxCreateRTCIdentityProvider(cx, obj)) {
     return false;
@@ -1227,6 +1239,15 @@ nsresult xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp,
                                   SandboxOptions& options) {
   // Create the sandbox global object
   nsCOMPtr<nsIPrincipal> principal = do_QueryInterface(prinOrSop);
+  nsCOMPtr<nsIGlobalObject> obj = do_QueryInterface(prinOrSop);
+  if (obj) {
+    nsGlobalWindowInner* window =
+        WindowOrNull(js::UncheckedUnwrap(obj->GetGlobalJSObject(), false));
+    // If we have a secure context window inherit from it's parent
+    if (window && window->IsSecureContext()) {
+      options.forceSecureContext = true;
+    }
+  }
   if (!principal) {
     nsCOMPtr<nsIScriptObjectPrincipal> sop = do_QueryInterface(prinOrSop);
     if (sop) {
@@ -1243,11 +1264,16 @@ nsresult xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp,
 
   auto& creationOptions = realmOptions.creationOptions();
 
-  // XXXjwatt: Consider whether/when sandboxes should be able to see
-  // [SecureContext] API (bug 1273687).  In that case we'd call
-  // creationOptions.setSecureContext(true).
-
   bool isSystemPrincipal = principal->IsSystemPrincipal();
+
+  if (isSystemPrincipal) {
+    options.forceSecureContext = true;
+  }
+
+  // If we are able to see [SecureContext] API code
+  if (options.forceSecureContext) {
+    creationOptions.setSecureContext(true);
+  }
 
   xpc::SetPrefableRealmOptions(realmOptions);
   if (options.sameZoneAs) {
@@ -1858,6 +1884,7 @@ bool SandboxOptions::Parse() {
             ParseBoolean("wantExportHelpers", &wantExportHelpers) &&
             ParseBoolean("isWebExtensionContentScript",
                          &isWebExtensionContentScript) &&
+            ParseBoolean("forceSecureContext", &forceSecureContext) &&
             ParseString("sandboxName", sandboxName) &&
             ParseObject("sameZoneAs", &sameZoneAs) &&
             ParseBoolean("freshCompartment", &freshCompartment) &&
@@ -2012,7 +2039,8 @@ nsresult nsXPCComponents_utils_Sandbox::CallOrConstruct(
 
 nsresult xpc::EvalInSandbox(JSContext* cx, HandleObject sandboxArg,
                             const nsAString& source, const nsACString& filename,
-                            int32_t lineNo, MutableHandleValue rval) {
+                            int32_t lineNo, bool enforceFilenameRestrictions,
+                            MutableHandleValue rval) {
   JS_AbortIfWrongThread(cx);
   rval.set(UndefinedValue());
 
@@ -2053,6 +2081,7 @@ nsresult xpc::EvalInSandbox(JSContext* cx, HandleObject sandboxArg,
 
     JS::CompileOptions options(sandcx);
     options.setFileAndLine(filenameBuf.get(), lineNo);
+    options.setSkipFilenameValidation(!enforceFilenameRestrictions);
     MOZ_ASSERT(JS_IsGlobalObject(sandbox));
 
     const nsPromiseFlatString& flat = PromiseFlatString(source);

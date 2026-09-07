@@ -192,6 +192,7 @@
          "fractionalSecondDigits")                                             \
   MACRO_(frame, frame, "frame")                                                \
   MACRO_(from, from, "from")                                                   \
+  MACRO_(fromAsync, fromAsync, "fromAsync")                                    \
   MACRO_(fulfilled, fulfilled, "fulfilled")                                    \
   MACRO_(futexNotEqual, futexNotEqual, "not-equal")                            \
   MACRO2(futexOK, futexOK, "ok")                                               \
@@ -223,9 +224,8 @@
   MACRO_(global, global, "global")                                             \
   MACRO_(globalThis, globalThis, "globalThis")                                 \
   MACRO_(group, group, "group")                                                \
-  MACRO_(groupBy, groupBy, "groupBy")                                          \
-  MACRO_(groupByToMap, groupByToMap, "groupByToMap")                           \
   MACRO_(groups, groups, "groups")                                             \
+  MACRO_(groupToMap, groupToMap, "groupToMap")                                 \
   MACRO_(h11, h11, "h11")                                                      \
   MACRO_(h12, h12, "h12")                                                      \
   MACRO_(h23, h23, "h23")                                                      \
@@ -1121,10 +1121,9 @@
   MACRO_(weekend, weekend, "weekend")                                          \
   MACRO_(while, while_, "while")                                               \
   MACRO_(with, with, "with")                                                   \
-  MACRO_(withAt, withAt, "withAt")                                             \
-  MACRO_(withReversed, withReversed, "withReversed")                           \
-  MACRO_(withSorted, withSorted, "withSorted")                                 \
-  MACRO_(withSpliced, withSpliced, "withSpliced")                              \
+  MACRO_(toReversed, toReversed, "toReversed")                                 \
+  MACRO_(toSorted, toSorted, "toSorted")                                       \
+  MACRO_(toSpliced, toSpliced, "toSpliced")                                    \
   MACRO_(writable, writable, "writable")                                       \
   MACRO_(write, write, "write")                                                \
   MACRO_(year, year, "year")                                                   \

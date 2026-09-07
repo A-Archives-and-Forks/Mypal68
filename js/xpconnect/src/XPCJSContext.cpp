@@ -732,7 +732,13 @@ static mozilla::Atomic<bool> sWeakRefsExposeCleanupSome(false);
 static mozilla::Atomic<bool> sIteratorHelpersEnabled(false);
 static mozilla::Atomic<bool> sShadowRealmsEnabled(false);
 #ifdef NIGHTLY_BUILD
-static mozilla::Atomic<bool> sArrayGroupingEnabled(true);
+static mozilla::Atomic<bool> sArrayGroupingEnabled(false);
+static mozilla::Atomic<bool> sWellFormedUnicodeStringsEnabled(false);
+#endif
+static mozilla::Atomic<bool> sChangeArrayByCopyEnabled(false);
+static mozilla::Atomic<bool> sArrayFromAsyncEnabled(false);
+#ifdef ENABLE_NEW_SET_METHODS
+static mozilla::Atomic<bool> sEnableNewSetMethods(false);
 #endif
 
 static JS::WeakRefSpecifier GetWeakRefsEnabled() {
@@ -756,9 +762,12 @@ void xpc::SetPrefableRealmOptions(JS::RealmOptions& options) {
       .setShadowRealmsEnabled(sShadowRealmsEnabled)
 #ifdef NIGHTLY_BUILD
       .setArrayGroupingEnabled(sArrayGroupingEnabled)
+      .setWellFormedUnicodeStringsEnabled(sWellFormedUnicodeStringsEnabled)
 #endif
+      .setChangeArrayByCopyEnabled(sChangeArrayByCopyEnabled)
+      .setArrayFromAsyncEnabled(sArrayFromAsyncEnabled)
 #ifdef ENABLE_NEW_SET_METHODS
-      .setNewSetMethodsEnabled(enableNewSetMethods)
+      .setNewSetMethodsEnabled(sEnableNewSetMethods)
 #endif
       ;
 }
@@ -788,10 +797,6 @@ void xpc::SetPrefableContextOptions(JS::ContextOptions& options) {
       .setAsyncStack(Preferences::GetBool(JS_OPTIONS_DOT_STR "asyncstack"))
       .setAsyncStackCaptureDebuggeeOnly(Preferences::GetBool(
           JS_OPTIONS_DOT_STR "asyncstack_capture_debuggee_only"))
-#ifdef ENABLE_CHANGE_ARRAY_BY_COPY
-      .setChangeArrayByCopy(Preferences::GetBool(
-          JS_OPTIONS_DOT_STR "experimental.enable_change_array_by_copy"))
-#endif
 #ifdef NIGHTLY_BUILD
       .setImportAssertions(Preferences::GetBool(
           JS_OPTIONS_DOT_STR "experimental.import_assertions"))
@@ -947,10 +952,15 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
       Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.iterator_helpers");
   sArrayGroupingEnabled =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.array_grouping");
+  sWellFormedUnicodeStringsEnabled = Preferences::GetBool(
+      JS_OPTIONS_DOT_STR "experimental.well_formed_unicode_strings");
 #endif
-
+  sChangeArrayByCopyEnabled = Preferences::GetBool(
+      JS_OPTIONS_DOT_STR "experimental.enable_change_array_by_copy");
+  sArrayFromAsyncEnabled = Preferences::GetBool(
+      JS_OPTIONS_DOT_STR "experimental.enable_array_from_async");
 #ifdef ENABLE_NEW_SET_METHODS
-  bool enableNewSetMethods =
+  sEnableNewSetMethods =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.new_set_methods");
 #endif
 

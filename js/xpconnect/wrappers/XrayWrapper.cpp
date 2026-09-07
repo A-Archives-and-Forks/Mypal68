@@ -1661,17 +1661,15 @@ bool DOMXrayTraits::resolveOwnProperty(
     nsGlobalWindowInner* win = AsWindow(cx, wrapper);
     // Note: As() unwraps outer windows to get to the inner window.
     if (win) {
-      nsCOMPtr<nsPIDOMWindowOuter> subframe = win->IndexedGetter(index);
-      if (subframe) {
-        subframe->EnsureInnerWindow();
-        nsGlobalWindowOuter* global = nsGlobalWindowOuter::Cast(subframe);
-        JSObject* obj = global->GetGlobalJSObject();
-        if (MOZ_UNLIKELY(!obj)) {
+      Nullable<WindowProxyHolder> subframe = win->IndexedGetter(index);
+      if (!subframe.IsNull()) {
+        Rooted<Value> value(cx);
+        if (MOZ_UNLIKELY(!WrapObject(cx, subframe.Value(), &value))) {
           // It's gone?
           return xpc::Throw(cx, NS_ERROR_FAILURE);
         }
         desc.set(Some(PropertyDescriptor::Data(
-            JS::ObjectValue(*obj),
+            value,
             {PropertyAttribute::Configurable, PropertyAttribute::Enumerable})));
         return JS_WrapPropertyDescriptor(cx, desc);
       }

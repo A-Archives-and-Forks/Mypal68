@@ -51,4 +51,18 @@ compare(nf.formatRangeToParts(3, 5), [
   {type: "integer", value: "5", source: "endRange"}
 ]);
 
+compare(nf.formatRangeToParts(1, 1), [
+  {type: 'approximatelySign', value: '~', source: 'shared'},
+  {type: 'currency', value: '$', source: 'shared'},
+  {type: 'integer', value: '1', source: 'shared'}
+]);
+
+compare(nf.formatRangeToParts(2.999, 3.001), [
+  {type: 'approximatelySign', value: '~', source: 'shared'},
+  {type: 'currency', value: '$', source: 'shared'},
+  {type: 'integer', value: '3', source: 'shared'}
+]);
+
+
+
 reportCompare(0, 0);

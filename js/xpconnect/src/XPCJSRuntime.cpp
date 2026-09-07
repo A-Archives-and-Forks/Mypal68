@@ -18,6 +18,7 @@
 #include "WrapperFactory.h"
 #include "mozJSComponentLoader.h"
 #include "nsNetUtil.h"
+#include "nsContentSecurityUtils.h"
 
 #include "nsExceptionHandler.h"
 #include "nsIMemoryInfoDumper.h"
@@ -2850,6 +2851,10 @@ void XPCJSRuntime::Initialize(JSContext* cx) {
   JS_AddWeakPointerCompartmentCallback(cx, WeakPointerCompartmentCallback,
                                        this);
   JS_SetWrapObjectCallbacks(cx, &WrapObjectCallbacks);
+  if (XRE_IsE10sParentProcess()) {
+    JS::SetFilenameValidationCallback(
+        nsContentSecurityUtils::ValidateScriptFilename);
+  }
   js::SetPreserveWrapperCallbacks(cx, PreserveWrapper, HasReleasedWrapper);
   JS_InitReadPrincipalsCallback(cx, nsJSPrincipals::ReadPrincipals);
 

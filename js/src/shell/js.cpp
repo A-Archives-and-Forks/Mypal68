@@ -625,11 +625,12 @@ bool shell::enablePropertyErrorMessageFix = false;
 bool shell::enableIteratorHelpers = false;
 bool shell::enableShadowRealms = false;
 #ifdef NIGHTLY_BUILD
-bool shell::enableArrayGrouping = true;
+bool shell::enableArrayGrouping = false;
+bool shell::enableArrayFromAsync = false;
+// Pref for String.prototype.{is,to}WellFormed() methods.
+bool shell::enableWellFormedUnicodeStrings = false;
 #endif
-#ifdef ENABLE_CHANGE_ARRAY_BY_COPY
 bool shell::enableChangeArrayByCopy = false;
-#endif
 #ifdef ENABLE_NEW_SET_METHODS
 bool shell::enableNewSetMethods = true;
 #endif
@@ -3800,7 +3801,10 @@ static void SetStandardRealmOptions(JS::RealmOptions& options) {
       .setShadowRealmsEnabled(enableShadowRealms)
 #ifdef NIGHTLY_BUILD
       .setArrayGroupingEnabled(enableArrayGrouping)
+      .setArrayFromAsyncEnabled(enableArrayFromAsync)
+      .setWellFormedUnicodeStringsEnabled(enableWellFormedUnicodeStrings)
 #endif
+      .setChangeArrayByCopyEnabled(enableChangeArrayByCopy)
 #ifdef ENABLE_NEW_SET_METHODS
       .setNewSetMethodsEnabled(enableNewSetMethods)
 #endif
@@ -5547,7 +5551,8 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
               cx, frontend::CompilationInput(options));
           UniquePtr<frontend::ExtensibleCompilationStencil> stencil;
           if (!Smoosh::tryCompileGlobalScriptToExtensibleStencil(
-                  cx, &ec, input.get(), srcBuf, stencil)) {
+                  cx, &ec, cx->stackLimitForCurrentPrincipal(), input.get(),
+                  srcBuf, stencil)) {
             return false;
           }
           if (!stencil) {
@@ -10602,10 +10607,11 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
   enableShadowRealms = op.getBoolOption("enable-shadow-realms");
 #ifdef NIGHTLY_BUILD
   enableArrayGrouping = op.getBoolOption("enable-array-grouping");
+  enableArrayFromAsync = op.getBoolOption("enable-array-from-async");
+  enableWellFormedUnicodeStrings =
+      op.getBoolOption("enable-well-formed-unicode-strings");
 #endif
-#ifdef ENABLE_CHANGE_ARRAY_BY_COPY
-  enableChangeArrayByCopy = op.getBoolOption("enable-change-array-by-copy");
-#endif
+  enableChangeArrayByCopy = !op.getBoolOption("disable-change-array-by-copy");
 #ifdef ENABLE_NEW_SET_METHODS
   enableNewSetMethods = op.getBoolOption("enable-new-set-methods");
 #endif
@@ -10628,12 +10634,6 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
       .setSourcePragmas(enableSourcePragmas)
       .setAsyncStack(enableAsyncStacks)
       .setAsyncStackCaptureDebuggeeOnly(enableAsyncStackCaptureDebuggeeOnly)
-#ifdef NIGHTLY_BUILD
-      .setArrayGrouping(enableArrayGrouping)
-#endif
-#ifdef ENABLE_CHANGE_ARRAY_BY_COPY
-      .setChangeArrayByCopy(enableChangeArrayByCopy)
-#endif
       .setImportAssertions(enableImportAssertions);
 
   JS::SetUseFdlibmForSinCosTan(useFdlibmForSinCosTan);
@@ -11581,16 +11581,16 @@ int main(int argc, char** argv) {
                         "Enable iterator helpers") ||
       !op.addBoolOption('\0', "enable-shadow-realms", "Enable ShadowRealms") ||
       !op.addBoolOption('\0', "enable-array-grouping",
+                        "Enable Array.fromAsync") ||
+      !op.addBoolOption('\0', "enable-array-from-async",
                         "Enable Array Grouping") ||
-#ifdef ENABLE_CHANGE_ARRAY_BY_COPY
+      !op.addBoolOption('\0', "enable-well-formed-unicode-strings",
+                        "Enable String.prototype.{is,to}WellFormed() methods"
+                        "(Well-Formed Unicode Strings)") ||
       !op.addBoolOption('\0', "enable-change-array-by-copy",
                         "Enable change-array-by-copy methods") ||
       !op.addBoolOption('\0', "disable-change-array-by-copy",
                         "Disable change-array-by-copy methods") ||
-#else
-      !op.addBoolOption('\0', "enable-change-array-by-copy", "no-op") ||
-      !op.addBoolOption('\0', "disable-change-array-by-copy", "no-op") ||
-#endif
 #ifdef ENABLE_NEW_SET_METHODS
       !op.addBoolOption('\0', "enable-new-set-methods",
                         "Enable New Set methods") ||

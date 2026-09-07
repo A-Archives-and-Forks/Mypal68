@@ -939,6 +939,11 @@ static bool EvaluateInEnv(JSContext* cx, Handle<Env*> env,
       .setFileAndLine(filename, evalOptions.lineno())
       .setHideScriptFromDebugger(evalOptions.hideFromDebugger())
       .setIntroductionType("debugger eval")
+      /* Do not perform the Javascript filename validation security check for
+       * javascript executions sent through the debugger. Besides making up
+       * a filename for these codepaths, we must allow arbitrary JS execution
+       * for the Browser toolbox to function. */
+      .setSkipFilenameValidation(true)
       /* Don't lazy parse. We need full-parsing to correctly support bytecode
        * emission for private fields/methods. See EmitterScope::lookupPrivate.
        */

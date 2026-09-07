@@ -306,6 +306,10 @@ JS_PUBLIC_API bool js::IsFunctionObject(JSObject* obj) {
   return obj->is<JSFunction>();
 }
 
+JS_PUBLIC_API bool js::IsSavedFrame(JSObject* obj) {
+  return obj->is<SavedFrame>();
+}
+
 JS_PUBLIC_API bool js::UninlinedIsCrossCompartmentWrapper(const JSObject* obj) {
   return js::IsCrossCompartmentWrapper(obj);
 }

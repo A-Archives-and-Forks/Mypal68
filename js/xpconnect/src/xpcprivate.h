@@ -2260,6 +2260,7 @@ struct GlobalProperties {
   bool fetch : 1;
   bool structuredClone : 1;
   bool indexedDB : 1;
+  bool isSecureContext : 1;
   bool rtcIdentityProvider : 1;
 
  private:
@@ -2307,6 +2308,7 @@ class MOZ_STACK_CLASS SandboxOptions : public OptionsBase {
         isWebExtensionContentScript(false),
         proto(cx),
         sameZoneAs(cx),
+        forceSecureContext(false),
         freshCompartment(false),
         freshZone(false),
         isUAWidgetScope(false),
@@ -2326,6 +2328,7 @@ class MOZ_STACK_CLASS SandboxOptions : public OptionsBase {
   JS::RootedObject proto;
   nsCString sandboxName;
   JS::RootedObject sameZoneAs;
+  bool forceSecureContext;
   bool freshCompartment;
   bool freshZone;
   bool isUAWidgetScope;
@@ -2468,7 +2471,8 @@ nsresult CreateSandboxObject(JSContext* cx, JS::MutableHandleValue vp,
 // principal and line number 1 as a fallback.
 nsresult EvalInSandbox(JSContext* cx, JS::HandleObject sandbox,
                        const nsAString& source, const nsACString& filename,
-                       int32_t lineNo, JS::MutableHandleValue rval);
+                       int32_t lineNo, bool enforceFilenameRestrictions,
+                       JS::MutableHandleValue rval);
 
 // Helper for retrieving metadata stored in a reserved slot. The metadata
 // is set during the sandbox creation using the "metadata" option.

@@ -485,6 +485,8 @@ JS_PUBLIC_API void NukeCrossCompartmentWrapperIfExists(JSContext* cx,
                                                        JSObject* target);
 
 void RemapWrapper(JSContext* cx, JSObject* wobj, JSObject* newTarget);
+void RemapDeadWrapper(JSContext* cx, JS::HandleObject wobj,
+                      JS::HandleObject newTarget);
 
 JS_PUBLIC_API bool RemapAllWrappersForObject(JSContext* cx,
                                              JS::HandleObject oldTarget,

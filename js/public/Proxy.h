@@ -744,6 +744,16 @@ constexpr unsigned CheckProxyFlags() {
 #define PROXY_CLASS_DEF(name, flags) \
   PROXY_CLASS_DEF_WITH_CLASS_SPEC(name, flags, JS_NULL_CLASS_SPEC)
 
+// Converts a proxy into a DeadObjectProxy that will throw exceptions on all
+// access. This will run the proxy's finalizer to perform clean-up before the
+// conversion happens.
+JS_PUBLIC_API void NukeNonCCWProxy(JSContext* cx, JS::HandleObject proxy);
+
+// This is a variant of js::NukeNonCCWProxy() for CCWs. It should only be called
+// on CCWs that have been removed from CCW tables.
+JS_PUBLIC_API void NukeRemovedCrossCompartmentWrapper(JSContext* cx,
+                                                      JSObject* wrapper);
+
 } /* namespace js */
 
 #endif /* js_Proxy_h */

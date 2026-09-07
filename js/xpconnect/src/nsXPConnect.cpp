@@ -755,7 +755,8 @@ nsXPConnect::EvalInSandboxObject(const nsAString& source, const char* filename,
   } else {
     filenameStr = "x-bogus://XPConnect/Sandbox"_ns;
   }
-  return EvalInSandbox(cx, sandbox, source, filenameStr, 1, rval);
+  return EvalInSandbox(cx, sandbox, source, filenameStr, 1,
+                       /* enforceFilenameRestrictions */ true, rval);
 }
 
 NS_IMETHODIMP

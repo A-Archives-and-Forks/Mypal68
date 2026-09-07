@@ -13,15 +13,27 @@ using JS::DOMProxyShadowsCheck;
 
 static const void* gDOMProxyHandlerFamily = nullptr;
 static DOMProxyShadowsCheck gDOMProxyShadowsCheck = nullptr;
+static const void* gDOMRemoteProxyHandlerFamily = nullptr;
 
 void JS::SetDOMProxyInformation(const void* domProxyHandlerFamily,
-                                DOMProxyShadowsCheck domProxyShadowsCheck) {
+                                DOMProxyShadowsCheck domProxyShadowsCheck,
+                                const void* domRemoteProxyHandlerFamily) {
   gDOMProxyHandlerFamily = domProxyHandlerFamily;
   gDOMProxyShadowsCheck = domProxyShadowsCheck;
+  gDOMRemoteProxyHandlerFamily = domRemoteProxyHandlerFamily;
 }
 
 const void* js::GetDOMProxyHandlerFamily() { return gDOMProxyHandlerFamily; }
 
 DOMProxyShadowsCheck js::GetDOMProxyShadowsCheck() {
   return gDOMProxyShadowsCheck;
+}
+
+const void* js::GetDOMRemoteProxyHandlerFamily() {
+  return gDOMRemoteProxyHandlerFamily;
+}
+
+bool js::IsDOMRemoteProxyObject(JSObject* object) {
+  return js::IsProxy(object) && js::GetProxyHandler(object)->family() ==
+                                    js::GetDOMRemoteProxyHandlerFamily();
 }

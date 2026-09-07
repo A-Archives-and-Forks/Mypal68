@@ -22,11 +22,13 @@ using JSWrapObjectCallback = JSObject* (*)(JSContext*, JS::HandleObject,
 /**
  * Callback used by the wrap hook to ask the embedding to prepare an object
  * for wrapping in a context. This might include unwrapping other wrappers
- * or even finding a more suitable object for the new compartment.
+ * or even finding a more suitable object for the new compartment. If |origObj|
+ * is non-null, then it is the original object we are going to swap into during
+ * a transplant.
  */
 using JSPreWrapCallback = void (*)(JSContext*, JS::HandleObject,
                                    JS::HandleObject, JS::HandleObject,
-                                   JS::MutableHandleObject);
+                                   JS::HandleObject, JS::MutableHandleObject);
 
 struct JSWrapObjectCallbacks {
   JSWrapObjectCallback wrap;

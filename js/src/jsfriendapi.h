@@ -685,6 +685,8 @@ extern JS_PUBLIC_API bool ExecuteInFrameScriptEnvironment(
     JSContext* cx, JS::HandleObject obj, JS::HandleScript script,
     JS::MutableHandleObject scope);
 
+extern JS_PUBLIC_API bool IsSavedFrame(JSObject* obj);
+
 // Matches the condition in js/src/jit/ProcessExecutableMemory.cpp
 #if defined(XP_WIN)
 // Parameters use void* types to avoid #including windows.h. The return value of
@@ -747,6 +749,22 @@ extern JS_PUBLIC_API void SetRealmValidAccessPtr(JSContext* cx,
 extern JS_PUBLIC_API uint64_t GetGCHeapUsageForObjectZone(JSObject* obj);
 
 extern JS_PUBLIC_API JS::Zone* GetObjectZoneFromAnyThread(const JSObject* obj);
+
+class JS_PUBLIC_API CompartmentTransplantCallback {
+ public:
+  virtual JSObject* getObjectToTransplant(JS::Compartment* compartment) = 0;
+};
+
+// Gather a set of remote window proxies by calling the callback on every
+// compartment, then transform them into cross-compartment wrappers to newTarget
+// via brain transplants. If there's a proxy in newTarget's compartment, it will
+// get swapped with newTarget, and the value of newTarget will be updated. If
+// the callback returns null for a compartment, no cross-compartment wrapper
+// will be created for that compartment. Any non-null values it returns must be
+// DOM remote proxies from the compartment that was passed in.
+extern JS_PUBLIC_API void RemapRemoteWindowProxies(
+    JSContext* cx, CompartmentTransplantCallback* callback,
+    JS::MutableHandleObject newTarget);
 
 } /* namespace js */
 
