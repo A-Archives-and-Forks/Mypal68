@@ -48,6 +48,8 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   AppConstants: "resource://gre/modules/AppConstants.jsm",
   AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
   ExtensionPermissions: "resource://gre/modules/ExtensionPermissions.jsm",
+  ExtensionPreferencesManager:
+    "resource://gre/modules/ExtensionPreferencesManager.jsm",
   ExtensionProcessScript: "resource://gre/modules/ExtensionProcessScript.jsm",
   ExtensionStorage: "resource://gre/modules/ExtensionStorage.jsm",
   ExtensionStorageIDB: "resource://gre/modules/ExtensionStorageIDB.jsm",
@@ -264,6 +266,27 @@ var ExtensionAddonObserver = {
     if (this.initialized) {
       AddonManager.removeAddonListener(this);
       this.initialized = false;
+    }
+  },
+
+  onEnabling(addon) {
+    if (addon.type !== "extension") {
+      return;
+    }
+    Management._callHandlers([addon.id], "enabling", "onEnabling");
+  },
+
+  onDisabled(addon) {
+    if (addon.type !== "extension") {
+      return;
+    }
+    if (Services.appinfo.inSafeMode) {
+      // Ensure ExtensionPreferencesManager updates its data and
+      // modules can run any disable logic they need to.  We only
+      // handle safeMode here because there is a bunch of additional
+      // logic that happens in Extension.shutdown when running in
+      // normal mode.
+      Management._callHandlers([addon.id], "disable", "onDisable");
     }
   },
 
@@ -546,6 +569,31 @@ class ExtensionData {
   }
 
   /**
+   * Given an array of host and permissions, generate a structured permissions object
+   * that contains seperate host origins and permissions arrays.
+   *
+   * @param {Array} permissionsArray
+   * @returns {Object} permissions object
+   */
+  permissionsObject(permissionsArray) {
+    let permissions = new Set();
+    let origins = new Set();
+    let { restrictSchemes, isPrivileged } = this;
+    for (let perm of permissionsArray || []) {
+      let type = classifyPermission(perm, restrictSchemes, isPrivileged);
+      if (type.origin) {
+        origins.add(perm);
+      } else if (type.permission) {
+        permissions.add(perm);
+      }
+    }
+    return {
+      permissions,
+      origins,
+    };
+  }
+
+  /**
    * Returns an object representing any capabilities that the extension
    * has access to based on fixed properties in the manifest.  The result
    * includes the contents of the "permissions" property as well as other
@@ -557,17 +605,9 @@ class ExtensionData {
       return null;
     }
 
-    let permissions = new Set();
-    let origins = new Set();
-    let { restrictSchemes, isPrivileged } = this;
-    for (let perm of this.manifest.permissions || []) {
-      let type = classifyPermission(perm, restrictSchemes, isPrivileged);
-      if (type.origin) {
-        origins.add(perm);
-      } else if (type.permission) {
-        permissions.add(perm);
-      }
-    }
+    let { permissions, origins } = this.permissionsObject(
+      this.manifest.permissions
+    );
 
     if (this.manifest.devtools_page) {
       permissions.add("devtools");
@@ -579,6 +619,20 @@ class ExtensionData {
       }
     }
 
+    return {
+      permissions: Array.from(permissions),
+      origins: Array.from(origins),
+    };
+  }
+
+  get manifestOptionalPermissions() {
+    if (this.type !== "extension") {
+      return null;
+    }
+
+    let { permissions, origins } = this.permissionsObject(
+      this.manifest.optional_permissions
+    );
     return {
       permissions: Array.from(permissions),
       origins: Array.from(origins),
@@ -629,6 +683,73 @@ class ExtensionData {
         perm => !oldPermissions.permissions.includes(perm)
       ),
     };
+  }
+
+  // Return those permissions in oldPermissions that also exist in newPermissions.
+  static intersectPermissions(oldPermissions, newPermissions) {
+    let matcher = new MatchPatternSet(newPermissions.origins, {
+      restrictSchemes: false,
+    });
+
+    return {
+      origins: oldPermissions.origins.filter(perm =>
+        matcher.subsumesDomain(
+          new MatchPattern(perm, { restrictSchemes: false })
+        )
+      ),
+      permissions: oldPermissions.permissions.filter(perm =>
+        newPermissions.permissions.includes(perm)
+      ),
+    };
+  }
+
+  /**
+   * When updating the addon, find and migrate permissions that have moved from required
+   * to optional.  This also handles any updates required for permission removal.
+   *
+   * @param {string} id The id of the addon being updated
+   * @param {Object} oldPermissions
+   * @param {Object} oldOptionalPermissions
+   * @param {Object} newPermissions
+   * @param {Object} newOptionalPermissions
+   */
+  static async migratePermissions(
+    id,
+    oldPermissions,
+    oldOptionalPermissions,
+    newPermissions,
+    newOptionalPermissions
+  ) {
+    let migrated = ExtensionData.intersectPermissions(
+      oldPermissions,
+      newOptionalPermissions
+    );
+    // If a permission is optional in this version and was mandatory in the previous
+    // version, it was already accepted by the user at install time so add it to the
+    // list of granted optional permissions now.
+    await ExtensionPermissions.add(id, migrated);
+
+    // Now we need to update ExtensionPreferencesManager, removing any settings
+    // for old permissions that no longer exist.
+    let permSet = new Set(
+      newPermissions.permissions.concat(newOptionalPermissions.permissions)
+    );
+    let oldPerms = oldPermissions.permissions.concat(
+      oldOptionalPermissions.permissions
+    );
+
+    let removed = oldPerms.filter(x => !permSet.has(x));
+    // Force the removal here to ensure the settings are removed prior
+    // to startup.  This will remove both required or optional permissions,
+    // whereas the call from within ExtensionPermissions would only result
+    // in a removal for optional permissions that were removed.
+    await ExtensionPreferencesManager.removeSettingsForPermissions(id, removed);
+
+    // Remove any optional permissions that have been removed from the manifest.
+    await ExtensionPermissions.remove(id, {
+      permissions: removed,
+      origins: [],
+    });
   }
 
   canUseExperiment(manifest) {
@@ -1511,7 +1632,22 @@ class BootstrapScope {
     return null;
   }
 
-  update(data, reason) {
+  async update(data, reason) {
+    // Retain any previously granted permissions that may have migrated
+    // into the optional list.
+    if (data.oldPermissions !== null) {
+      // New permissions may be null, ensure we have an empty
+      // permission set in that case.
+      let emptyPermissions = { permissions: [], origins: [] };
+      await ExtensionData.migratePermissions(
+        data.id,
+        data.oldPermissions,
+        data.oldOptionalPermissions,
+        data.userPermissions || emptyPermissions,
+        data.optionalPermissions || emptyPermissions
+      );
+    }
+
     return Management.emit("update", {
       id: data.id,
       resourceURI: data.resourceURI,
@@ -1691,6 +1827,7 @@ class Extension extends ExtensionData {
       this.policy.allowedOrigins = this.whiteListedHosts;
 
       this.cachePermissions();
+      this.updatePermissions();
     });
 
     this.on("remove-permissions", (ignoreEvent, permissions) => {
@@ -1712,6 +1849,7 @@ class Extension extends ExtensionData {
       this.policy.allowedOrigins = this.whiteListedHosts;
 
       this.cachePermissions();
+      this.updatePermissions();
     });
     /* eslint-enable mozilla/balanced-listeners */
   }
@@ -2079,6 +2217,13 @@ class Extension extends ExtensionData {
     return super.initLocale(locale);
   }
 
+  /**
+   * Update site permissions as necessary.
+   *
+   * @param {string|undefined} reason
+   *        If provided, this is a BOOTSTRAP_REASON string.  If reason is undefined,
+   *        addon permissions are being added or removed that may effect the site permissions.
+   */
   updatePermissions(reason) {
     const { principal } = this;
 

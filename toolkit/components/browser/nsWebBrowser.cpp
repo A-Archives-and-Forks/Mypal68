@@ -32,6 +32,7 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/LoadURIOptionsBinding.h"
+#include "mozilla/dom/WindowGlobalChild.h"
 
 // for painting the background window
 #include "mozilla/LookAndFeel.h"
@@ -54,6 +55,7 @@ using namespace mozilla::layers;
 nsWebBrowser::nsWebBrowser(int aItemType)
     : mContentType(aItemType),
       mShouldEnableHistory(true),
+      mWillChangeProcess(false),
       mParentNativeWindow(nullptr),
       mProgressListener(nullptr),
       mWidgetListenerDelegate(this),
@@ -96,7 +98,11 @@ already_AddRefed<nsWebBrowser> nsWebBrowser::Create(
     nsIWebBrowserChrome* aContainerWindow, nsIWidget* aParentWidget,
     const OriginAttributes& aOriginAttributes,
     dom::BrowsingContext* aBrowsingContext,
+    dom::WindowGlobalChild* aInitialWindowChild,
     bool aDisableHistory /* = false */) {
+  MOZ_ASSERT_IF(aInitialWindowChild,
+                aInitialWindowChild->BrowsingContext() == aBrowsingContext);
+
   RefPtr<nsWebBrowser> browser = new nsWebBrowser(
       aBrowsingContext->IsContent() ? typeContentWrapper : typeChromeWrapper);
 
@@ -109,11 +115,15 @@ already_AddRefed<nsWebBrowser> nsWebBrowser::Create(
     return nullptr;
   }
 
-  RefPtr<nsDocShell> docShell = nsDocShell::Create(aBrowsingContext);
+  uint64_t outerWindowId =
+      aInitialWindowChild ? aInitialWindowChild->OuterWindowId() : 0;
+
+  RefPtr<nsDocShell> docShell =
+      nsDocShell::Create(aBrowsingContext, outerWindowId);
   if (NS_WARN_IF(!docShell)) {
     return nullptr;
   }
-  docShell->SetOriginAttributes(aOriginAttributes);
+  MOZ_ASSERT(aBrowsingContext->OriginAttributesRef() == aOriginAttributes);
   browser->SetDocShell(docShell);
   MOZ_ASSERT(browser->mDocShell == docShell);
 
@@ -165,6 +175,10 @@ already_AddRefed<nsWebBrowser> nsWebBrowser::Create(
   docShellTreeOwner->AddToWatcher();  // evil twin of Remove in SetDocShell(0)
   docShellTreeOwner->AddChromeListeners();
 
+  if (aInitialWindowChild) {
+    docShell->CreateContentViewerForActor(aInitialWindowChild);
+  }
+
   return browser.forget();
 }
 
@@ -186,7 +200,7 @@ void nsWebBrowser::InternalDestroy() {
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsWebBrowser)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsWebBrowser)
 
-NS_IMPL_CYCLE_COLLECTION(nsWebBrowser, mDocShell)
+NS_IMPL_CYCLE_COLLECTION_WEAK(nsWebBrowser, mDocShell)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsWebBrowser)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIWebBrowser)
@@ -375,26 +389,22 @@ nsWebBrowser::GetInProcessSameTypeRootTreeItem(
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsWebBrowser::FindItemWithName(const nsAString& aName,
-                               nsIDocShellTreeItem* aRequestor,
-                               nsIDocShellTreeItem* aOriginalRequestor,
-                               bool aSkipTabGroup,
-                               nsIDocShellTreeItem** aResult) {
-  NS_ENSURE_STATE(mDocShell);
-  NS_ASSERTION(mDocShellTreeOwner,
-               "This should always be set when in this situation");
-
-  return mDocShell->FindItemWithName(aName, aRequestor, aOriginalRequestor,
-                                     aSkipTabGroup, aResult);
-}
-
 dom::Document* nsWebBrowser::GetDocument() {
   return mDocShell ? mDocShell->GetDocument() : nullptr;
 }
 
 nsPIDOMWindowOuter* nsWebBrowser::GetWindow() {
   return mDocShell ? mDocShell->GetWindow() : nullptr;
+}
+
+NS_IMETHODIMP
+nsWebBrowser::GetBrowsingContextXPCOM(dom::BrowsingContext** aBrowsingContext) {
+  NS_ENSURE_STATE(mDocShell);
+  return mDocShell->GetBrowsingContextXPCOM(aBrowsingContext);
+}
+
+dom::BrowsingContext* nsWebBrowser::GetBrowsingContext() {
+  return mDocShell->GetBrowsingContext();
 }
 
 NS_IMETHODIMP
@@ -451,17 +461,6 @@ nsWebBrowser::GetInProcessChildAt(int32_t aIndex,
   return NS_ERROR_UNEXPECTED;
 }
 
-NS_IMETHODIMP
-nsWebBrowser::FindChildWithName(const nsAString& aName, bool aRecurse,
-                                bool aSameType, nsIDocShellTreeItem* aRequestor,
-                                nsIDocShellTreeItem* aOriginalRequestor,
-                                nsIDocShellTreeItem** aResult) {
-  NS_ENSURE_ARG_POINTER(aResult);
-
-  *aResult = nullptr;
-  return NS_OK;
-}
-
 //*****************************************************************************
 // nsWebBrowser::nsIWebNavigation
 //*****************************************************************************
@@ -515,12 +514,6 @@ nsWebBrowser::LoadURIFromScript(const nsAString& aURI,
     return NS_ERROR_INVALID_ARG;
   }
   return LoadURI(aURI, loadURIOptions);
-}
-
-NS_IMETHODIMP
-nsWebBrowser::SetOriginAttributesBeforeLoading(
-    JS::Handle<JS::Value> aOriginAttributes, JSContext* aCx) {
-  return mDocShell->SetOriginAttributesBeforeLoading(aOriginAttributes, aCx);
 }
 
 NS_IMETHODIMP
@@ -1153,6 +1146,9 @@ void nsWebBrowser::SetDocShell(nsDocShell* aDocShell) {
     if (mDocShell) {
       mDocShell->Destroy();
     }
+    if (!mWillChangeProcess && mDocShell) {
+      mDocShell->GetBrowsingContext()->Detach(/* aFromIPC */ true);
+    }
 
     mDocShell = nullptr;
   }
@@ -1234,6 +1230,13 @@ void nsWebBrowser::FocusDeactivate() {
   nsCOMPtr<nsPIDOMWindowOuter> window = GetWindow();
   if (fm && window) {
     fm->WindowLowered(window);
+  }
+}
+
+void nsWebBrowser::SetWillChangeProcess() {
+  mWillChangeProcess = true;
+  if (mDocShell) {
+    nsDocShell::Cast(mDocShell)->SetWillChangeProcess();
   }
 }
 

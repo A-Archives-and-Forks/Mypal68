@@ -4,6 +4,7 @@
 
 #include "nsPrintProgress.h"
 
+#include "mozilla/dom/BrowsingContext.h"
 #include "nsArray.h"
 #include "nsComponentManagerUtils.h"
 #include "nsIDocShell.h"
@@ -16,6 +17,8 @@
 #include "nsISupportsPrimitives.h"
 #include "nsPIDOMWindow.h"
 #include "nsXULAppAPI.h"
+
+using mozilla::dom::BrowsingContext;
 
 NS_IMPL_ADDREF(nsPrintProgress)
 NS_IMPL_RELEASE(nsPrintProgress)
@@ -82,12 +85,12 @@ NS_IMETHODIMP nsPrintProgress::OpenProgressDialog(
         nsPIDOMWindowOuter::From(ownerWindow);
 
     // Open the dialog.
-    nsCOMPtr<nsPIDOMWindowOuter> newWindow;
+    RefPtr<BrowsingContext> newBC;
 
     rv = piOwnerWindow->OpenDialog(NS_ConvertASCIItoUTF16(dialogURL),
                                    u"_blank"_ns,
                                    u"chrome,titlebar,dependent,centerscreen"_ns,
-                                   array, getter_AddRefs(newWindow));
+                                   array, getter_AddRefs(newBC));
   }
 
   return rv;

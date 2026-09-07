@@ -1358,6 +1358,7 @@ class SchemaAPIManager extends EventEmitter {
     this.modulePaths = { children: new Map(), modules: new Set() };
     this.manifestKeys = new Map();
     this.eventModules = new DefaultMap(() => new Set());
+    this.settingsModules = new Set();
 
     this._modulesJSONLoaded = false;
 
@@ -1401,6 +1402,7 @@ class SchemaAPIManager extends EventEmitter {
       modulePaths: this.modulePaths,
       manifestKeys: this.manifestKeys,
       eventModules: this.eventModules,
+      settingsModules: this.settingsModules,
       schemaURLs: this.schemaURLs,
     });
   }
@@ -1413,6 +1415,7 @@ class SchemaAPIManager extends EventEmitter {
       this.modulePaths = data.modulePaths;
       this.manifestKeys = data.manifestKeys;
       this.eventModules = new DefaultMap(() => new Set(), data.eventModules);
+      this.settingsModules = new Set(data.settingsModules);
       this.schemaURLs = data.schemaURLs;
     }
 
@@ -1447,6 +1450,10 @@ class SchemaAPIManager extends EventEmitter {
 
       for (let event of details.events || []) {
         this.eventModules.get(event).add(name);
+      }
+
+      if (details.settings) {
+        this.settingsModules.add(name);
       }
 
       for (let key of details.manifest || []) {
@@ -1635,6 +1642,14 @@ class SchemaAPIManager extends EventEmitter {
     });
 
     return module.asyncLoaded;
+  }
+
+  asyncLoadSettingsModules() {
+    return Promise.all(
+      Array.from(this.settingsModules).map(apiName =>
+        this.asyncLoadModule(apiName)
+      )
+    );
   }
 
   getModule(name) {

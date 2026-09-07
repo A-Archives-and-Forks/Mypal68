@@ -21,7 +21,7 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/EventBinding.h"
-#include "mozilla/dom/BrowserParent.h"
+#include "mozilla/dom/BrowserHost.h"
 #include "nsContentUtils.h"
 #include "nsIContentPolicy.h"
 #include "nsIHttpChannelInternal.h"
@@ -139,10 +139,10 @@ already_AddRefed<ChannelWrapper> ChannelWrapper::Get(const GlobalObject& global,
 
 already_AddRefed<ChannelWrapper> ChannelWrapper::GetRegisteredChannel(
     const GlobalObject& global, uint64_t aChannelId,
-    const WebExtensionPolicy& aAddon, nsIRemoteTab* aBrowserParent) {
+    const WebExtensionPolicy& aAddon, nsIRemoteTab* aRemoteTab) {
   ContentParent* contentParent = nullptr;
-  if (BrowserParent* parent = static_cast<BrowserParent*>(aBrowserParent)) {
-    contentParent = parent->Manager();
+  if (BrowserHost* host = BrowserHost::GetFrom(aRemoteTab)) {
+    contentParent = host->GetActor()->Manager();
   }
 
   auto& webreq = WebRequestService::GetSingleton();
@@ -683,12 +683,12 @@ void ChannelWrapper::RegisterTraceableChannel(const WebExtensionPolicy& aAddon,
 
 already_AddRefed<nsITraceableChannel> ChannelWrapper::GetTraceableChannel(
     nsAtom* aAddonId, dom::ContentParent* aContentParent) const {
-  nsCOMPtr<nsIRemoteTab> browserParent;
-  if (mAddonEntries.Get(aAddonId, getter_AddRefs(browserParent))) {
+  nsCOMPtr<nsIRemoteTab> remoteTab;
+  if (mAddonEntries.Get(aAddonId, getter_AddRefs(remoteTab))) {
     ContentParent* contentParent = nullptr;
-    if (browserParent) {
+    if (remoteTab) {
       contentParent =
-          static_cast<BrowserParent*>(browserParent.get())->Manager();
+          BrowserHost::GetFrom(remoteTab.get())->GetActor()->Manager();
     }
 
     if (contentParent == aContentParent) {
@@ -922,8 +922,8 @@ NS_IMPL_ISUPPORTS(ChannelWrapper::RequestListener, nsIStreamListener,
                   nsIRequestObserver, nsIThreadRetargetableStreamListener)
 
 ChannelWrapper::RequestListener::~RequestListener() {
-  NS_ReleaseOnMainThreadSystemGroup("RequestListener::mChannelWrapper",
-                                    mChannelWrapper.forget());
+  NS_ReleaseOnMainThread("RequestListener::mChannelWrapper",
+                         mChannelWrapper.forget());
 }
 
 nsresult ChannelWrapper::RequestListener::Init() {
@@ -1032,6 +1032,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(ChannelWrapper,
                                                 DOMEventTargetHelper)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mParent)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mStub)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_PTR
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(ChannelWrapper,

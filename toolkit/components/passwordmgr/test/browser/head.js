@@ -3,7 +3,7 @@ const DIRECTORY_PATH = "/browser/toolkit/components/passwordmgr/test/browser/";
 const { LoginHelper } = ChromeUtils.import(
   "resource://gre/modules/LoginHelper.jsm"
 );
-const { LoginManagerParent: LMP } = ChromeUtils.import(
+const { LoginManagerParent } = ChromeUtils.import(
   "resource://gre/modules/LoginManagerParent.jsm"
 );
 const { LoginTestUtils } = ChromeUtils.import(
@@ -24,10 +24,10 @@ registerCleanupFunction(
   async function cleanup_removeAllLoginsAndResetRecipes() {
     await SpecialPowers.popPrefEnv();
 
-    Services.logins.removeAllLogins();
+    LoginTestUtils.clearData();
+    LoginTestUtils.resetGeneratedPasswordsCache();
     clearHttpAuths();
     Services.telemetry.clearEvents();
-    LMP._generatedPasswordsByPrincipalOrigin.clear();
 
     let recipeParent = LoginTestUtils.recipes.getRecipeParent();
     if (!recipeParent) {
@@ -35,8 +35,150 @@ registerCleanupFunction(
       return;
     }
     await recipeParent.then(recipeParentResult => recipeParentResult.reset());
+
+    await cleanupDoorhanger();
+    let notif;
+    while ((notif = PopupNotifications.getNotification("password"))) {
+      notif.remove();
+    }
+    await closePopup(document.getElementById("contentAreaContextMenu"));
+    await closePopup(document.getElementById("PopupAutoComplete"));
   }
 );
+
+/**
+ * Compared logins in storage to expected values
+ *
+ * @param {array} expectedLogins
+ *        An array of expected login properties
+ * @return {nsILoginInfo[]} - All saved logins sorted by timeCreated
+ */
+function verifyLogins(expectedLogins = []) {
+  let allLogins = Services.logins.getAllLogins();
+  allLogins.sort((a, b) => a.timeCreated > b.timeCreated);
+  is(
+    allLogins.length,
+    expectedLogins.length,
+    "Check actual number of logins matches the number of provided expected property-sets"
+  );
+  for (let i = 0; i < expectedLogins.length; i++) {
+    // if the test doesn't care about comparing properties for this login, just pass false/null.
+    let expected = expectedLogins[i];
+    if (expected) {
+      let login = allLogins[i];
+      if (typeof expected.timesUsed !== "undefined") {
+        is(login.timesUsed, expected.timesUsed, "Check timesUsed");
+      }
+      if (typeof expected.passwordLength !== "undefined") {
+        is(
+          login.password.length,
+          expected.passwordLength,
+          "Check passwordLength"
+        );
+      }
+      if (typeof expected.username !== "undefined") {
+        is(login.username, expected.username, "Check username");
+      }
+      if (typeof expected.password !== "undefined") {
+        is(login.password, expected.password, "Check password");
+      }
+      if (typeof expected.usedSince !== "undefined") {
+        ok(login.timeLastUsed > expected.usedSince, "Check timeLastUsed");
+      }
+      if (typeof expected.passwordChangedSince !== "undefined") {
+        ok(
+          login.timePasswordChanged > expected.passwordChangedSince,
+          "Check timePasswordChanged"
+        );
+      }
+    }
+  }
+  return allLogins;
+}
+
+/**
+ * Submit the content form and return a promise resolving to the username and
+ * password values echoed out in the response
+ *
+ * @param {Object} [browser] - browser with the form
+ * @param {String = ""} formAction - Optional url to set the form's action to before submitting
+ * @param {Object = null} selectorValues - Optional object with field values to set before form submission
+ * @param {Object = null} responseSelectors - Optional object with selectors to find the username and password in the response
+ */
+async function submitFormAndGetResults(
+  browser,
+  formAction = "",
+  selectorValues,
+  responseSelectors
+) {
+  function contentSubmitForm([contentFormAction, contentSelectorValues]) {
+    let doc = content.document;
+    let form = doc.querySelector("form");
+    if (contentFormAction) {
+      form.action = contentFormAction;
+    }
+    for (let [sel, value] of Object.entries(contentSelectorValues)) {
+      try {
+        doc.querySelector(sel).setUserInput(value);
+      } catch (ex) {
+        throw new Error(`submitForm: Couldn't set value of field at: ${sel}`);
+      }
+    }
+    form.submit();
+  }
+  await ContentTask.spawn(
+    browser,
+    [formAction, selectorValues],
+    contentSubmitForm
+  );
+  let result = await getFormSubmitResponseResult(
+    browser,
+    formAction,
+    responseSelectors
+  );
+  return result;
+}
+
+/**
+ * Wait for a given result page to load and return a promise resolving to an object with the parsed-out
+ * username/password values from the response
+ *
+ * @param {Object} [browser] - browser which is loading this page
+ * @param {String} resultURL - the path or filename to look for in the content.location
+ * @param {Object = null} - Optional object with selectors to find the username and password in the response
+ */
+async function getFormSubmitResponseResult(
+  browser,
+  resultURL = "/formsubmit.sjs",
+  { username = "#user", password = "#pass" } = {}
+) {
+  // default selectors are for the response page produced by formsubmit.sjs
+  let fieldValues = await ContentTask.spawn(
+    browser,
+    {
+      resultURL,
+      usernameSelector: username,
+      passwordSelector: password,
+    },
+    async function({ resultURL, usernameSelector, passwordSelector }) {
+      await ContentTaskUtils.waitForCondition(() => {
+        return (
+          content.location.pathname.endsWith(resultURL) &&
+          content.document.readyState == "complete"
+        );
+      }, `Wait for form submission load (${resultURL})`);
+      let username = content.document.querySelector(usernameSelector)
+        .textContent;
+      let password = content.document.querySelector(passwordSelector)
+        .textContent;
+      return {
+        username,
+        password,
+      };
+    }
+  );
+  return fieldValues;
+}
 
 /**
  * Loads a test page in `DIRECTORY_URL` which automatically submits to formsubmit.sjs and returns a
@@ -59,23 +201,9 @@ function testSubmittingLoginForm(
     },
     async function(browser) {
       ok(true, "loaded " + aPageFile);
-      let fieldValues = await ContentTask.spawn(
+      let fieldValues = await getFormSubmitResponseResult(
         browser,
-        undefined,
-        async function() {
-          await ContentTaskUtils.waitForCondition(() => {
-            return (
-              content.location.pathname.endsWith("/formsubmit.sjs") &&
-              content.document.readyState == "complete"
-            );
-          }, "Wait for form submission load (formsubmit.sjs)");
-          let username = content.document.getElementById("user").textContent;
-          let password = content.document.getElementById("pass").textContent;
-          return {
-            username,
-            password,
-          };
-        }
+        "/formsubmit.sjs"
       );
       ok(true, "form submission loaded");
       if (aTaskFn) {
@@ -163,6 +291,56 @@ function getCaptureDoorhanger(
   return notification;
 }
 
+async function getCaptureDoorhangerThatMayOpen(
+  aKind,
+  popupNotifications = PopupNotifications,
+  browser = null
+) {
+  let notif = getCaptureDoorhanger(aKind, popupNotifications, browser);
+  if (notif && !notif.dismissed) {
+    if (popupNotifications.panel.state !== "open") {
+      await BrowserTestUtils.waitForEvent(
+        popupNotifications.panel,
+        "popupshown"
+      );
+    }
+  }
+  return notif;
+}
+
+async function waitForDoorhanger(browser, type) {
+  await TestUtils.waitForCondition(() => {
+    let notif = PopupNotifications.getNotification("password", browser);
+    return notif && notif.options.passwordNotificationType == type;
+  }, `Waiting for a ${type} notification`);
+}
+
+async function hideDoorhangerPopup() {
+  info("hideDoorhangerPopup");
+  if (!PopupNotifications.isPanelOpen) {
+    return;
+  }
+  let { panel } = PopupNotifications;
+  let promiseHidden = BrowserTestUtils.waitForEvent(panel, "popuphidden");
+  panel.hidePopup();
+  await promiseHidden;
+  info("got popuphidden from notification panel");
+}
+
+function getDoorhangerButton(aPopup, aButtonIndex) {
+  let notifications = aPopup.owner.panel.children;
+  ok(!!notifications.length, "at least one notification displayed");
+  ok(true, notifications.length + " notification(s)");
+  let notification = notifications[0];
+
+  if (aButtonIndex == "button") {
+    return notification.button;
+  } else if (aButtonIndex == "secondaryButton") {
+    return notification.secondaryButton;
+  }
+  return notification.menupopup.querySelectorAll("menuitem")[aButtonIndex];
+}
+
 /**
  * Clicks the specified popup notification button.
  *
@@ -173,23 +351,27 @@ function getCaptureDoorhanger(
 function clickDoorhangerButton(aPopup, aButtonIndex) {
   ok(true, "Looking for action at index " + aButtonIndex);
 
-  let notifications = aPopup.owner.panel.children;
-  ok(notifications.length > 0, "at least one notification displayed");
-  ok(true, notifications.length + " notification(s)");
-  let notification = notifications[0];
-
+  let button = getDoorhangerButton(aPopup, aButtonIndex);
   if (aButtonIndex == "button") {
     ok(true, "Triggering main action");
-    notification.button.doCommand();
   } else if (aButtonIndex == "secondaryButton") {
     ok(true, "Triggering secondary action");
-    notification.secondaryButton.doCommand();
   } else {
     ok(true, "Triggering menuitem # " + aButtonIndex);
-    notification.menupopup
-      .querySelectorAll("menuitem")
-      [aButtonIndex].doCommand();
   }
+  button.doCommand();
+}
+
+async function cleanupDoorhanger(notif) {
+  let PN = notif ? notif.owner : PopupNotifications;
+  if (notif) {
+    notif.remove();
+  }
+  let promiseHidden = PN.isPanelOpen
+    ? BrowserTestUtils.waitForEvent(PN.panel, "popuphidden")
+    : Promise.resolve();
+  PN.panel.hidePopup();
+  await promiseHidden;
 }
 
 /**
@@ -215,6 +397,62 @@ async function checkDoorhangerUsernamePassword(username, password) {
     password,
     "Check doorhanger password"
   );
+}
+
+/**
+ * Change the doorhanger's username and password input values.
+ *
+ * @param {object} newValues
+ *        named values to update
+ * @param {string} [newValues.password = undefined]
+ *        An optional string value to replace whatever is in the password field
+ * @param {string} [newValues.username = undefined]
+ *        An optional string value to replace whatever is in the username field
+ * @param {Object} [popupNotifications = PopupNotifications]
+ */
+async function updateDoorhangerInputValues(
+  newValues,
+  popupNotifications = PopupNotifications
+) {
+  let { panel } = popupNotifications;
+  if (popupNotifications.panel.state !== "open") {
+    await BrowserTestUtils.waitForEvent(popupNotifications.panel, "popupshown");
+  }
+  is(panel.state, "open", "Check the doorhanger is already open");
+
+  let notifElem = panel.childNodes[0];
+
+  // Note: setUserInput does not reliably dispatch input events from chrome elements?
+  async function setInputValue(target, value) {
+    info(`setInputValue: on target: ${target.id}, value: ${value}`);
+    target.focus();
+    target.select();
+    await EventUtils.synthesizeKey("KEY_Backspace");
+    info(
+      `setInputValue: target.value: ${target.value}, sending new value string`
+    );
+    await EventUtils.sendString(value);
+    await EventUtils.synthesizeKey("KEY_Tab");
+    return Promise.resolve();
+  }
+
+  let passwordField = notifElem.querySelector(
+    "#password-notification-password"
+  );
+  let usernameField = notifElem.querySelector(
+    "#password-notification-username"
+  );
+
+  if (typeof newValues.password !== "undefined") {
+    if (passwordField.value !== newValues.password) {
+      await setInputValue(passwordField, newValues.password);
+    }
+  }
+  if (typeof newValues.username !== "undefined") {
+    if (usernameField.value !== newValues.username) {
+      await setInputValue(usernameField, newValues.username);
+    }
+  }
 }
 
 // End popup notification (doorhanger) functions //
@@ -288,6 +526,16 @@ async function openACPopup(popup, browser, inputSelector) {
   return shown;
 }
 
+async function closePopup(popup) {
+  if (popup.state == "closed") {
+    await Promise.resolve();
+  } else {
+    let promiseHidden = BrowserTestUtils.waitForEvent(popup, "popuphidden");
+    popup.hidePopup();
+    await promiseHidden;
+  }
+}
+
 // Contextmenu functions //
 
 /**
@@ -299,12 +547,17 @@ async function openACPopup(popup, browser, inputSelector) {
 async function openPasswordContextMenu(
   browser,
   passwordInput,
-  assertCallback = null
+  assertCallback = null,
+  browsingContext = null
 ) {
   const doc = browser.ownerDocument;
   const CONTEXT_MENU = doc.getElementById("contentAreaContextMenu");
   const POPUP_HEADER = doc.getElementById("fill-login");
   const LOGIN_POPUP = doc.getElementById("fill-login-popup");
+
+  if (!browsingContext) {
+    browsingContext = browser.browsingContext;
+  }
 
   let contextMenuShownPromise = BrowserTestUtils.waitForEvent(
     CONTEXT_MENU,
@@ -318,14 +571,14 @@ async function openPasswordContextMenu(
   await BrowserTestUtils.synthesizeMouseAtCenter(
     passwordInput,
     eventDetails,
-    browser
+    browsingContext
   );
   // Synthesize a contextmenu event to actually open the context menu.
   eventDetails = { type: "contextmenu", button: 2 };
   await BrowserTestUtils.synthesizeMouseAtCenter(
     passwordInput,
     eventDetails,
-    browser
+    browsingContext
   );
 
   await contextMenuShownPromise;
@@ -343,6 +596,30 @@ async function openPasswordContextMenu(
   );
   EventUtils.synthesizeMouseAtCenter(POPUP_HEADER, {}, browser.ownerGlobal);
   await popupShownPromise;
+}
+
+/**
+ * Listen for the login manager test notification specified by
+ * expectedMessage. Possible messages:
+ *   FormProcessed - a form was processed after page load.
+ *   FormSubmit - a form was just submitted.
+ *   PasswordFilledOrEdited - a password was filled in or modified.
+ *
+ * The count is the number of that messages to wait for. This should
+ * typically be used when waiting for the FormProcessed message for a page
+ * that has subframes to ensure all have been handled.
+ *
+ * Returns a promise that will passed additional data specific to the message.
+ */
+function listenForTestNotification(expectedMessage, count = 1) {
+  return new Promise(resolve => {
+    LoginManagerParent.setListenerForTests((msg, data) => {
+      if (msg == expectedMessage && --count == 0) {
+        LoginManagerParent.setListenerForTests(null);
+        resolve(data);
+      }
+    });
+  });
 }
 
 /**
@@ -380,8 +657,17 @@ async function doFillGeneratedPasswordContextMenuItem(browser, passwordInput) {
     }
   );
 
-  generatedPasswordItem.doCommand();
-  info("Waiting for input event");
+  let passwordGeneratedPromise = listenForTestNotification(
+    "PasswordFilledOrEdited"
+  );
+  await new Promise(resolve => {
+    SimpleTest.executeSoon(resolve);
+  });
+
+  EventUtils.synthesizeMouseAtCenter(generatedPasswordItem, {});
+  info(
+    "doFillGeneratedPasswordContextMenuItem: Waiting for content input event"
+  );
   await passwordChangedPromise;
-  document.getElementById("contentAreaContextMenu").hidePopup();
+  await passwordGeneratedPromise;
 }

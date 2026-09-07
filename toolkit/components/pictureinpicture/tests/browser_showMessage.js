@@ -27,7 +27,8 @@ add_task(async () => {
         } finally {
           let uaWidgetUpdate = BrowserTestUtils.waitForContentEvent(
             browser,
-            "UAWidgetSetupOrChange"
+            "UAWidgetSetupOrChange",
+            true /* capture */
           );
           await BrowserTestUtils.closeWindow(pipWin);
           await uaWidgetUpdate;

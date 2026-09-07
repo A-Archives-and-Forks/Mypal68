@@ -16,6 +16,9 @@ class nsIPrincipal;
 class nsIURI;
 
 namespace mozilla {
+namespace dom {
+class BrowsingContext;
+}  // namespace dom
 
 class AntiTrackingUtils final {
  public:
@@ -38,6 +41,29 @@ class AntiTrackingUtils final {
   // for the passed in principal argument.
   static bool IsStorageAccessPermission(nsIPermission* aPermission,
                                         nsIPrincipal* aPrincipal);
+
+  // Returns true if the storage permission is granted for the given principal
+  // and the storage permission key.
+  static bool CheckStoragePermission(nsIPrincipal* aPrincipal,
+                                     const nsAutoCString& aType,
+                                     bool aIsInPrivateBrowsing,
+                                     uint32_t* aRejectedReason,
+                                     uint32_t aBlockedReason);
+
+  // Returns true if the storage permission is granted for the given channel.
+  // And this is meant to be called in the parent process.
+  static bool HasStoragePermissionInParent(nsIChannel* aChannel);
+
+  // Return the toplevel inner window id, returns 0 if this is a toplevel
+  // window.
+  static uint64_t GetTopLevelAntiTrackingWindowId(
+      dom::BrowsingContext* aBrowsingContext);
+
+  // Return the parent inner window id, returns 0 if this or the parent are not
+  // a toplevel window. This is mainly used to determine the anti-tracking
+  // storage area.
+  static uint64_t GetTopLevelStorageAreaWindowId(
+      dom::BrowsingContext* aBrowsingContext);
 };
 
 }  // namespace mozilla

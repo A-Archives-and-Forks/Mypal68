@@ -1903,7 +1903,6 @@ class InlineOptionsBrowser extends HTMLElement {
         false,
         true
       );
-      mm.loadFrameScript("chrome://browser/content/content.js", false, true);
       mm.addMessageListener("Extension:BrowserContentLoaded", messageListener);
       mm.addMessageListener("Extension:BrowserResized", messageListener);
 
@@ -2252,14 +2251,6 @@ class AddonDetails extends HTMLElement {
       creatorRow.hidden = true;
     }
 
-    // Version. Don't show a version for LWTs.
-    let version = this.querySelector(".addon-detail-row-version");
-    if (addon.version && !/@personas\.mozilla\.org/.test(addon.id)) {
-      version.appendChild(new Text(addon.version));
-    } else {
-      version.hidden = true;
-    }
-
     // Last updated.
     let updateDate = this.querySelector(".addon-detail-row-lastUpdated");
     if (addon.updateDate) {
@@ -2579,17 +2570,23 @@ class AddonCard extends HTMLElement {
       }
     }
 
-    // Update the name.
+    // Update the name (include version in the visible title when present).
     let name = this.addonNameEl;
+    let displayName = addon.name;
+    if (addon.version && !/@personas\.mozilla\.org/.test(addon.id)) {
+      displayName = `${addon.name} ${addon.version}`;
+    }
     if (addon.isActive) {
-      name.textContent = addon.name;
+      name.textContent = displayName;
       name.removeAttribute("data-l10n-id");
     } else {
+      // For disabled add-ons, use the localized template but include version.
       document.l10n.setAttributes(name, "addon-name-disabled", {
-        name: addon.name,
+        name: displayName,
       });
     }
-    name.title = `${addon.name} ${addon.version}`;
+    // Keep hover/title attribute consistent with visible title.
+    name.title = displayName;
 
     let toggleDisabledButton = card.querySelector('[action="toggle-disabled"]');
     if (toggleDisabledButton) {

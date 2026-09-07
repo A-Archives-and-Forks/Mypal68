@@ -8196,16 +8196,6 @@
     "bug_numbers": [902075, 1345894],
     "alert_emails": ["flashvideo-2015@mozilla.com"]
   },
-  "PLUGINS_NOTIFICATION_PLUGIN_COUNT": {
-    "record_in_processes": ["main", "content"],
-    "releaseChannelCollection": "opt-out",
-    "expires_in_version": "never",
-    "kind": "enumerated",
-    "n_values": 5,
-    "description": "The number of plugins present in the click-to-activate notification, minus one (1, 2, 3, 4, more than 4)",
-    "bug_numbers": [902075, 1345894],
-    "alert_emails": ["flashvideo-2015@mozilla.com"]
-  },
   "PLUGINS_NOTIFICATION_USER_ACTION_2": {
     "record_in_processes": ["main", "content"],
     "releaseChannelCollection": "opt-out",
@@ -12989,26 +12979,6 @@
     "n_buckets": 20,
     "kind": "exponential",
     "description": "Age of files scanned in profile directory in days when determining initial profile age."
-  },
-  "ACTIVE_HTTP_DOCGROUPS_PER_TABGROUP": {
-    "record_in_processes": ["content"],
-    "alert_emails": ["farre@mozilla.com"],
-    "bug_numbers": [1441972, 1468843],
-    "expires_in_version": "67",
-    "kind": "exponential",
-    "high": 50,
-    "n_buckets": 20,
-    "description": "Number of active http:// and https:// doc groups per tab group. Collected at the point when the top level document of the tab group is unloaded."
-  },
-  "TOTAL_HTTP_DOCGROUPS_PER_TABGROUP": {
-    "record_in_processes": ["content"],
-    "alert_emails": ["farre@mozilla.com"],
-    "bug_numbers": [1441972, 1468843],
-    "expires_in_version": "67",
-    "kind": "exponential",
-    "high": 50,
-    "n_buckets": 20,
-    "description": "Total number of http:// and https:// doc groups per tab group, including docgroups fully in bfcache. Collected at the point when the top level document of the tab group is unloaded."
   },
   "QUIRKS_MODE": {
     "record_in_processes": ["main", "content"],

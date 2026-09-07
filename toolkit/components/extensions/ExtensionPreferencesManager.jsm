@@ -20,6 +20,8 @@
 
 var EXPORTED_SYMBOLS = ["ExtensionPreferencesManager"];
 
+const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+
 const { Management } = ChromeUtils.import(
   "resource://gre/modules/Extension.jsm"
 );
@@ -38,25 +40,51 @@ ChromeUtils.defineModuleGetter(
   "Preferences",
   "resource://gre/modules/Preferences.jsm"
 );
+ChromeUtils.defineModuleGetter(
+  this,
+  "ExtensionCommon",
+  "resource://gre/modules/ExtensionCommon.jsm"
+);
+
+const { ExtensionUtils } = ChromeUtils.import(
+  "resource://gre/modules/ExtensionUtils.jsm"
+);
+
+const { ExtensionError } = ExtensionUtils;
 
 XPCOMUtils.defineLazyGetter(this, "defaultPreferences", function() {
   return new Preferences({ defaultBranch: true });
 });
 
 /* eslint-disable mozilla/balanced-listeners */
-Management.on("uninstall", (type, { id }) => {
-  ExtensionPreferencesManager.removeAll(id);
+Management.on("uninstall", async (type, { id }) => {
+  // Ensure managed preferences are cleared if they were
+  // not cleared at the module level.
+  await Management.asyncLoadSettingsModules();
+  return ExtensionPreferencesManager.removeAll(id);
 });
 
-Management.on("disable", (type, id) => {
-  this.ExtensionPreferencesManager.disableAll(id);
+Management.on("disable", async (type, id) => {
+  await Management.asyncLoadSettingsModules();
+  return ExtensionPreferencesManager.disableAll(id);
 });
 
-Management.on("startup", async (type, extension) => {
-  if (extension.startupReason == "ADDON_ENABLE") {
-    this.ExtensionPreferencesManager.enableAll(extension.id);
+Management.on("enabling", async (type, id) => {
+  await Management.asyncLoadSettingsModules();
+  return ExtensionPreferencesManager.enableAll(id);
+});
+
+Management.on("change-permissions", (type, change) => {
+  // Called for added or removed, but we only care about removed here.
+  if (!change.removed) {
+    return;
   }
+  ExtensionPreferencesManager.removeSettingsForPermissions(
+    change.extensionId,
+    change.removed.permissions
+  );
 });
+
 /* eslint-enable mozilla/balanced-listeners */
 
 const STORE_TYPE = "prefs";
@@ -112,6 +140,8 @@ function settingsUpdate(initialValue) {
 /**
  * Loops through a set of prefs, either setting or resetting them.
  *
+ * @param {string} name
+ *        The api name of the setting.
  * @param {Object} setting
  *        An object that represents a setting, which will have a setCallback
  *        property. If a onPrefsChanged function is provided it will be called
@@ -120,7 +150,7 @@ function settingsUpdate(initialValue) {
  *        An object that represents an item handed back from the setting store
  *        from which the new pref values can be calculated.
  */
-function setPrefs(setting, item) {
+function setPrefs(name, setting, item) {
   let prefs = item.initialValue || setting.setCallback(item.value);
   let changed = false;
   for (let pref of setting.prefNames) {
@@ -137,6 +167,7 @@ function setPrefs(setting, item) {
   if (changed && typeof setting.onPrefsChanged == "function") {
     setting.onPrefsChanged(item);
   }
+  Management.emit(`extension-setting-changed:${name}`);
 }
 
 /**
@@ -179,7 +210,7 @@ async function processSetting(id, name, action) {
     ) {
       return false;
     }
-    setPrefs(setting, item);
+    setPrefs(name, setting, item);
     return true;
   }
   return false;
@@ -241,7 +272,7 @@ this.ExtensionPreferencesManager = {
       settingsUpdate.bind(setting)
     );
     if (item) {
-      setPrefs(setting, item);
+      setPrefs(name, setting, item);
       return true;
     }
     return false;
@@ -366,6 +397,28 @@ this.ExtensionPreferencesManager = {
   },
 
   /**
+   * Removes a set of settings that are available under certain addon permissions.
+   *
+   * @param {string} id           The extension id.
+   * @param {array<string>}
+   *                 permissions   The permission name from the extension manifest.
+   * @returns {Promise}           A promise that resolves when all related settings are removed.
+   */
+  async removeSettingsForPermissions(id, permissions) {
+    if (!permissions || !permissions.length) {
+      return;
+    }
+    await Management.asyncLoadSettingsModules();
+    let removePromises = [];
+    settingsMap.forEach((setting, name) => {
+      if (permissions.includes(setting.permission)) {
+        removePromises.push(this.removeSetting(id, name));
+      }
+    });
+    return Promise.all(removePromises);
+  },
+
+  /**
    * Return the currently active value for a setting.
    *
    * @param {string} name
@@ -415,18 +468,18 @@ this.ExtensionPreferencesManager = {
   /**
    * Returns an API object with get/set/clear used for a setting.
    *
-   * @param {string} extensionId
+   * @param {string|object} extensionId or params object
    * @param {string} name
-   *        The unique id of the setting.
+   *          The unique id of the setting.
    * @param {Function} callback
-   *        The function that retreives the current setting from prefs.
+   *          The function that retreives the current setting from prefs.
    * @param {string} storeType
-   *        The name of the store in ExtensionSettingsStore.
-   *        Defaults to STORE_TYPE.
+   *          The name of the store in ExtensionSettingsStore.
+   *          Defaults to STORE_TYPE.
    * @param {boolean} readOnly
    * @param {Function} validate
-   *        Utility function for any specific validation, such as checking
-   *        for supported platform.  Function should throw an error if necessary.
+   *          Utility function for any specific validation, such as checking
+   *          for supported platform.  Function should throw an error if necessary.
    *
    * @returns {object} API object with get/set/clear methods
    */
@@ -438,7 +491,70 @@ this.ExtensionPreferencesManager = {
     readOnly = false,
     validate = () => {}
   ) {
-    return {
+    if (arguments.length > 1) {
+      Services.console.logStringMessage(
+        `ExtensionPreferencesManager.getSettingsAPI for ${name} should be updated to use a single paramater object.`
+      );
+    }
+    return ExtensionPreferencesManager._getSettingsAPI(
+      arguments.length === 1
+        ? extensionId
+        : {
+            extensionId,
+            name,
+            callback,
+            storeType,
+            readOnly,
+            validate,
+          }
+    );
+  },
+
+  /**
+   * Returns an API object with get/set/clear used for a setting.
+   *
+   * @param {object} params The params object contains the following:
+   *        {BaseContext} context
+   *        {string} extensionId, optional to support old API
+   *        {string} name
+   *          The unique id of the setting.
+   *        {Function} callback
+   *          The function that retreives the current setting from prefs.
+   *        {string} storeType
+   *          The name of the store in ExtensionSettingsStore.
+   *          Defaults to STORE_TYPE.
+   *        {boolean} readOnly
+   *        {Function} validate
+   *          Utility function for any specific validation, such as checking
+   *          for supported platform.  Function should throw an error if necessary.
+   *
+   * @returns {object} API object with get/set/clear methods
+   */
+  _getSettingsAPI(params) {
+    let {
+      extensionId,
+      context,
+      name,
+      callback,
+      storeType,
+      readOnly = false,
+      onChange,
+      validate = () => {},
+    } = params;
+    if (!extensionId) {
+      extensionId = context.extension.id;
+    }
+
+    const checkScope = details => {
+      let { scope } = details;
+      if (scope && scope !== "regular") {
+        throw new ExtensionError(
+          `Firefox does not support the ${scope} settings scope.`
+        );
+      }
+    };
+
+    let settingsAPI = {
       async get(details) {
         validate();
         let levelOfControl = details.incognito
@@ -459,6 +575,7 @@ this.ExtensionPreferencesManager = {
       },
       set(details) {
         validate();
+        checkScope(details);
         if (!readOnly) {
           return ExtensionPreferencesManager.setSetting(
             extensionId,
@@ -470,11 +587,44 @@ this.ExtensionPreferencesManager = {
       },
       clear(details) {
         validate();
+        checkScope(details);
         if (!readOnly) {
           return ExtensionPreferencesManager.removeSetting(extensionId, name);
         }
         return false;
       },
+      onChange,
     };
+    // Any caller using the old call signature will not have passed
+    // context to us.  This should only be experimental addons in the
+    // wild.
+    if (onChange === undefined && context) {
+      // Some settings that are read-only may not have called addSetting, in
+      // which case we have no way to listen on the pref changes.
+      let setting = settingsMap.get(name);
+      if (!setting) {
+        Services.console.logStringMessage(
+          `ExtensionPreferencesManager API ${name} created but addSetting was not called.`
+        );
+        return settingsAPI;
+      }
+
+      settingsAPI.onChange = new ExtensionCommon.EventManager({
+        context,
+        name: `${name}.onChange`,
+        register: fire => {
+          let listener = async () => {
+            fire.async({
+              details: await settingsAPI.get({}),
+            });
+          };
+          Management.on(`extension-setting-changed:${name}`, listener);
+          return () => {
+            Management.off(`extension-setting-changed:${name}`, listener);
+          };
+        },
+      }).api();
+    }
+    return settingsAPI;
   },
 };

@@ -283,6 +283,7 @@ function webAPIForAddon(addon) {
  */
 function BrowserListener(aBrowser, aInstallingPrincipal, aInstall) {
   this.browser = aBrowser;
+  this.messageManager = this.browser.messageManager;
   this.principal = aInstallingPrincipal;
   this.install = aInstall;
 
@@ -321,6 +322,16 @@ BrowserListener.prototype = {
     } catch (e) {
       // install may have already failed or been cancelled, ignore these
     }
+  },
+
+  observe(subject, topic, data) {
+    if (subject != this.messageManager) {
+       return;
+    }
+
+    // The browser's message manager has closed and so the browser is
+    // going away, cancel the install
+    this.cancelInstall();
   },
 
   onLocationChange(webProgress, request, location) {
@@ -2213,10 +2224,15 @@ var AddonManagerInternal = {
     }
 
     try {
-      if (topBrowser.ownerGlobal.fullScreen) {
-        // Addon installation and the resulting notifications should be blocked in fullscreen for security and usability reasons.
-        // Installation prompts in fullscreen can trick the user into installing unwanted addons.
-        // In fullscreen the notification box does not have a clear visual association with its parent anymore.
+      // Use fullscreenElement to check for DOM fullscreen, while still allowing
+      // macOS fullscreen, which still has a browser chrome.
+      if (topBrowser.ownerDocument.fullscreenElement) {
+        // Addon installation and the resulting notifications should be
+        // blocked in DOM fullscreen for security and usability reasons.
+        // Installation prompts in fullscreen can trick the user into
+        // installing unwanted addons.
+        // In fullscreen the notification box does not have a clear
+        // visual association with its parent anymore.
         aInstall.cancel();
 
         this.installNotifyObservers(
@@ -2239,7 +2255,18 @@ var AddonManagerInternal = {
       } else if (
         aInstallingPrincipal.isNullPrincipal ||
         !aBrowser.contentPrincipal ||
-        !aInstallingPrincipal.subsumes(aBrowser.contentPrincipal) ||
+        // When we attempt to handle an XPI load immediately after a
+        // process switch, the DocShell it's being loaded into will have
+        // a null principal, since it won't have been initialized yet.
+        // Allowing installs in this case is relatively safe, since
+        // there isn't much to gain by spoofing an install request from
+        // a null principal in any case. This exception can be removed
+        // once content handlers are triggered by DocumentChannel in the
+        // parent process.
+        !(
+          aBrowser.contentPrincipal.isNullPrincipal ||
+          aInstallingPrincipal.subsumes(aBrowser.contentPrincipal)
+        ) ||
         !this.isInstallAllowedByPolicy(
           aInstallingPrincipal,
           aInstall,
@@ -3281,7 +3308,13 @@ var AddonManagerInternal = {
         );
         install.addListener(listener);
 
-        this.installs.set(id, { install, target, listener, installPromise });
+        this.installs.set(id, {
+          install,
+          target,
+          listener,
+          installPromise,
+          messageManager: target.messageManager,
+        });
 
         let result = { id };
         this.copyProps(install, result);
@@ -3359,7 +3392,7 @@ var AddonManagerInternal = {
 
     clearInstallsFrom(mm) {
       for (let [id, info] of this.installs) {
-        if (info.target.messageManager == mm) {
+        if (info.messageManager == mm) {
           this.forgetInstall(id);
         }
       }

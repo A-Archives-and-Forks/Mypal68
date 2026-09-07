@@ -1,6 +1,6 @@
 add_task(async function setupPrefs() {
   await SpecialPowers.pushPrefEnv({
-    set: [["browser.tabs.remote.useHTTPResponseProcessSelection", true]],
+    set: [["browser.tabs.documentchannel", true]],
   });
 });
 
@@ -13,12 +13,12 @@ add_task(async function oopProcessSwap() {
   await BrowserTestUtils.withNewTab(
     { gBrowser: win.gBrowser, url: FILE },
     async browser => {
-      is(browser.browsingContext.getChildren().length, 0);
+      is(browser.browsingContext.children.length, 0);
 
       info("creating an in-process frame");
-      let frameId = await ContentTask.spawn(
+      let frameId = await SpecialPowers.spawn(
         browser,
-        { FILE },
+        [{ FILE }],
         async ({ FILE }) => {
           let iframe = content.document.createElement("iframe");
           iframe.setAttribute("src", FILE);
@@ -31,12 +31,12 @@ add_task(async function oopProcessSwap() {
         }
       );
 
-      is(browser.browsingContext.getChildren().length, 1);
+      is(browser.browsingContext.children.length, 1);
 
       info("navigating to x-process frame");
-      let oopinfo = await ContentTask.spawn(
+      let oopinfo = await SpecialPowers.spawn(
         browser,
-        { WEB },
+        [{ WEB }],
         async ({ WEB }) => {
           let iframe = content.document.querySelector("iframe");
 
@@ -68,7 +68,7 @@ add_task(async function oopProcessSwap() {
         }
       );
 
-      is(browser.browsingContext.getChildren().length, 1);
+      is(browser.browsingContext.children.length, 1);
 
       if (Services.prefs.getBoolPref("fission.preserve_browsing_contexts")) {
         is(
@@ -98,12 +98,12 @@ add_task(async function oopOriginProcessSwap() {
   await BrowserTestUtils.withNewTab(
     { gBrowser: win.gBrowser, url: COM_DUMMY },
     async browser => {
-      is(browser.browsingContext.getChildren().length, 0);
+      is(browser.browsingContext.children.length, 0);
 
       info("creating an in-process frame");
-      let frameId = await ContentTask.spawn(
+      let frameId = await SpecialPowers.spawn(
         browser,
-        { COM_DUMMY },
+        [{ COM_DUMMY }],
         async ({ COM_DUMMY }) => {
           let iframe = content.document.createElement("iframe");
           iframe.setAttribute("src", COM_DUMMY);
@@ -116,12 +116,12 @@ add_task(async function oopOriginProcessSwap() {
         }
       );
 
-      is(browser.browsingContext.getChildren().length, 1);
+      is(browser.browsingContext.children.length, 1);
 
       info("navigating to x-process frame");
-      let oopinfo = await ContentTask.spawn(
+      let oopinfo = await SpecialPowers.spawn(
         browser,
-        { ORG_POSTMSG },
+        [{ ORG_POSTMSG }],
         async ({ ORG_POSTMSG }) => {
           let iframe = content.document.querySelector("iframe");
 
@@ -153,7 +153,7 @@ add_task(async function oopOriginProcessSwap() {
         }
       );
 
-      is(browser.browsingContext.getChildren().length, 1);
+      is(browser.browsingContext.children.length, 1);
       if (Services.prefs.getBoolPref("fission.preserve_browsing_contexts")) {
         is(
           frameId,

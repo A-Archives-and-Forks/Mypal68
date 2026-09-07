@@ -46,9 +46,6 @@ with Files('tests/xpcshell/test_UpdateUtils*.js'):
 with Files('AsyncPrefs.jsm'):
     BUG_COMPONENT = ('Core', 'Security: Process Sandboxing')
 
-with Files('AutoScrollController.jsm'):
-    BUG_COMPONENT = ('Core', 'Panning and Zooming')
-
 with Files('CharsetMenu.jsm'):
     BUG_COMPONENT = ('Firefox', 'Toolbars and Customization')
 
@@ -65,6 +62,9 @@ with Files('DeferredTask.jsm'):
     BUG_COMPONENT = ('Toolkit', 'Async Tooling')
 
 with Files("E10SUtils.jsm"):
+    BUG_COMPONENT = ("Core", "Security: Process Sandboxing")
+
+with Files("nsIE10SUtils.idl"):
     BUG_COMPONENT = ("Core", "Security: Process Sandboxing")
 
 with Files('Finder*.jsm'):
@@ -115,9 +115,6 @@ with Files('PrivateBrowsingUtils.jsm'):
 with Files('Promise*.jsm'):
     BUG_COMPONENT = ('Toolkit', 'Async Tooling')
 
-with Files('RemoteController.js'):
-    BUG_COMPONENT = ('Core', 'Widget')
-
 with Files('RemoteSecurityUI.jsm'):
     BUG_COMPONENT = ('Firefox', 'Tabbed Browser')
 
@@ -163,8 +160,6 @@ EXTRA_JS_MODULES += [
     'ActorManagerParent.jsm',
     'AppMenuNotifications.jsm',
     'AsyncPrefs.jsm',
-    'AutoCompletePopupContent.jsm',
-    'AutoScrollController.jsm',
     'BinarySearch.jsm',
     'BrowserUtils.jsm',
     'CanonicalJSON.jsm',
@@ -175,7 +170,6 @@ EXTRA_JS_MODULES += [
     'ContentDOMReference.jsm',
     'CreditCard.jsm',
     'DateTimePickerPanel.jsm',
-    'DateTimePickerParent.jsm',
     'DeferredTask.jsm',
     'Deprecated.jsm',
     'E10SUtils.jsm',
@@ -213,12 +207,10 @@ EXTRA_JS_MODULES += [
     'Promise.jsm',
     'PromiseMessage.jsm',
     'PromiseUtils.jsm',
-    'RemoteController.js',
     'RemoteSecurityUI.jsm',
     'RemoteWebProgress.jsm',
     'ResetProfile.jsm',
     'ResponsivenessMonitor.jsm',
-    'SelectParentHelper.jsm',
     'ServiceRequest.jsm',
     'Services.jsm',
     'ShortcutUtils.jsm',
@@ -300,3 +292,9 @@ for var in ('MOZ_SYSTEM_NSS',
 JAR_MANIFESTS += ['jar.mn']
 
 DEFINES['TOPOBJDIR'] = TOPOBJDIR
+
+XPIDL_SOURCES += [
+    'nsIE10SUtils.idl',
+]
+
+XPIDL_MODULE = 'toolkit_modules'

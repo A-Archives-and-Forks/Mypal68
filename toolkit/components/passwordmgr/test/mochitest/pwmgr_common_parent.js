@@ -123,6 +123,12 @@ function onPrompt(subject, topic, data) {
 Services.obs.addObserver(onPrompt, "passwordmgr-prompt-change");
 Services.obs.addObserver(onPrompt, "passwordmgr-prompt-save");
 
+addMessageListener("cleanup", () => {
+  Services.obs.removeObserver(onStorageChanged, "passwordmgr-storage-changed");
+  Services.obs.removeObserver(onPrompt, "passwordmgr-prompt-change");
+  Services.obs.removeObserver(onPrompt, "passwordmgr-prompt-save");
+});
+
 // Begin message listeners
 
 addMessageListener(
@@ -160,7 +166,7 @@ addMessageListener("proxyLoginManager", msg => {
     rv = LoginHelper.loginToVanillaObject(rv);
   } else if (
     Array.isArray(rv) &&
-    rv.length > 0 &&
+    !!rv.length &&
     rv[0] instanceof Ci.nsILoginInfo
   ) {
     rv = rv.map(login => LoginHelper.loginToVanillaObject(login));
@@ -181,9 +187,12 @@ addMessageListener("setMasterPassword", ({ enable }) => {
   }
 });
 
-Services.mm.addMessageListener(
-  "PasswordManager:onFormSubmit",
-  function onFormSubmit(message) {
-    sendAsyncMessage("formSubmissionProcessed", message.data, message.objects);
+LoginManagerParent.setListenerForTests((msg, data) => {
+  if (msg == "FormSubmit") {
+    sendAsyncMessage("formSubmissionProcessed", data, {});
   }
-);
+});
+
+addMessageListener("cleanup", () => {
+  LoginManagerParent.setListenerForTests(null);
+});

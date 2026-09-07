@@ -20,14 +20,14 @@
   <script type="application/javascript"><![CDATA[
     const {BrowserTestUtils} = ChromeUtils.import("resource://testing-common/BrowserTestUtils.jsm");
     const {ContentTask} = ChromeUtils.import("resource://testing-common/ContentTask.jsm");
-    ContentTask.setTestScope(window.opener.wrappedJSObject);
+    ContentTask.setTestScope(window.arguments[0]);
 
     var gFindBar = null;
     var gBrowser;
 
     var imports = ["SimpleTest", "SpecialPowers", "ok", "is", "isnot", "info"];
     for (var name of imports) {
-      window[name] = window.opener.wrappedJSObject[name];
+      window[name] = window.arguments[0][name];
     }
     SimpleTest.requestLongerTimeout(2);
 
@@ -185,6 +185,9 @@
             }
             listener = {
               onMatchesCountResult: res => {
+                if (searchString && res.searchString != searchString)
+                  return;
+
                 gFindBar.browser.finder.removeResultListener(listener);
                 data.matches = res;
                 resolve(data);
@@ -271,7 +274,7 @@
   <commandset>
     <command id="cmd_find" oncommand="document.getElementById('FindToolbar').onFindCommand();"/>
   </commandset>
-  <browser type="content" primary="true" flex="1" id="content" src="about:blank"/>
-  <browser type="content" primary="true" flex="1" id="content-remote" remote="true" src="about:blank"/>
+  <browser type="content" primary="true" flex="1" id="content" messagemanagergroup="test" src="about:blank"/>
+  <browser type="content" primary="true" flex="1" id="content-remote" remote="true" messagemanagergroup="test" src="about:blank"/>
   <findbar id="FindToolbar" browserid="content"/>
 </window>

@@ -9,6 +9,7 @@
 #include "js/PropertyAndElement.h"  // JS_DefineElement
 #include "mozilla/gfx/GPUParent.h"
 #include "mozilla/dom/ContentChild.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/Unused.h"
 #include "mozilla/GfxMessageUtils.h"  // For ParamTraits<GeckoProcessType>
 
@@ -245,10 +246,6 @@ nsHangDetails::GetModules(JSContext* aCx, JS::MutableHandleValue aVal) {
 // Processing and submitting the stack as an observer notification.
 
 void nsHangDetails::Submit() {
-  if (NS_WARN_IF(!SystemGroup::Initialized())) {
-    return;
-  }
-
   RefPtr<nsHangDetails> hangDetails = this;
   nsCOMPtr<nsIRunnable> notifyObservers =
       NS_NewRunnableFunction("NotifyBHRHangObservers", [hangDetails] {
@@ -290,7 +287,7 @@ void nsHangDetails::Submit() {
       });
 
   nsresult rv =
-      SystemGroup::Dispatch(TaskCategory::Other, notifyObservers.forget());
+      SchedulerGroup::Dispatch(TaskCategory::Other, notifyObservers.forget());
   MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
 }
 

@@ -5,20 +5,18 @@
 
 var EXPORTED_SYMBOLS = ["ZoomChild"];
 
-const { ActorChild } = ChromeUtils.import(
-  "resource://gre/modules/ActorChild.jsm"
-);
-
-class ZoomChild extends ActorChild {
-  constructor(dispatcher) {
-    super(dispatcher);
+/**
+ * FIXME(emilio): Most of this code is a bit useless and could be changed by an
+ * event listener in the parent process I suspect.
+ */
+class ZoomChild extends JSWindowActorChild {
+  constructor() {
+    super();
 
     this._cache = {
       fullZoom: NaN,
       textZoom: NaN,
     };
-
-    this._resolutionBeforeFullZoomChange = 0;
   }
 
   get fullZoom() {
@@ -31,12 +29,12 @@ class ZoomChild extends ActorChild {
 
   set fullZoom(value) {
     this._cache.fullZoom = value;
-    this._markupViewer.fullZoom = value;
+    this.browsingContext.fullZoom = value;
   }
 
   set textZoom(value) {
     this._cache.textZoom = value;
-    this._markupViewer.textZoom = value;
+    this.browsingContext.textZoom = value;
   }
 
   refreshFullZoom() {
@@ -55,7 +53,7 @@ class ZoomChild extends ActorChild {
    * @private
    */
   _refreshZoomValue(valueName) {
-    let actualZoomValue = this._markupViewer[valueName];
+    let actualZoomValue = this.browsingContext[valueName];
     // Round to remove any floating-point error.
     actualZoomValue = Number(actualZoomValue.toFixed(2));
     if (actualZoomValue != this._cache[valueName]) {
@@ -63,10 +61,6 @@ class ZoomChild extends ActorChild {
       return true;
     }
     return false;
-  }
-
-  get _markupViewer() {
-    return this.docShell.contentViewer;
   }
 
   receiveMessage(message) {
@@ -78,40 +72,27 @@ class ZoomChild extends ActorChild {
   }
 
   handleEvent(event) {
-    if (event.type == "PreFullZoomChange") {
-      if (this._resolutionBeforeFullZoomChange == 0) {
-        this._resolutionBeforeFullZoomChange = this.content.windowUtils.getResolution();
-      }
+    if (event.type == "ZoomChangeUsingMouseWheel") {
+      this.sendAsyncMessage("ZoomChangeUsingMouseWheel", {});
+      return;
+    }
 
-      this.mm.sendAsyncMessage("PreFullZoomChange", {});
+    // Only handle this event for top-level content.
+    if (this.browsingContext != this.browsingContext.top) {
       return;
     }
 
     if (event.type == "FullZoomChange") {
       if (this.refreshFullZoom()) {
-        this.mm.sendAsyncMessage("FullZoomChange", { value: this.fullZoom });
+        this.sendAsyncMessage("FullZoomChange", {});
       }
-      return;
-    }
-
-    if (event.type == "mozupdatedremoteframedimensions") {
-      if (this._resolutionBeforeFullZoomChange != 0) {
-        this.content.windowUtils.setResolutionAndScaleTo(
-          this._resolutionBeforeFullZoomChange
-        );
-        this._resolutionBeforeFullZoomChange = 0;
-      }
-
-      this.mm.sendAsyncMessage("PostFullZoomChange", {});
       return;
     }
 
     if (event.type == "TextZoomChange") {
       if (this.refreshTextZoom()) {
-        this.mm.sendAsyncMessage("TextZoomChange", { value: this.textZoom });
+        this.sendAsyncMessage("TextZoomChange", {});
       }
-    } else if (event.type == "ZoomChangeUsingMouseWheel") {
-      this.mm.sendAsyncMessage("ZoomChangeUsingMouseWheel", {});
     }
   }
 }

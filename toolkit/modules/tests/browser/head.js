@@ -103,7 +103,7 @@ function promiseTestHighlighterOutput(
         // was called.
         const kTimeoutMs = 1000;
         // The initial timeout may wait for a while for results to come in.
-        let timeout = setTimeout(
+        let timeout = content.setTimeout(
           () => finish(false, "Timeout"),
           kTimeoutMs * 5
         );
@@ -115,7 +115,7 @@ function promiseTestHighlighterOutput(
             content.document.removeAnonymousContent = stubbed.remove;
           } catch (ex) {}
           stubbed = {};
-          clearTimeout(timeout);
+          content.clearTimeout(timeout);
 
           if (expectedResult.rectCount !== 0) {
             Assert.ok(ok, message);
@@ -236,8 +236,8 @@ function promiseTestHighlighterOutput(
                 lastOutlineNode = node;
               }
             }
-            clearTimeout(timeout);
-            timeout = setTimeout(() => {
+            content.clearTimeout(timeout);
+            timeout = content.setTimeout(() => {
               finish();
             }, kTimeoutMs);
             let res = stubbed[which].call(content.document, node);

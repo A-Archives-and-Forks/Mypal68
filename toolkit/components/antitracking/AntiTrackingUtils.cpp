@@ -4,12 +4,22 @@
 
 #include "AntiTrackingUtils.h"
 
+#include "AntiTrackingLog.h"
+#include "mozilla/dom/BrowsingContext.h"
+#include "mozilla/net/CookieJarSettings.h"
 #include "mozilla/dom/Document.h"
+#include "mozilla/dom/WindowGlobalParent.h"
+#include "mozilla/dom/WindowContext.h"
+#include "mozilla/net/NeckoChannelParams.h"
+#include "mozilla/PermissionManager.h"
 #include "nsGlobalWindowOuter.h"
 #include "nsIChannel.h"
 #include "nsIPermission.h"
 #include "nsIURI.h"
+#include "nsNetUtil.h"
 #include "nsPIDOMWindow.h"
+#include "nsSandboxFlags.h"
+#include "nsScriptSecurityManager.h"
 
 #define ANTITRACKING_PERM_KEY "3rdPartyStorage"
 
@@ -28,11 +38,8 @@ AntiTrackingUtils::GetTopWindow(nsPIDOMWindowInner* aWindow) {
     return nullptr;
   }
 
-  nsCOMPtr<nsPIDOMWindowOuter> pwin;
-  auto* outer = nsGlobalWindowOuter::Cast(aWindow->GetOuterWindow());
-  if (outer) {
-    pwin = outer->GetInProcessScriptableTop();
-  }
+  nsCOMPtr<nsPIDOMWindowOuter> pwin =
+      aWindow->GetBrowsingContext()->Top()->GetDOMWindow();
 
   if (!pwin) {
     return nullptr;
@@ -122,4 +129,251 @@ bool AntiTrackingUtils::IsStorageAccessPermission(nsIPermission* aPermission,
   }
 
   return StringBeginsWith(type, permissionKey);
+}
+
+// static
+bool AntiTrackingUtils::CheckStoragePermission(nsIPrincipal* aPrincipal,
+                                               const nsAutoCString& aType,
+                                               bool aIsInPrivateBrowsing,
+                                               uint32_t* aRejectedReason,
+                                               uint32_t aBlockedReason) {
+  PermissionManager* permManager = PermissionManager::GetInstance();
+  if (NS_WARN_IF(!permManager)) {
+    LOG(("Failed to obtain the permission manager"));
+    return false;
+  }
+
+  uint32_t result = 0;
+  if (aIsInPrivateBrowsing) {
+    LOG_PRIN(("Querying the permissions for private modei looking for a "
+              "permission of type %s for %s",
+              aType.get(), _spec),
+             aPrincipal);
+    if (!permManager->PermissionAvailable(aPrincipal, aType)) {
+      LOG(
+          ("Permission isn't available for this principal in the current "
+           "process"));
+      return false;
+    }
+    nsTArray<RefPtr<nsIPermission>> permissions;
+    nsresult rv = permManager->GetAllForPrincipal(aPrincipal, permissions);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      LOG(("Failed to get the list of permissions"));
+      return false;
+    }
+
+    bool found = false;
+    for (const auto& permission : permissions) {
+      if (!permission) {
+        LOG(("Couldn't get the permission for unknown reasons"));
+        continue;
+      }
+
+      nsAutoCString permissionType;
+      if (NS_SUCCEEDED(permission->GetType(permissionType)) &&
+          permissionType != aType) {
+        LOG(("Non-matching permission type: %s", aType.get()));
+        continue;
+      }
+
+      uint32_t capability = 0;
+      if (NS_SUCCEEDED(permission->GetCapability(&capability)) &&
+          capability != nsIPermissionManager::ALLOW_ACTION) {
+        LOG(("Non-matching permission capability: %d", capability));
+        continue;
+      }
+
+      uint32_t expirationType = 0;
+      if (NS_SUCCEEDED(permission->GetExpireType(&expirationType)) &&
+          expirationType != nsIPermissionManager ::EXPIRE_SESSION) {
+        LOG(("Non-matching permission expiration type: %d", expirationType));
+        continue;
+      }
+
+      int64_t expirationTime = 0;
+      if (NS_SUCCEEDED(permission->GetExpireTime(&expirationTime)) &&
+          expirationTime != 0) {
+        LOG(("Non-matching permission expiration time: %" PRId64,
+             expirationTime));
+        continue;
+      }
+
+      LOG(("Found a matching permission"));
+      found = true;
+      break;
+    }
+
+    if (!found) {
+      if (aRejectedReason) {
+        *aRejectedReason = aBlockedReason;
+      }
+      return false;
+    }
+  } else {
+    nsresult rv = permManager->TestPermissionWithoutDefaultsFromPrincipal(
+        aPrincipal, aType, &result);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      LOG(("Failed to test the permission"));
+      return false;
+    }
+
+    LOG_PRIN(
+        ("Testing permission type %s for %s resulted in %d (%s)", aType.get(),
+         _spec, int(result),
+         result == nsIPermissionManager::ALLOW_ACTION ? "success" : "failure"),
+        aPrincipal);
+
+    if (result != nsIPermissionManager::ALLOW_ACTION) {
+      if (aRejectedReason) {
+        *aRejectedReason = aBlockedReason;
+      }
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/* static */ bool AntiTrackingUtils::HasStoragePermissionInParent(
+    nsIChannel* aChannel) {
+  MOZ_ASSERT(aChannel);
+  MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess());
+
+  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
+  nsCOMPtr<nsICookieJarSettings> cookieJarSettings;
+
+  nsresult rv =
+      loadInfo->GetCookieJarSettings(getter_AddRefs(cookieJarSettings));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return false;
+  }
+
+  int32_t cookieBehavior = cookieJarSettings->GetCookieBehavior();
+
+  bool rejectForeignWithExceptions =
+      net::CookieJarSettings::IsRejectThirdPartyWithExceptions(cookieBehavior);
+
+  // We only need to check the storage permission if the cookie behavior is
+  // BEHAVIOR_REJECT_TRACKER, BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN or
+  // BEHAVIOR_REJECT_FOREIGN. Because ContentBlocking wouldn't update or check
+  // the storage permission if the cookie behavior is not belongs to these two.
+  if (!net::CookieJarSettings::IsRejectThirdPartyContexts(cookieBehavior)) {
+    return false;
+  }
+
+  nsCOMPtr<nsIPrincipal> targetPrincipal =
+      (cookieBehavior == nsICookieService::BEHAVIOR_REJECT_TRACKER ||
+       rejectForeignWithExceptions)
+          ? loadInfo->GetTopLevelStorageAreaPrincipal()
+          : loadInfo->GetTopLevelPrincipal();
+
+  if (!targetPrincipal) {
+    if (loadInfo->GetTopLevelPrincipal()) {
+      // We can only get here if the cookieBehavior is BEHAVIOR_REJECT_TRACKER,
+      // the TopLevelStorageAreaPrincipal is null and there is a
+      // TopLevelPrincipal. In this case, the channel is for the top-level
+      // window. So, we can return from here.
+      return false;
+    }
+
+    // We try to use the loading principal if there is no TopLevelPrincipal.
+    targetPrincipal = loadInfo->GetLoadingPrincipal();
+  }
+
+  if (!targetPrincipal) {
+    nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel);
+
+    if (httpChannel) {
+      // We don't have a loading principal, let's see if this is a document
+      // channel which belongs to a top-level window.
+      bool isDocument = false;
+      rv = httpChannel->GetIsMainDocumentChannel(&isDocument);
+      if (NS_SUCCEEDED(rv) && isDocument) {
+        nsIScriptSecurityManager* ssm =
+            nsScriptSecurityManager::GetScriptSecurityManager();
+        Unused << ssm->GetChannelResultPrincipal(
+            aChannel, getter_AddRefs(targetPrincipal));
+      }
+    }
+  }
+
+  // Let's use the triggering principal if we still have nothing on the hand.
+  if (!targetPrincipal) {
+    targetPrincipal = loadInfo->TriggeringPrincipal();
+  }
+
+  // Cannot get the target principal, bail out.
+  if (NS_WARN_IF(!targetPrincipal)) {
+    return false;
+  }
+
+  nsCOMPtr<nsIURI> trackingURI;
+  rv = aChannel->GetURI(getter_AddRefs(trackingURI));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return false;
+  }
+
+  nsAutoCString trackingOrigin;
+  rv = nsContentUtils::GetASCIIOrigin(trackingURI, trackingOrigin);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return false;
+  }
+
+  nsAutoCString type;
+  AntiTrackingUtils::CreateStoragePermissionKey(trackingOrigin, type);
+
+  uint32_t unusedReason = 0;
+
+  return AntiTrackingUtils::CheckStoragePermission(
+      targetPrincipal, type, NS_UsePrivateBrowsing(aChannel), &unusedReason,
+      unusedReason);
+}
+
+uint64_t AntiTrackingUtils::GetTopLevelAntiTrackingWindowId(
+    BrowsingContext* aBrowsingContext) {
+  MOZ_ASSERT(aBrowsingContext);
+
+  RefPtr<WindowContext> winContext =
+      aBrowsingContext->GetCurrentWindowContext();
+  if (!winContext) {
+    return 0;
+  }
+
+  Maybe<net::CookieJarSettingsArgs> cookieJarSettings =
+      winContext->GetCookieJarSettings();
+  if (cookieJarSettings.isNothing()) {
+    return 0;
+  }
+
+  // Do not check BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN her because when
+  // a third-party subresource is inside the main frame, we need to return the
+  // top-level window id to partition its cookies correctly.
+  uint32_t behavior = cookieJarSettings->cookieBehavior();
+  if (behavior == nsICookieService::BEHAVIOR_REJECT_TRACKER &&
+      aBrowsingContext->IsTop()) {
+    return 0;
+  }
+
+  return aBrowsingContext->Top()->GetCurrentInnerWindowId();
+}
+
+uint64_t AntiTrackingUtils::GetTopLevelStorageAreaWindowId(
+    BrowsingContext* aBrowsingContext) {
+  MOZ_ASSERT(aBrowsingContext);
+
+  if (Document::StorageAccessSandboxed(aBrowsingContext->GetSandboxFlags())) {
+    return 0;
+  }
+
+  BrowsingContext* parentBC = aBrowsingContext->GetParent();
+  if (!parentBC) {
+    // No parent browsing context available!
+    return 0;
+  }
+
+  if (!parentBC->IsTop()) {
+    return 0;
+  }
+
+  return parentBC->GetCurrentInnerWindowId();
 }

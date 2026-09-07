@@ -95,7 +95,6 @@ class UntrustedModulesManager {
   UntrustedModulesManager() : mMutex("UntrustedModulesManager::mMutex") {
     // Ensure whitelisted paths are initialized on the main thread.
     MOZ_ASSERT(NS_IsMainThread());
-    widget::WinUtils::GetWhitelistedPaths();
   }
 
   // Handles incoming loader events, places events into the queue for later

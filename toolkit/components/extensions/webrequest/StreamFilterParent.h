@@ -10,7 +10,6 @@
 
 #include "mozilla/LinkedList.h"
 #include "mozilla/Mutex.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/WebRequestService.h"
 #include "nsIStreamListener.h"
 #include "nsIThread.h"
@@ -54,10 +53,13 @@ class StreamFilterParent final : public PStreamFilterParent,
   StreamFilterParent();
 
   using ParentEndpoint = mozilla::ipc::Endpoint<PStreamFilterParent>;
+  using ChildEndpoint = mozilla::ipc::Endpoint<PStreamFilterChild>;
 
-  static bool Create(ContentParent* aContentParent, uint64_t aChannelId,
-                     const nsAString& aAddonId,
-                     mozilla::ipc::Endpoint<PStreamFilterChild>* aEndpoint);
+  using ChildEndpointPromise = MozPromise<ChildEndpoint, bool, true>;
+
+  static MOZ_MUST_USE RefPtr<ChildEndpointPromise> Create(
+      ContentParent* aContentParent, uint64_t aChannelId,
+      const nsAString& aAddonId);
 
   static void Attach(nsIChannel* aChannel, ParentEndpoint&& aEndpoint);
 

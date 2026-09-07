@@ -208,7 +208,8 @@ function CreateProfileWizard() {
     "chrome://mozapps/content/profile/createProfileWizard.xhtml",
     "",
     "centerscreen,chrome,modal,titlebar",
-    gProfileService
+    gProfileService,
+    { CreateProfile }
   );
 }
 

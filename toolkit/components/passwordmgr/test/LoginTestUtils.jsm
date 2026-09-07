@@ -70,8 +70,15 @@ this.LoginTestUtils = {
       (_, data) => data == "addLogin"
     );
     Services.logins.addLogin(login);
-    await storageChangedPromised;
-    return login;
+    let [savedLogin] = await storageChangedPromised;
+    return savedLogin;
+  },
+
+  resetGeneratedPasswordsCache() {
+    let { LoginManagerParent } = ChromeUtils.import(
+      "resource://gre/modules/LoginManagerParent.jsm"
+    );
+    LoginManagerParent.getGeneratedPasswordsByPrincipalOrigin().clear();
   },
 
   /**
@@ -140,6 +147,9 @@ this.LoginTestUtils.testData = {
     loginInfo.QueryInterface(Ci.nsILoginMetaInfo);
     if (modifications) {
       for (let [name, value] of Object.entries(modifications)) {
+        if (name == "httpRealm" && value !== null) {
+          throw new Error("httpRealm not supported for form logins");
+        }
         loginInfo[name] = value;
       }
     }
@@ -164,6 +174,11 @@ this.LoginTestUtils.testData = {
     loginInfo.QueryInterface(Ci.nsILoginMetaInfo);
     if (modifications) {
       for (let [name, value] of Object.entries(modifications)) {
+        if (name == "formActionOrigin" && value !== null) {
+          throw new Error(
+            "formActionOrigin not supported for HTTP auth. logins"
+          );
+        }
         loginInfo[name] = value;
       }
     }
@@ -294,6 +309,23 @@ this.LoginTestUtils.testData = {
         "form_field_password"
       ),
 
+      // Logins can be saved on non-default ports
+      new LoginInfo(
+        "https://www7.example.com:8080",
+        "https://www7.example.com:8080",
+        null,
+        "8080_username",
+        "8080_pass"
+      ),
+
+      new LoginInfo(
+        "https://www7.example.com:8080",
+        null,
+        "My dev server",
+        "8080_username2",
+        "8080_pass2"
+      ),
+
       // --- Examples of authentication logins (subdomains of example.org) ---
 
       // Simple HTTP authentication login.
@@ -398,6 +430,26 @@ this.LoginTestUtils.testData = {
         "Example Login Two",
         "the username",
         "the password two"
+      ),
+
+      // -- file:/// URIs throw accessing nsIURI.host
+
+      new LoginInfo(
+        "file:///",
+        "file:///",
+        null,
+        "file: username",
+        "file: password"
+      ),
+
+      // -- javascript: URIs throw accessing nsIURI.host.
+      // They should only be used for the formActionOrigin.
+      new LoginInfo(
+        "https://js.example.com",
+        "javascript:",
+        null,
+        "javascript: username",
+        "javascript: password"
       ),
     ];
   },

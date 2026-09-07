@@ -63,7 +63,7 @@ let Player = {
     "keydown",
     "unload",
   ],
-  mm: null,
+  actor: null,
 
   /**
    * When set to a non-null value, a timer is scheduled to hide the controls
@@ -86,12 +86,11 @@ let Player = {
     browser.sameProcessAsFrameLoader = originatingBrowser.frameLoader;
     holder.appendChild(browser);
 
-    browser.loadURI("about:blank", {
-      triggeringPrincipal: originatingBrowser.contentPrincipal,
-    });
+    this.actor = browser.browsingContext.currentWindowGlobal.getActor(
+      "PictureInPicture"
+    );
+    this.actor.sendAsyncMessage("PictureInPicture:SetupPlayer");
 
-    this.mm = browser.frameLoader.messageManager;
-    this.mm.sendAsyncMessage("PictureInPicture:SetupPlayer");
     for (let eventType of this.WINDOW_EVENTS) {
       addEventListener(eventType, this);
     }
@@ -108,6 +107,10 @@ let Player = {
       audioButton.previousElementSibling.hidden = false;
     }
     this.computeAndSetMinimumSize(window.outerWidth, window.outerHeight);
+
+    window.requestAnimationFrame(() => {
+      window.focus();
+    });
   },
 
   uninit() {
@@ -185,25 +188,25 @@ let Player = {
     switch (event.target.id) {
       case "audio": {
         if (this.isMuted) {
-          this.mm.sendAsyncMessage("PictureInPicture:Unmute");
+          this.actor.sendAsyncMessage("PictureInPicture:Unmute");
         } else {
-          this.mm.sendAsyncMessage("PictureInPicture:Mute");
+          this.actor.sendAsyncMessage("PictureInPicture:Mute");
         }
         break;
       }
 
       case "close": {
-        this.mm.sendAsyncMessage("PictureInPicture:Pause");
+        this.actor.sendAsyncMessage("PictureInPicture:Pause");
         window.close();
         break;
       }
 
       case "playpause": {
         if (!this.isPlaying) {
-          this.mm.sendAsyncMessage("PictureInPicture:Play");
+          this.actor.sendAsyncMessage("PictureInPicture:Play");
           this.revealControls(false);
         } else {
-          this.mm.sendAsyncMessage("PictureInPicture:Pause");
+          this.actor.sendAsyncMessage("PictureInPicture:Pause");
           this.revealControls(true);
         }
 

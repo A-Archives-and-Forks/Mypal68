@@ -162,6 +162,16 @@ bool nsAlertsService::ShouldShowAlert() {
   ::FreeLibrary(shellDLL);
 #endif
 
+  nsCOMPtr<nsIAlertsDoNotDisturb> alertsDND(GetDNDBackend());
+  if (alertsDND) {
+    bool suppressForScreenSharing = false;
+    nsresult rv =
+        alertsDND->GetSuppressForScreenSharing(&suppressForScreenSharing);
+    if (NS_SUCCEEDED(rv)) {
+      result &= !suppressForScreenSharing;
+    }
+  }
+
   return result;
 }
 
@@ -289,6 +299,26 @@ NS_IMETHODIMP nsAlertsService::SetManualDoNotDisturb(bool aDoNotDisturb) {
 
   nsresult rv = alertsDND->SetManualDoNotDisturb(aDoNotDisturb);
   return rv;
+#endif
+}
+
+NS_IMETHODIMP nsAlertsService::GetSuppressForScreenSharing(bool* aRetVal) {
+#ifdef MOZ_WIDGET_ANDROID
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
+  nsCOMPtr<nsIAlertsDoNotDisturb> alertsDND(GetDNDBackend());
+  NS_ENSURE_TRUE(alertsDND, NS_ERROR_NOT_IMPLEMENTED);
+  return alertsDND->GetSuppressForScreenSharing(aRetVal);
+#endif
+}
+
+NS_IMETHODIMP nsAlertsService::SetSuppressForScreenSharing(bool aSuppress) {
+#ifdef MOZ_WIDGET_ANDROID
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
+  nsCOMPtr<nsIAlertsDoNotDisturb> alertsDND(GetDNDBackend());
+  NS_ENSURE_TRUE(alertsDND, NS_ERROR_NOT_IMPLEMENTED);
+  return alertsDND->SetSuppressForScreenSharing(aSuppress);
 #endif
 }
 

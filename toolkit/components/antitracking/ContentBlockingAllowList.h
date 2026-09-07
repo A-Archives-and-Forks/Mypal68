@@ -5,6 +5,9 @@
 #ifndef mozilla_contentblockingallowlist_h
 #define mozilla_contentblockingallowlist_h
 
+#include "mozilla/dom/BrowsingContext.h"
+
+class nsICookieJarSettings;
 class nsIHttpChannel;
 class nsIPrincipal;
 class nsIURI;
@@ -37,13 +40,11 @@ class ContentBlockingAllowList final {
                                  nsIPrincipal** aPrincipal);
 
  private:
-  // Get the cache of allow list lookups for recent window/channels passed to
-  // Check().
-  static ContentBlockingAllowListCache& Cache();
-
   // Utility APIs for ContentBlocking.
   static bool Check(nsIPrincipal* aTopWinPrincipal, bool aIsPrivateBrowsing);
   static bool Check(nsPIDOMWindowInner* aWindow);
+  static bool Check(nsICookieJarSettings* aCookieJarSettings);
+  static nsresult Check(mozilla::dom::BrowsingContext* aBrowsingContext, bool& aIsAllowListed);
 
   friend class ContentBlocking;
 };

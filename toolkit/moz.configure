@@ -1235,16 +1235,6 @@ option('--enable-bundled-fonts', default=bundled_fonts_default,
 set_define('MOZ_BUNDLED_FONTS',
            depends_if('--enable-bundled-fonts', when=allow_bundled_fonts)(lambda _: True))
 
-# Verify MAR signatures
-# ==============================================================
-
-option('--disable-verify-mar', help='Disable verifying MAR signatures')
-
-set_define('MOZ_VERIFY_MAR_SIGNATURE',
-           depends_if('--enable-verify-mar')(lambda _: True))
-set_config('MOZ_VERIFY_MAR_SIGNATURE',
-           depends_if('--enable-verify-mar')(lambda _: True))
-
 # Reflow counting
 # ==============================================================
 
@@ -1807,40 +1797,21 @@ def new_notification_store(milestone):
 set_config('MOZ_NEW_NOTIFICATION_STORE', True, when=new_notification_store)
 set_define('MOZ_NEW_NOTIFICATION_STORE', True, when=new_notification_store)
 
-
-# new Cert Storage implementation
+# new cert storage implementation
 # ==============================================================
+option('--disable-new-cert-storage', env='MOZ_NEW_CERT_STORAGE',
+       help='{Enable|Disable} new certificate storage')
 
-@depends(milestone)
-def new_cert_storage(milestone):
-    if milestone.is_nightly:
-        return True
-
-set_config('MOZ_NEW_CERT_STORAGE', True, when=new_cert_storage)
-set_define('MOZ_NEW_CERT_STORAGE', True, when=new_cert_storage)
+set_config('MOZ_NEW_CERT_STORAGE', True, when='--enable-new-cert-storage')
+set_define('MOZ_NEW_CERT_STORAGE', True, when='--enable-new-cert-storage')
 
 # NSS
-# ===
-option('--with-system-nss', help='Use system NSS')
-
-imply_option('--with-system-nspr', True, when='--with-system-nss')
-
-nss_pkg = pkg_check_modules('NSS', 'nss >= 3.47', when='--with-system-nss', config=False)
-
-set_config('MOZ_SYSTEM_NSS', True, when='--with-system-nss')
-
-@depends(nss_pkg, check_build_environment)
-def nss_config(nss_pkg, build_env):
-    cflags = ['-I%s' % os.path.join(build_env.dist, 'include', 'nss')]
-    libs = None
-    if nss_pkg:
-        cflags = list(nss_pkg.cflags) + cflags
-        libs = nss_pkg.libs
-    return namespace(cflags=cflags, libs=libs)
-
-set_config('NSS_CFLAGS', nss_config.cflags)
-set_config('NSS_LIBS', nss_config.libs)
-add_old_configure_assignment('NSS_CFLAGS', nss_config.cflags)
+# ==============================================================
+include('../build/moz.configure/nss.configure')
+# Update-related programs: updater, maintenance service, update agent,
+# default browser agent.
+# ==============================================================
+include('../build/moz.configure/update-programs.configure')
 
 # Mobile optimizations
 # ==============================================================

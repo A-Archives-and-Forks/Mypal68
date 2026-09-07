@@ -16,6 +16,7 @@
 #include "nsQueryObject.h"
 #include "nsSocketTransportService2.h"
 #include "nsStringStream.h"
+#include "mozilla/net/DocumentChannelChild.h"
 
 namespace mozilla {
 namespace extensions {
@@ -98,19 +99,16 @@ StreamFilterParent::StreamFilterParent()
       mState(State::Uninitialized) {}
 
 StreamFilterParent::~StreamFilterParent() {
-  NS_ReleaseOnMainThreadSystemGroup("StreamFilterParent::mChannel",
-                                    mChannel.forget());
-  NS_ReleaseOnMainThreadSystemGroup("StreamFilterParent::mLoadGroup",
-                                    mLoadGroup.forget());
-  NS_ReleaseOnMainThreadSystemGroup("StreamFilterParent::mOrigListener",
-                                    mOrigListener.forget());
-  NS_ReleaseOnMainThreadSystemGroup("StreamFilterParent::mContext",
-                                    mContext.forget());
+  NS_ReleaseOnMainThread("StreamFilterParent::mChannel", mChannel.forget());
+  NS_ReleaseOnMainThread("StreamFilterParent::mLoadGroup", mLoadGroup.forget());
+  NS_ReleaseOnMainThread("StreamFilterParent::mOrigListener",
+                         mOrigListener.forget());
+  NS_ReleaseOnMainThread("StreamFilterParent::mContext", mContext.forget());
 }
 
-bool StreamFilterParent::Create(dom::ContentParent* aContentParent,
-                                uint64_t aChannelId, const nsAString& aAddonId,
-                                Endpoint<PStreamFilterChild>* aEndpoint) {
+auto StreamFilterParent::Create(dom::ContentParent* aContentParent,
+                                uint64_t aChannelId, const nsAString& aAddonId)
+    -> RefPtr<ChildEndpointPromise> {
   AssertIsMainThread();
 
   auto& webreq = WebRequestService::GetSingleton();
@@ -120,29 +118,16 @@ bool StreamFilterParent::Create(dom::ContentParent* aContentParent,
       webreq.GetTraceableChannel(aChannelId, addonId, aContentParent);
 
   RefPtr<mozilla::net::nsHttpChannel> chan = do_QueryObject(channel);
-  NS_ENSURE_TRUE(chan, false);
-
-  auto channelPid = chan->ProcessId();
-  NS_ENSURE_TRUE(channelPid, false);
-
-  Endpoint<PStreamFilterParent> parent;
-  Endpoint<PStreamFilterChild> child;
-  nsresult rv = PStreamFilter::CreateEndpoints(
-      channelPid,
-      aContentParent ? aContentParent->OtherPid() : base::GetCurrentProcId(),
-      &parent, &child);
-  NS_ENSURE_SUCCESS(rv, false);
+  if (!chan) {
+    return ChildEndpointPromise::CreateAndReject(false, __func__);
+  }
 
   // Disable alt-data for extension stream listeners.
   nsCOMPtr<nsIHttpChannelInternal> internal(do_QueryObject(channel));
   internal->DisableAltDataCache();
 
-  if (!chan->AttachStreamFilter(std::move(parent))) {
-    return false;
-  }
-
-  *aEndpoint = std::move(child);
-  return true;
+  return chan->AttachStreamFilter(aContentParent ? aContentParent->OtherPid()
+                                                 : base::GetCurrentProcId());
 }
 
 /* static */
@@ -475,16 +460,33 @@ NS_IMETHODIMP
 StreamFilterParent::OnStartRequest(nsIRequest* aRequest) {
   AssertIsMainThread();
 
+  // If a StreamFilter's request results in an external redirect, that
+  // StreamFilter should not monitor the redirected request's response (although
+  // an identical StreamFilter may be created for it). A StreamFilter should,
+  // however, monitor the response of an "internal" redirect (i.e. a
+  // browser-initiated rather than server-initiated redirect); in this case,
+  // mChannel must be replaced.
   if (aRequest != mChannel) {
-    mDisconnected = true;
+    nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest);
+    nsCOMPtr<nsILoadInfo> loadInfo = channel ? channel->LoadInfo() : nullptr;
 
-    RefPtr<StreamFilterParent> self(this);
-    RunOnActorThread(FUNC, [=] {
-      if (self->IPCActive()) {
-        self->mState = State::Disconnected;
-        CheckResult(self->SendError(NS_LITERAL_CSTRING("Channel redirected")));
-      }
-    });
+    if (loadInfo && loadInfo->RedirectChain().IsEmpty()) {
+      MOZ_DIAGNOSTIC_ASSERT(
+          !loadInfo->RedirectChainIncludingInternalRedirects().IsEmpty(),
+          "We should be performing an internal redirect.");
+      mChannel = channel;
+    } else {
+      mDisconnected = true;
+
+      RefPtr<StreamFilterParent> self(this);
+      RunOnActorThread(FUNC, [=] {
+        if (self->IPCActive()) {
+          self->mState = State::Disconnected;
+          CheckResult(
+              self->SendError(NS_LITERAL_CSTRING("Channel redirected")));
+        }
+      });
+    }
   }
 
   // Check if alterate cached data is being sent, if so we receive un-decoded
@@ -555,6 +557,16 @@ StreamFilterParent::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
   RunOnActorThread(FUNC, [=] {
     if (self->IPCActive()) {
       self->CheckResult(self->SendStopRequest(aStatusCode));
+    } else if (self->mState != State::Disconnecting) {
+      // If we're currently disconnecting, then we'll emit a stop
+      // request at the end of that process. Otherwise we need to
+      // manually emit one here, since we won't be getting a response
+      // from the child.
+      RunOnMainThread(FUNC, [=] {
+        if (!self->mSentStop) {
+          self->EmitStopRequest(aStatusCode);
+        }
+      });
     }
   });
   return NS_OK;

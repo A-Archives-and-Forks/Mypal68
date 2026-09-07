@@ -187,15 +187,23 @@ function checkPromptState(promptState, expectedState) {
   }
 }
 
-function checkEchoedAuthInfo(expectedState, doc) {
-  // The server echos back the HTTP auth info it received.
-  let username = doc.getElementById("user").textContent;
-  let password = doc.getElementById("pass").textContent;
-  let authok = doc.getElementById("ok").textContent;
+function checkEchoedAuthInfo(expectedState, browsingContext) {
+  return SpecialPowers.spawn(
+    browsingContext,
+    [expectedState.user, expectedState.pass],
+    (expectedUser, expectedPass) => {
+      let doc = this.content.document;
 
-  is(authok, "PASS", "Checking for successful authentication");
-  is(username, expectedState.user, "Checking for echoed username");
-  is(password, expectedState.pass, "Checking for echoed password");
+      // The server echos back the HTTP auth info it received.
+      let username = doc.getElementById("user").textContent;
+      let password = doc.getElementById("pass").textContent;
+      let authok = doc.getElementById("ok").textContent;
+
+      Assert.equal(authok, "PASS", "Checking for successful authentication");
+      Assert.equal(username, expectedUser, "Checking for echoed username");
+      Assert.equal(password, expectedPass, "Checking for echoed password");
+    }
+  );
 }
 
 /**
@@ -241,10 +249,16 @@ function PrompterProxy(chromeScript) {
             }
           }
 
-          let result = chromeScript.sendSyncMessage("proxyPrompter", {
-            args,
-            methodName: prop,
-          })[0][0];
+          let result;
+          chromeScript
+            .sendQuery("proxyPrompter", {
+              args,
+              methodName: prop,
+            })
+            .then(val => {
+              result = val;
+            });
+          SpecialPowers.Services.tm.spinEventLoopUntil(() => result);
 
           for (let outParam of outParams) {
             // Copy the out or inout param value over the original

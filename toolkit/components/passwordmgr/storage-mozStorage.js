@@ -221,7 +221,22 @@ LoginManagerStorage_mozStorage.prototype = {
     return Promise.resolve();
   },
 
-  addLogin(login, preEncrypted = false) {
+  addLogin(
+    login,
+    preEncrypted = false,
+    plaintextUsername = null,
+    plaintextPassword = null
+  ) {
+    if (
+      preEncrypted &&
+      (typeof plaintextUsername != "string" ||
+        typeof plaintextPassword != "string")
+    ) {
+      throw new Error(
+        "plaintextUsername and plaintextPassword are required when preEncrypted is true"
+      );
+    }
+
     // Throws if there are bogus values.
     LoginHelper.checkLoginValues(login);
 
@@ -231,6 +246,8 @@ LoginManagerStorage_mozStorage.prototype = {
 
     // Clone the login, so we don't modify the caller's object.
     let loginClone = login.clone();
+    loginClone.username = preEncrypted ? plaintextUsername : login.username;
+    loginClone.password = preEncrypted ? plaintextPassword : login.password;
 
     // Initialize the nsILoginMetaInfo fields, unless the caller gave us values
     loginClone.QueryInterface(Ci.nsILoginMetaInfo);
@@ -354,8 +371,9 @@ LoginManagerStorage_mozStorage.prototype = {
         newLogin.httpRealm
       );
 
-      if (logins.some(login => newLogin.matches(login, true))) {
-        throw new Error("This login already exists.");
+      let matchingLogin = logins.find(login => newLogin.matches(login, true));
+      if (matchingLogin) {
+        throw LoginHelper.createLoginAlreadyExistsError(matchingLogin.guid);
       }
     }
 
@@ -490,6 +508,7 @@ LoginManagerStorage_mozStorage.prototype = {
     for (let prop of matchData.enumerator) {
       switch (prop.name) {
         // Some property names aren't field names but are special options to affect the search.
+        case "acceptDifferentSubdomains":
         case "schemeUpgrades": {
           options[prop.name] = prop.value;
           break;
@@ -521,6 +540,7 @@ LoginManagerStorage_mozStorage.prototype = {
     matchData,
     aOptions = {
       schemeUpgrades: false,
+      acceptDifferentSubdomains: false,
     }
   ) {
     let conditions = [],

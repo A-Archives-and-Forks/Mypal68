@@ -4,53 +4,79 @@
 
 "use strict";
 
-var EXPORTED_SYMBOLS = ["PictureInPicture"];
+var EXPORTED_SYMBOLS = [
+  "PictureInPicture",
+  "PictureInPictureParent",
+  "PictureInPictureToggleParent",
+];
 
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { AppConstants } = ChromeUtils.import(
+  "resource://gre/modules/AppConstants.jsm"
+);
 
 const PLAYER_URI = "chrome://global/content/pictureinpicture/player.xhtml";
-const PLAYER_FEATURES = `chrome,titlebar=no,alwaysontop,lockaspectratio,resizable`;
+var PLAYER_FEATURES =
+  "chrome,titlebar=yes,alwaysontop,lockaspectratio,resizable";
+/* Don't use dialog on Gtk as it adds extra border and titlebar to PIP window */
+if (!AppConstants.MOZ_WIDGET_GTK) {
+  PLAYER_FEATURES += ",dialog";
+}
 const WINDOW_TYPE = "Toolkit:PictureInPicture";
 const TOGGLE_ENABLED_PREF =
   "media.videocontrols.picture-in-picture.video-toggle.enabled";
+
+class PictureInPictureToggleParent extends JSWindowActorParent {
+  receiveMessage(aMessage) {
+    let browsingContext = aMessage.target.browsingContext;
+    let browser = browsingContext.top.embedderElement;
+    switch (aMessage.name) {
+      case "PictureInPicture:OpenToggleContextMenu": {
+        let win = browser.ownerGlobal;
+        PictureInPicture.openToggleContextMenu(win, aMessage.data);
+        break;
+      }
+    }
+  }
+}
 
 /**
  * This module is responsible for creating a Picture in Picture window to host
  * a clone of a video element running in web content.
  */
 
-var PictureInPicture = {
-  // Listeners are added in nsBrowserGlue.js lazily
+class PictureInPictureParent extends JSWindowActorParent {
   receiveMessage(aMessage) {
-    let browser = aMessage.target;
+    let browsingContext = aMessage.target.browsingContext;
+    let browser = browsingContext.top.embedderElement;
 
     switch (aMessage.name) {
       case "PictureInPicture:Request": {
         let videoData = aMessage.data;
-        this.handlePictureInPictureRequest(browser, videoData);
+        PictureInPicture.handlePictureInPictureRequest(browser, videoData);
         break;
       }
       case "PictureInPicture:Resize": {
         let videoData = aMessage.data;
-        this.resizePictureInPictureWindow(videoData);
+        PictureInPicture.resizePictureInPictureWindow(videoData);
         break;
       }
       case "PictureInPicture:Close": {
         /**
          * Content has requested that its Picture in Picture window go away.
          */
-        this.closePipWindow();
+        PictureInPicture.closePipWindow();
         break;
       }
       case "PictureInPicture:Playing": {
-        let player = this.getWeakPipPlayer();
+        let player = PictureInPicture.getWeakPipPlayer();
         if (player) {
           player.setIsPlayingState(true);
         }
         break;
       }
       case "PictureInPicture:Paused": {
-        let player = this.getWeakPipPlayer();
+        let player = PictureInPicture.getWeakPipPlayer();
         if (player) {
           player.setIsPlayingState(false);
         }
@@ -70,14 +96,16 @@ var PictureInPicture = {
         }
         break;
       }
-      case "PictureInPicture:OpenToggleContextMenu": {
-        let win = browser.ownerGlobal;
-        this.openToggleContextMenu(win, aMessage.data);
-        break;
-      }
     }
-  },
+  }
+}
 
+/**
+ * This module is responsible for creating a Picture in Picture window to host
+ * a clone of a video element running in web content.
+ */
+
+var PictureInPicture = {
   /**
    * Returns the player window if one exists and if it hasn't yet been closed.
    *
@@ -111,7 +139,10 @@ var PictureInPicture = {
   onCommand(event) {
     let win = event.target.ownerGlobal;
     let browser = win.gBrowser.selectedBrowser;
-    browser.messageManager.sendAsyncMessage("PictureInPicture:KeyToggle");
+    let actor = browser.browsingContext.currentWindowGlobal.getActor(
+      "PictureInPicture"
+    );
+    actor.sendAsyncMessage("PictureInPicture:KeyToggle");
   },
 
   async focusTabAndClosePip() {

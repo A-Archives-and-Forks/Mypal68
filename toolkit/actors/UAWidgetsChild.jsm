@@ -5,12 +5,9 @@
 
 var EXPORTED_SYMBOLS = ["UAWidgetsChild"];
 
-const { ActorChild } = ChromeUtils.import(
-  "resource://gre/modules/ActorChild.jsm"
-);
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
-class UAWidgetsChild extends ActorChild {
+class UAWidgetsChild extends JSWindowActorChild {
   constructor(dispatcher) {
     super(dispatcher);
 
@@ -45,10 +42,6 @@ class UAWidgetsChild extends ActorChild {
         this.teardownWidget(aEvent.target);
         break;
     }
-
-    // In case we are a nested frame, prevent the message manager of the
-    // parent frame from receving the event.
-    aEvent.stopPropagation();
   }
 
   setupOrNotifyWidget(aElement) {

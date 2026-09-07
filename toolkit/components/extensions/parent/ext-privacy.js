@@ -9,8 +9,7 @@ ChromeUtils.defineModuleGetter(
 var { ExtensionPreferencesManager } = ChromeUtils.import(
   "resource://gre/modules/ExtensionPreferencesManager.jsm"
 );
-
-var { ExtensionError } = ExtensionUtils;
+var { getSettingsAPI } = ExtensionPreferencesManager;
 
 const cookieSvc = Ci.nsICookieService;
 
@@ -22,44 +21,9 @@ const cookieBehaviorValues = new Map([
   ["reject_trackers", cookieSvc.BEHAVIOR_REJECT_TRACKER],
 ]);
 
-const checkScope = scope => {
-  if (scope && scope !== "regular") {
-    throw new ExtensionError(
-      `Firefox does not support the ${scope} settings scope.`
-    );
-  }
-};
-
-const getPrivacyAPI = (extension, name, callback) => {
-  return {
-    async get(details) {
-      return {
-        levelOfControl: details.incognito
-          ? "not_controllable"
-          : await ExtensionPreferencesManager.getLevelOfControl(
-              extension.id,
-              name
-            ),
-        value: await callback(),
-      };
-    },
-    set(details) {
-      checkScope(details.scope);
-      return ExtensionPreferencesManager.setSetting(
-        extension.id,
-        name,
-        details.value
-      );
-    },
-    clear(details) {
-      checkScope(details.scope);
-      return ExtensionPreferencesManager.removeSetting(extension.id, name);
-    },
-  };
-};
-
 // Add settings objects for supported APIs to the preferences manager.
 ExtensionPreferencesManager.addSetting("network.networkPredictionEnabled", {
+  permission: "privacy",
   prefNames: [
     "network.predictor.enabled",
     "network.prefetch-next",
@@ -78,6 +42,7 @@ ExtensionPreferencesManager.addSetting("network.networkPredictionEnabled", {
 });
 
 ExtensionPreferencesManager.addSetting("network.peerConnectionEnabled", {
+  permission: "privacy",
   prefNames: ["media.peerconnection.enabled"],
 
   setCallback(value) {
@@ -86,6 +51,7 @@ ExtensionPreferencesManager.addSetting("network.peerConnectionEnabled", {
 });
 
 ExtensionPreferencesManager.addSetting("network.webRTCIPHandlingPolicy", {
+  permission: "privacy",
   prefNames: [
     "media.peerconnection.ice.default_address_only",
     "media.peerconnection.ice.no_host",
@@ -124,6 +90,7 @@ ExtensionPreferencesManager.addSetting("network.webRTCIPHandlingPolicy", {
 });
 
 ExtensionPreferencesManager.addSetting("services.passwordSavingEnabled", {
+  permission: "privacy",
   prefNames: ["signon.rememberSignons"],
 
   setCallback(value) {
@@ -132,6 +99,7 @@ ExtensionPreferencesManager.addSetting("services.passwordSavingEnabled", {
 });
 
 ExtensionPreferencesManager.addSetting("websites.cookieConfig", {
+  permission: "privacy",
   prefNames: ["network.cookie.cookieBehavior", "network.cookie.lifetimePolicy"],
 
   setCallback(value) {
@@ -145,6 +113,7 @@ ExtensionPreferencesManager.addSetting("websites.cookieConfig", {
 });
 
 ExtensionPreferencesManager.addSetting("websites.firstPartyIsolate", {
+  permission: "privacy",
   prefNames: ["privacy.firstparty.isolate"],
 
   setCallback(value) {
@@ -153,6 +122,7 @@ ExtensionPreferencesManager.addSetting("websites.firstPartyIsolate", {
 });
 
 ExtensionPreferencesManager.addSetting("websites.hyperlinkAuditingEnabled", {
+  permission: "privacy",
   prefNames: ["browser.send_pings"],
 
   setCallback(value) {
@@ -161,6 +131,7 @@ ExtensionPreferencesManager.addSetting("websites.hyperlinkAuditingEnabled", {
 });
 
 ExtensionPreferencesManager.addSetting("websites.referrersEnabled", {
+  permission: "privacy",
   prefNames: ["network.http.sendRefererHeader"],
 
   // Values for network.http.sendRefererHeader:
@@ -172,6 +143,7 @@ ExtensionPreferencesManager.addSetting("websites.referrersEnabled", {
 });
 
 ExtensionPreferencesManager.addSetting("websites.resistFingerprinting", {
+  permission: "privacy",
   prefNames: ["privacy.resistFingerprinting"],
 
   setCallback(value) {
@@ -180,6 +152,7 @@ ExtensionPreferencesManager.addSetting("websites.resistFingerprinting", {
 });
 
 ExtensionPreferencesManager.addSetting("websites.trackingProtectionMode", {
+  permission: "privacy",
   prefNames: [
     "privacy.trackingprotection.enabled",
     "privacy.trackingprotection.pbmode.enabled",
@@ -211,14 +184,13 @@ ExtensionPreferencesManager.addSetting("websites.trackingProtectionMode", {
 
 this.privacy = class extends ExtensionAPI {
   getAPI(context) {
-    let { extension } = context;
     return {
       privacy: {
         network: {
-          networkPredictionEnabled: getPrivacyAPI(
-            extension,
-            "network.networkPredictionEnabled",
-            () => {
+          networkPredictionEnabled: getSettingsAPI({
+            context,
+            name: "network.networkPredictionEnabled",
+            callback() {
               return (
                 Preferences.get("network.predictor.enabled") &&
                 Preferences.get("network.prefetch-next") &&
@@ -226,19 +198,19 @@ this.privacy = class extends ExtensionAPI {
                   0 &&
                 !Preferences.get("network.dns.disablePrefetch")
               );
-            }
-          ),
-          peerConnectionEnabled: getPrivacyAPI(
-            extension,
-            "network.peerConnectionEnabled",
-            () => {
+            },
+          }),
+          peerConnectionEnabled: getSettingsAPI({
+            context,
+            name: "network.peerConnectionEnabled",
+            callback() {
               return Preferences.get("media.peerconnection.enabled");
-            }
-          ),
-          webRTCIPHandlingPolicy: getPrivacyAPI(
-            extension,
-            "network.webRTCIPHandlingPolicy",
-            () => {
+            },
+          }),
+          webRTCIPHandlingPolicy: getSettingsAPI({
+            context,
+            name: "network.webRTCIPHandlingPolicy",
+            callback() {
               if (Preferences.get("media.peerconnection.ice.proxy_only")) {
                 return "proxy_only";
               }
@@ -264,25 +236,25 @@ this.privacy = class extends ExtensionAPI {
               }
 
               return "default";
-            }
-          ),
+            },
+          }),
         },
 
         services: {
-          passwordSavingEnabled: getPrivacyAPI(
-            extension,
-            "services.passwordSavingEnabled",
-            () => {
+          passwordSavingEnabled: getSettingsAPI({
+            context,
+            name: "services.passwordSavingEnabled",
+            callback() {
               return Preferences.get("signon.rememberSignons");
-            }
-          ),
+            },
+          }),
         },
 
         websites: {
-          cookieConfig: getPrivacyAPI(
-            extension,
-            "websites.cookieConfig",
-            () => {
+          cookieConfig: getSettingsAPI({
+            context,
+            name: "websites.cookieConfig",
+            callback() {
               let prefValue = Preferences.get("network.cookie.cookieBehavior");
               return {
                 behavior: Array.from(cookieBehaviorValues.entries()).find(
@@ -292,40 +264,40 @@ this.privacy = class extends ExtensionAPI {
                   Preferences.get("network.cookie.lifetimePolicy") ===
                   cookieSvc.ACCEPT_SESSION,
               };
-            }
-          ),
-          firstPartyIsolate: getPrivacyAPI(
-            extension,
-            "websites.firstPartyIsolate",
-            () => {
+            },
+          }),
+          firstPartyIsolate: getSettingsAPI({
+            context,
+            name: "websites.firstPartyIsolate",
+            callback() {
               return Preferences.get("privacy.firstparty.isolate");
-            }
-          ),
-          hyperlinkAuditingEnabled: getPrivacyAPI(
-            extension,
-            "websites.hyperlinkAuditingEnabled",
-            () => {
+            },
+          }),
+          hyperlinkAuditingEnabled: getSettingsAPI({
+            context,
+            name: "websites.hyperlinkAuditingEnabled",
+            callback() {
               return Preferences.get("browser.send_pings");
-            }
-          ),
-          referrersEnabled: getPrivacyAPI(
-            extension,
-            "websites.referrersEnabled",
-            () => {
+            },
+          }),
+          referrersEnabled: getSettingsAPI({
+            context,
+            name: "websites.referrersEnabled",
+            callback() {
               return Preferences.get("network.http.sendRefererHeader") !== 0;
-            }
-          ),
-          resistFingerprinting: getPrivacyAPI(
-            extension,
-            "websites.resistFingerprinting",
-            () => {
+            },
+          }),
+          resistFingerprinting: getSettingsAPI({
+            context,
+            name: "websites.resistFingerprinting",
+            callback() {
               return Preferences.get("privacy.resistFingerprinting");
-            }
-          ),
-          trackingProtectionMode: getPrivacyAPI(
-            extension,
-            "websites.trackingProtectionMode",
-            () => {
+            },
+          }),
+          trackingProtectionMode: getSettingsAPI({
+            context,
+            name: "websites.trackingProtectionMode",
+            callback() {
               if (Preferences.get("privacy.trackingprotection.enabled")) {
                 return "always";
               } else if (
@@ -334,8 +306,8 @@ this.privacy = class extends ExtensionAPI {
                 return "private_browsing";
               }
               return "never";
-            }
-          ),
+            },
+          }),
         },
       },
     };

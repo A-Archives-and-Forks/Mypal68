@@ -10,8 +10,9 @@
   SimpleTest.waitForExplicitFinish();
 
   function openWindow(features = "") {
-    return window.openDialog("window_intrinsic_size.xhtml",
-                             null, "chrome,dialog=no,all," + features);
+    return window.docShell.rootTreeItem.domWindow
+                 .openDialog("window_intrinsic_size.xhtml",
+                             "", "chrome,dialog=no,all," + features);
   }
 
   function checkWindowSize(win, width, height, msg) {

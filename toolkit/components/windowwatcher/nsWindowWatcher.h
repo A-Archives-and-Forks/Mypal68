@@ -18,6 +18,7 @@
 #include "mozilla/Maybe.h"
 #include "nsIWindowCreator.h"  // for stupid compilers
 #include "nsIWindowWatcher.h"
+#include "nsIOpenWindowInfo.h"
 #include "nsIPromptFactory.h"
 #include "nsIRemoteTab.h"
 #include "nsPIWindowWatcher.h"
@@ -54,6 +55,13 @@ class nsWindowWatcher : public nsIWindowWatcher,
                                        bool aCalledFromJS,
                                        bool aWidthSpecified);
 
+  // Will first look for a caller on the JS stack, and then fall back on
+  // aCurrentContext if it can't find one.
+  // It also knows to not look for things if aForceNoOpener is set.
+  already_AddRefed<mozilla::dom::BrowsingContext> GetBrowsingContextByName(
+      const nsAString& aName, bool aForceNoOpener,
+      mozilla::dom::BrowsingContext* aCurrentContext);
+
  protected:
   virtual ~nsWindowWatcher();
 
@@ -64,18 +72,6 @@ class nsWindowWatcher : public nsIWindowWatcher,
   nsWatcherWindowEntry* FindWindowEntry(mozIDOMWindowProxy* aWindow);
   nsresult RemoveWindow(nsWatcherWindowEntry* aInfo);
 
-  // Get the caller tree item.  Look on the JS stack, then fall back
-  // to the parent if there's nothing there.
-  already_AddRefed<nsIDocShellTreeItem> GetCallerTreeItem(
-      nsIDocShellTreeItem* aParentItem);
-
-  // Unlike GetWindowByName this will look for a caller on the JS
-  // stack, and then fall back on aCurrentWindow if it can't find one.
-  // It also knows to not look for things if aForceNoOpener is set.
-  nsPIDOMWindowOuter* SafeGetWindowByName(const nsAString& aName,
-                                          bool aForceNoOpener,
-                                          mozIDOMWindowProxy* aCurrentWindow);
-
   // Just like OpenWindowJS, but knows whether it got called via OpenWindowJS
   // (which means called from script) or called via OpenWindow.
   nsresult OpenWindowInternal(mozIDOMWindowProxy* aParent, const char* aUrl,
@@ -84,7 +80,7 @@ class nsWindowWatcher : public nsIWindowWatcher,
                               nsIArray* aArgv, bool aIsPopupSpam,
                               bool aForceNoOpener, bool aForceNoReferrer,
                               nsDocShellLoadState* aLoadState,
-                              mozIDOMWindowProxy** aResult);
+                              mozilla::dom::BrowsingContext** aResult);
 
   static nsresult URIfromURL(const char* aURL, mozIDOMWindowProxy* aParent,
                              nsIURI** aURI);
@@ -103,11 +99,6 @@ class nsWindowWatcher : public nsIWindowWatcher,
   /* Compute the right SizeSpec based on aFeatures */
   static void CalcSizeSpec(const mozilla::dom::WindowFeatures& aFeatures,
                            bool aHasChromeParent, SizeSpec& aResult);
-  static nsresult ReadyOpenedDocShellItem(nsIDocShellTreeItem* aOpenedItem,
-                                          nsPIDOMWindowOuter* aParent,
-                                          bool aWindowIsNew,
-                                          bool aForceNoOpener,
-                                          mozIDOMWindowProxy** aOpenedWindow);
   static void SizeOpenedWindow(
       nsIDocShellTreeOwner* aTreeOwner, mozIDOMWindowProxy* aParent,
       bool aIsCallerChrome, const SizeSpec& aSizeSpec,
@@ -120,9 +111,7 @@ class nsWindowWatcher : public nsIWindowWatcher,
  private:
   nsresult CreateChromeWindow(nsIWebBrowserChrome* aParentChrome,
                               uint32_t aChromeFlags,
-                              nsIRemoteTab* aOpeningBrowserParent,
-                              mozIDOMWindowProxy* aOpener,
-                              uint64_t aNextRemoteTabId,
+                              nsIOpenWindowInfo* aOpenWindowInfo,
                               nsIWebBrowserChrome** aResult);
 
   void MaybeDisablePersistence(const SizeSpec& sizeSpec,

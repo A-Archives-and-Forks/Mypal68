@@ -234,6 +234,8 @@ add_task(async function fill_generated_password_with_matching_logins() {
   Services.logins.addLogin(login);
   await storageChangedPromised;
 
+  let formFilled = listenForTestNotification("FormProcessed");
+
   await BrowserTestUtils.withNewTab(
     {
       gBrowser,
@@ -241,6 +243,7 @@ add_task(async function fill_generated_password_with_matching_logins() {
     },
     async function(browser) {
       await SimpleTest.promiseFocus(browser.ownerGlobal);
+      await formFilled;
       await ContentTask.spawn(
         browser,
         [passwordInputSelector],
@@ -344,6 +347,7 @@ add_task(async function fill_generated_password_with_matching_logins() {
   );
 
   Services.logins.removeAllLogins();
+  LoginTestUtils.resetGeneratedPasswordsCache();
 });
 
 add_task(async function test_edited_generated_password_in_new_tab() {
@@ -448,5 +452,6 @@ add_task(async function test_edited_generated_password_in_new_tab() {
   );
 
   Services.logins.removeAllLogins();
+  LoginTestUtils.resetGeneratedPasswordsCache();
   await SpecialPowers.popPrefEnv();
 });

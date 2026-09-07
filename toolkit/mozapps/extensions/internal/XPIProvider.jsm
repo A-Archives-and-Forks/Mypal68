@@ -119,7 +119,7 @@ const STARTUP_MTIME_SCOPES = [
 const NOTIFICATION_FLUSH_PERMISSIONS = "flush-pending-permissions";
 const XPI_PERMISSION = "install";
 
-const DB_SCHEMA = 31;
+const DB_SCHEMA = 32;
 
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
@@ -1689,7 +1689,11 @@ class BootstrapScope {
    */
   async callBootstrapMethod(aMethod, aReason, aExtraParams = {}) {
     let { addon, runInSafeMode } = this;
-    if (Services.appinfo.inSafeMode && !runInSafeMode) {
+    if (
+      Services.appinfo.inSafeMode &&
+      !runInSafeMode &&
+      aMethod !== "uninstall"
+    ) {
       return null;
     }
 
@@ -1974,7 +1978,7 @@ class BootstrapScope {
    * add-on to the given new add-on, depending on the current state of
    * the scope.
    *
-   * @param {Object} newAddon
+   * @param {XPIState} newAddon
    *        The new add-on which is being installed, as expected by the
    *        constructor.
    * @param {boolean} [startup = false]
@@ -1994,12 +1998,41 @@ class BootstrapScope {
       this.addon.version,
       newAddon.version
     );
+
+    let callUpdate = this.addon.isWebExtension && newAddon.isWebExtension;
+
+    // BootstrapScope gets either an XPIState instance or an AddonInternal
+    // instance, when we update, we need the latter to access permissions
+    // from the manifest.
+    let existingAddon = this.addon;
+
     let extraArgs = {
-      oldVersion: this.addon.version,
+      oldVersion: existingAddon.version,
       newVersion: newAddon.version,
     };
 
-    let callUpdate = this.addon.isWebExtension && newAddon.isWebExtension;
+    // If we're updating an extension, we may need to read data to
+    // calculate permission changes.
+    if (callUpdate && existingAddon.type === "extension") {
+      if (this.addon instanceof XPIState) {
+        // The existing addon will be cached in the database.
+        existingAddon = await XPIDatabase.getAddonByID(this.addon.id);
+      }
+
+      if (newAddon instanceof XPIState) {
+        newAddon = await XPIInstall.loadManifestFromFile(
+          newAddon.file,
+          newAddon.location
+        );
+      }
+
+      Object.assign(extraArgs, {
+        userPermissions: newAddon.userPermissions,
+        optionalPermissions: newAddon.optionalPermissions,
+        oldPermissions: existingAddon.userPermissions,
+        oldOptionalPermissions: existingAddon.optionalPermissions,
+      });
+    }
 
     await this._uninstall(reason, callUpdate, extraArgs);
 

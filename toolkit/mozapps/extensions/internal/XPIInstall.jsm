@@ -470,7 +470,7 @@ async function loadManifestFromWebManifest(aPackage) {
   addon.iconURL = null;
   addon.icons = manifest.icons || {};
   addon.userPermissions = extension.manifestPermissions;
-
+  addon.optionalPermissions = extension.manifestOptionalPermissions;
   addon.applyBackgroundUpdates = AddonManager.AUTOUPDATE_DEFAULT;
 
   function getLocale(aLocale) {
@@ -598,8 +598,10 @@ var loadManifest = async function(aPackage, aLocation, aOldAddon) {
   }
 
   addon.propagateDisabledState(aOldAddon);
-  await addon.updateBlocklistState();
-  addon.appDisabled = !XPIDatabase.isUsableAddon(addon);
+  if (!aLocation.isSystem && !aLocation.isBuiltin) {
+    await addon.updateBlocklistState();
+    addon.appDisabled = !XPIDatabase.isUsableAddon(addon);
+  }
 
   defineSyncGUID(addon);
 
@@ -1465,7 +1467,9 @@ class AddonInstall {
       this.existingAddon.userDisabled &&
       !this.existingAddon.pendingUninstall
     ) {
-      await XPIDatabase.updateAddonDisabledState(this.existingAddon, false);
+      await XPIDatabase.updateAddonDisabledState(this.existingAddon, {
+        userDisabled: false,
+      });
       this.state = AddonManager.STATE_INSTALLED;
       this._callInstallListeners("onInstallEnded", this.existingAddon.wrapper);
       return;
@@ -2301,7 +2305,7 @@ var DownloadAddonInstall = class extends AddonInstall {
       );
       let prompt = factory.getPrompt(win, Ci.nsIAuthPrompt2);
 
-      if (this.browser && prompt instanceof Ci.nsILoginManagerPrompter) {
+      if (this.browser && prompt instanceof Ci.nsILoginManagerAuthPrompter) {
         prompt.browser = this.browser;
       }
 
@@ -3434,6 +3438,7 @@ var XPIInstall = {
   newVersionReason,
   recursiveRemove,
   syncLoadManifest,
+  loadManifestFromFile,
 
   // Keep track of in-progress operations that support cancel()
   _inProgress: [],
@@ -4127,6 +4132,7 @@ var XPIInstall = {
       aAddon._updateCheck.cancel();
     }
 
+    let wasActive = aAddon.active;
     let wasPending = aAddon.pendingUninstall;
 
     if (aForcePending) {
@@ -4229,7 +4235,8 @@ var XPIInstall = {
     }
 
     // Notify any other providers that a new theme has been enabled
-    if (aAddon.type === "theme" && aAddon.active) {
+    // (when the active theme is uninstalled, the default theme is enabled).
+    if (aAddon.type === "theme" && wasActive) {
       AddonManagerPrivate.notifyAddonChanged(null, aAddon.type);
     }
   },

@@ -44,6 +44,9 @@ class nsXULAlerts : public nsIAlertsService,
   uint32_t mPersistentAlertCount = 0;
   nsTArray<PendingAlert> mPendingPersistentAlerts;
   bool mDoNotDisturb = false;
+
+ private:
+  bool mSuppressForScreenSharing = false;
 };
 
 /**

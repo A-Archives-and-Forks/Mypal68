@@ -555,8 +555,8 @@ class AbstractDoEvent : public Runnable {
       // Last ditch attempt to release on the main thread - some of
       // the members of event are not thread-safe, so letting the
       // pointer go out of scope would cause a crash.
-      NS_ReleaseOnMainThreadSystemGroup("AbstractDoEvent::OSFileErrorEvent",
-                                        event.forget());
+      NS_ReleaseOnMainThread("AbstractDoEvent::OSFileErrorEvent",
+                             event.forget());
     }
   }
 
@@ -572,8 +572,7 @@ class AbstractDoEvent : public Runnable {
       // Last ditch attempt to release on the main thread - some of
       // the members of event are not thread-safe, so letting the
       // pointer go out of scope would cause a crash.
-      NS_ReleaseOnMainThreadSystemGroup("AbstractDoEvent::SuccessEvent",
-                                        event.forget());
+      NS_ReleaseOnMainThread("AbstractDoEvent::SuccessEvent", event.forget());
     }
   }
 
@@ -761,8 +760,8 @@ class DoReadToTypedArrayEvent final : public AbstractReadEvent {
     if (!mResult) {
       return;
     }
-    NS_ReleaseOnMainThreadSystemGroup("DoReadToTypedArrayEvent::mResult",
-                                      mResult.forget());
+    NS_ReleaseOnMainThread("DoReadToTypedArrayEvent::mResult",
+                           mResult.forget());
   }
 
  protected:
@@ -799,8 +798,7 @@ class DoReadToStringEvent final : public AbstractReadEvent {
     if (!mResult) {
       return;
     }
-    NS_ReleaseOnMainThreadSystemGroup("DoReadToStringEvent::mResult",
-                                      mResult.forget());
+    NS_ReleaseOnMainThread("DoReadToStringEvent::mResult", mResult.forget());
   }
 
  protected:
@@ -902,8 +900,7 @@ class DoWriteAtomicEvent : public AbstractDoEvent {
     if (!mResult) {
       return;
     }
-    NS_ReleaseOnMainThreadSystemGroup("DoWriteAtomicEvent::mResult",
-                                      mResult.forget());
+    NS_ReleaseOnMainThread("DoWriteAtomicEvent::mResult", mResult.forget());
   }
 
   NS_IMETHODIMP Run() override {

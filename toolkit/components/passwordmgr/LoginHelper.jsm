@@ -30,6 +30,7 @@ this.LoginHelper = {
   formlessCaptureEnabled: null,
   generationAvailable: null,
   generationEnabled: null,
+  includeOtherSubdomainsInLookup: null,
   insecureAutofill: null,
   managementURI: null,
   privateBrowsingCaptureEnabled: null,
@@ -61,6 +62,9 @@ this.LoginHelper = {
     );
     this.insecureAutofill = Services.prefs.getBoolPref(
       "signon.autofillForms.http"
+    );
+    this.includeOtherSubdomainsInLookup = Services.prefs.getBoolPref(
+      "signon.includeOtherSubdomainsInLookup"
     );
     this.managementURI = Services.prefs.getStringPref(
       "signon.management.overrideURI",
@@ -203,6 +207,7 @@ this.LoginHelper = {
   /**
    * Helper to avoid the property bags when calling
    * Services.logins.searchLogins from JS.
+   * @deprecated Use Services.logins.searchLoginsAsync instead.
    *
    * @param {Object} aSearchOptions - A regular JS object to copy to a property bag before searching
    * @return {nsILoginInfo[]} - The result of calling searchLogins.
@@ -281,6 +286,7 @@ this.LoginHelper = {
     aOptions = {
       schemeUpgrades: false,
       acceptWildcardMatch: false,
+      acceptDifferentSubdomains: false,
     }
   ) {
     if (aLoginOrigin == aSearchOrigin) {
@@ -295,18 +301,36 @@ this.LoginHelper = {
       return true;
     }
 
-    if (aOptions.schemeUpgrades) {
-      try {
-        let loginURI = Services.io.newURI(aLoginOrigin);
-        let searchURI = Services.io.newURI(aSearchOrigin);
-        if (loginURI.scheme == "http" && searchURI.scheme == "https" &&
-            loginURI.hostPort == searchURI.hostPort) {
+    try {
+      let loginURI = Services.io.newURI(aLoginOrigin);
+      let searchURI = Services.io.newURI(aSearchOrigin);
+      let schemeMatches =
+        loginURI.scheme == "http" && searchURI.scheme == "https";
+
+      if (aOptions.acceptDifferentSubdomains) {
+        let loginBaseDomain = Services.eTLD.getBaseDomain(loginURI);
+        let searchBaseDomain = Services.eTLD.getBaseDomain(searchURI);
+        if (
+          loginBaseDomain == searchBaseDomain &&
+          (loginURI.scheme == searchURI.scheme ||
+            (aOptions.schemeUpgrades && schemeMatches))
+        ) {
           return true;
         }
-      } catch (ex) {
-        // newURI will throw for some values e.g. chrome://FirefoxAccounts
-        return false;
       }
+
+      if (
+        aOptions.schemeUpgrades &&
+        loginURI.host == searchURI.host &&
+        schemeMatches &&
+        loginURI.port == searchURI.port
+      ) {
+        return true;
+      }
+    } catch (ex) {
+      // newURI will throw for some values e.g. chrome://FirefoxAccounts
+      // uri.host and uri.port will throw for some values e.g. javascript:
+      return false;
     }
 
     return false;
@@ -456,7 +480,7 @@ this.LoginHelper = {
     }
 
     // Sanity check the login
-    if (newLogin.origin == null || newLogin.origin.length == 0) {
+    if (newLogin.origin == null || !newLogin.origin.length) {
       throw new Error("Can't add a login with a null or empty origin.");
     }
 
@@ -465,7 +489,7 @@ this.LoginHelper = {
       throw new Error("Can't add a login with a null username.");
     }
 
-    if (newLogin.password == null || newLogin.password.length == 0) {
+    if (newLogin.password == null || !newLogin.password.length) {
       throw new Error("Can't add a login with a null or empty password.");
     }
 
@@ -494,6 +518,59 @@ this.LoginHelper = {
     this.checkLoginValues(newLogin);
 
     return newLogin;
+  },
+
+  /**
+   * Remove http: logins when there is an https: login with the same username and hostPort.
+   * Sort order is preserved.
+   *
+   * @param {nsILoginInfo[]} logins
+   *        A list of logins we want to process for shadowing.
+   * @returns {nsILoginInfo[]} A subset of of the passed logins.
+   */
+  shadowHTTPLogins(logins) {
+    /**
+     * Map a (hostPort, username) to a boolean indicating whether `logins`
+     * contains an https: login for that combo.
+     */
+    let hasHTTPSByHostPortUsername = new Map();
+    for (let login of logins) {
+      let key = this.getUniqueKeyForLogin(login, ["hostPort", "username"]);
+      let hasHTTPSlogin = hasHTTPSByHostPortUsername.get(key) || false;
+      let loginURI = Services.io.newURI(login.hostname);
+      hasHTTPSByHostPortUsername.set(key, loginURI.scheme == "https" || hasHTTPSlogin);
+    }
+
+    return logins.filter((login) => {
+      let key = this.getUniqueKeyForLogin(login, ["hostPort", "username"]);
+      let loginURI = Services.io.newURI(login.hostname);
+      if (loginURI.scheme == "http" && hasHTTPSByHostPortUsername.get(key)) {
+        // If this is an http: login and we have an https: login for the
+        // (hostPort, username) combo then remove it.
+        return false;
+      }
+      return true;
+    });
+  },
+
+  /**
+   * Generate a unique key string from a login.
+   * @param {nsILoginInfo} login
+   * @param {string[]} uniqueKeys containing nsILoginInfo attribute names or "hostPort"
+   * @returns {string} to use as a key in a Map
+   */
+  getUniqueKeyForLogin(login, uniqueKeys) {
+    const KEY_DELIMITER = ":";
+    return uniqueKeys.reduce((prev, key) => {
+      let val = null;
+      if (key == "hostPort") {
+        val = Services.io.newURI(login.hostname).hostPort;
+      } else {
+        val = login[key];
+      }
+
+      return prev + KEY_DELIMITER + val;
+    }, "");
   },
 
   /**
@@ -528,11 +605,19 @@ this.LoginHelper = {
     preferredOrigin = undefined,
     preferredFormActionOrigin = undefined
   ) {
-    const KEY_DELIMITER = ":";
-
-    if (!preferredOrigin && resolveBy.includes("scheme")) {
-      throw new Error("dedupeLogins: `preferredOrigin` is required in order to " +
-                      "prefer schemes which match it.");
+    if (!preferredOrigin) {
+      if (resolveBy.includes("scheme")) {
+        throw new Error(
+          "dedupeLogins: `preferredOrigin` is required in order to " +
+            "prefer schemes which match it."
+        );
+      }
+      if (resolveBy.includes("subdomain")) {
+        throw new Error(
+          "dedupeLogins: `preferredOrigin` is required in order to " +
+            "prefer subdomains which match it."
+        );
+      }
     }
 
     let preferredOriginScheme;
@@ -554,11 +639,6 @@ this.LoginHelper = {
     // We use a Map to easily lookup logins by their unique keys.
     let loginsByKeys = new Map();
 
-    // Generate a unique key string from a login.
-    function getKey(login, uniqueKeys) {
-      return uniqueKeys.reduce((prev, key) => prev + KEY_DELIMITER + login[key], "");
-    }
-
     /**
      * @return {bool} whether `login` is preferred over its duplicate (considering `uniqueKeys`)
      *                `existingLogin`.
@@ -567,7 +647,7 @@ this.LoginHelper = {
      * over the existingLogin.
      */
     function isLoginPreferred(existingLogin, login) {
-      if (!resolveBy || resolveBy.length == 0) {
+      if (!resolveBy || !resolveBy.length) {
         // If there is no preference, prefer the existing login.
         return false;
       }
@@ -627,6 +707,25 @@ this.LoginHelper = {
             }
             break;
           }
+          case "subdomain": {
+            // Replace the existing login only if the new login is an exact match on the host.
+            let existingLoginURI = Services.io.newURI(existingLogin.hostname);
+            let newLoginURI = Services.io.newURI(login.hostname);
+            let preferredOriginURI = Services.io.newURI(preferredOrigin);
+            if (
+              existingLoginURI.hostPort != preferredOriginURI.hostPort &&
+              newLoginURI.hostPort == preferredOriginURI.hostPort
+            ) {
+              return true;
+            }
+            if (
+              existingLoginURI.host != preferredOriginURI.host &&
+              newLoginURI.host == preferredOriginURI.host
+            ) {
+              return true;
+            }
+            break;
+          }
           case "timeLastUsed":
           case "timePasswordChanged": {
             // If we find a more recent login for the same key, replace the existing one.
@@ -654,7 +753,7 @@ this.LoginHelper = {
     }
 
     for (let login of logins) {
-      let key = getKey(login, uniqueKeys);
+      let key = this.getUniqueKeyForLogin(login, uniqueKeys);
 
       if (loginsByKeys.has(key)) {
         if (!isLoginPreferred(loginsByKeys.get(key), login)) {
@@ -918,10 +1017,9 @@ this.LoginHelper = {
     let formLogin = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(
       Ci.nsILoginInfo
     );
-    // For compatibility for the Lockwise extension we fallback to hostname/formSubmitURL
     formLogin.init(
-      login.origin || login.hostname,
-      "formSubmitURL" in login ? login.formSubmitURL : login.formActionOrigin,
+      login.origin,
+      login.formActionOrigin,
       login.httpRealm,
       login.username,
       login.password,
@@ -984,6 +1082,52 @@ this.LoginHelper = {
       "passwordmgr-storage-changed",
       changeType
     );
+  },
+
+  createLoginAlreadyExistsError(guid) {
+    // The GUID is stored in an nsISupportsString here because we cannot pass
+    // raw JS objects within Components.Exception due to bug 743121.
+    let guidSupportsString = Cc[
+      "@mozilla.org/supports-string;1"
+    ].createInstance(Ci.nsISupportsString);
+    guidSupportsString.data = guid;
+    return Components.Exception("This login already exists.", {
+      data: guidSupportsString,
+    });
+  },
+
+  /**
+   * Determine the <browser> that a prompt should be shown on.
+   *
+   * Some sites pop up a temporary login window, which disappears
+   * upon submission of credentials. We want to put the notification
+   * prompt in the opener window if this seems to be happening.
+   *
+   * @param {Element} browser
+   *        The <browser> that a prompt was triggered for
+   * @returns {Element} The <browser> that the prompt should be shown on,
+   *                    which could be in a different window.
+   */
+  getBrowserForPrompt(browser) {
+    let chromeWindow = browser.ownerGlobal;
+    let openerBrowsingContext = browser.browsingContext.opener;
+    let openerBrowser = openerBrowsingContext
+      ? openerBrowsingContext.top.embedderElement
+      : null;
+    if (openerBrowser) {
+      let chromeDoc = chromeWindow.document.documentElement;
+
+      // Check to see if the current window was opened with chrome
+      // disabled, and if so use the opener window. But if the window
+      // has been used to visit other pages (ie, has a history),
+      // assume it'll stick around and *don't* use the opener.
+      if (chromeDoc.getAttribute("chromehidden") && !browser.canGoBack) {
+        log.debug("Using opener window for prompt.");
+        return openerBrowser;
+      }
+    }
+
+    return browser;
   },
 };
 

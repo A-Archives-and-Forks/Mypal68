@@ -108,6 +108,11 @@ function checkAutoCompleteResults(actualValues, expectedValues, hostname, msg) {
   checkArrayValues(actualValues.slice(0, -1), expectedValues, msg);
 }
 
+function getIframeBrowsingContext(window, iframeNumber = 0) {
+  let bc = SpecialPowers.wrap(window).windowGlobalChild.browsingContext;
+  return SpecialPowers.unwrap(bc.children[iframeNumber]);
+}
+
 /**
  * Check for expected username/password in form.
  * @see `checkForm` below for a similar function.
@@ -128,6 +133,44 @@ function checkLoginForm(
     passwordField.value,
     expectedPassword,
     "Checking " + formID + " password is: " + expectedPassword
+  );
+}
+
+function checkLoginFormInChildFrame(
+  iframeBC,
+  usernameFieldId,
+  expectedUsername,
+  passwordFieldId,
+  expectedPassword
+) {
+  return SpecialPowers.spawn(
+    iframeBC,
+    [usernameFieldId, expectedUsername, passwordFieldId, expectedPassword],
+    (
+      usernameFieldIdF,
+      expectedUsernameF,
+      passwordFieldIdF,
+      expectedPasswordF
+    ) => {
+      let usernameField = this.content.document.getElementById(
+        usernameFieldIdF
+      );
+      let passwordField = this.content.document.getElementById(
+        passwordFieldIdF
+      );
+
+      let formID = usernameField.parentNode.id;
+      Assert.equal(
+        usernameField.value,
+        expectedUsernameF,
+        "Checking " + formID + " username is: " + expectedUsernameF
+      );
+      Assert.equal(
+        passwordField.value,
+        expectedPasswordF,
+        "Checking " + formID + " password is: " + expectedPasswordF
+      );
+    }
   );
 }
 
@@ -228,12 +271,12 @@ function registerRunTests() {
       form.appendChild(password);
 
       var observer = SpecialPowers.wrapCallback(function(subject, topic, data) {
-        var formLikeRoot = subject;
-        if (formLikeRoot.id !== "observerforcer") {
+        if (data !== "observerforcer") {
           return;
         }
+
         SpecialPowers.removeObserver(observer, "passwordmgr-processed-form");
-        formLikeRoot.remove();
+        form.remove();
         SimpleTest.executeSoon(() => {
           var runTestEvent = new Event("runTests");
           window.dispatchEvent(runTestEvent);
@@ -273,7 +316,7 @@ function setMasterPassword(enable) {
 }
 
 function isLoggedIn() {
-  return PWMGR_COMMON_PARENT.sendSyncMessage("isLoggedIn")[0][0];
+  return PWMGR_COMMON_PARENT.sendQuery("isLoggedIn");
 }
 
 function logoutMasterPassword() {
@@ -413,7 +456,7 @@ function runChecksAfterCommonInit(aFunction = null) {
       registerRunTests()
     );
   }
-  PWMGR_COMMON_PARENT.sendSyncMessage("setupParent", {
+  PWMGR_COMMON_PARENT.sendAsyncMessage("setupParent", {
     testDependsOnDeprecatedLogin: gTestDependsOnDeprecatedLogin,
   });
   return PWMGR_COMMON_PARENT;
@@ -427,6 +470,8 @@ const PWMGR_COMMON_PARENT = runInParent(
 
 SimpleTest.registerCleanupFunction(() => {
   SpecialPowers.popPrefEnv();
+
+  PWMGR_COMMON_PARENT.sendAsyncMessage("cleanup");
 
   runInParent(function cleanupParent() {
     // eslint-disable-next-line no-shadow
@@ -459,7 +504,7 @@ SimpleTest.registerCleanupFunction(() => {
     let chromeWin = Services.wm.getMostRecentWindow("navigator:browser");
     if (chromeWin && chromeWin.PopupNotifications) {
       let notes = chromeWin.PopupNotifications._currentNotifications;
-      if (notes.length > 0) {
+      if (notes.length) {
         dump("Removing " + notes.length + " popup notifications.\n");
       }
       for (let note of notes) {
@@ -491,14 +536,11 @@ this.LoginManager = new Proxy(
           return val;
         });
 
-        let messageRV = PWMGR_COMMON_PARENT.sendSyncMessage("proxyLoginManager", {
+        return PWMGR_COMMON_PARENT.sendQuery("proxyLoginManager", {
           args: cloneableArgs,
           loginInfoIndices,
           methodName: prop,
-        })[0];
-
-        // Handle methods with no return value such as removeLogin.
-        return messageRV ? messageRV[0] : undefined;
+        });
       };
     },
   }

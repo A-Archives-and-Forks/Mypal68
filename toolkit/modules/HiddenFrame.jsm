@@ -13,16 +13,14 @@ const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const XUL_PAGE = "chrome://global/content/win.xhtml";
 
-const gAllHiddenFrames = new WeakSet();
+const gAllHiddenFrames = new Set();
 
 let cleanupRegistered = false;
 function ensureCleanupRegistered() {
   if (!cleanupRegistered) {
     cleanupRegistered = true;
     Services.obs.addObserver(function() {
-      for (let hiddenFrame of ChromeUtils.nondeterministicGetWeakSetKeys(
-        gAllHiddenFrames
-      )) {
+      for (let hiddenFrame of gAllHiddenFrames) {
         hiddenFrame.destroy();
       }
     }, "xpcom-shutdown");

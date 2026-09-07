@@ -221,6 +221,7 @@ void ExtensionPolicyService::RegisterObservers() {
   mObs->AddObserver(this, "tab-content-frameloader-created", false);
   if (XRE_IsContentProcess()) {
     mObs->AddObserver(this, "http-on-opening-request", false);
+    mObs->AddObserver(this, "document-on-opening-request", false);
   }
 
   Preferences::AddStrongObserver(this, BASE_CSP_PREF);
@@ -232,6 +233,7 @@ void ExtensionPolicyService::UnregisterObservers() {
   mObs->RemoveObserver(this, "tab-content-frameloader-created");
   if (XRE_IsContentProcess()) {
     mObs->RemoveObserver(this, "http-on-opening-request");
+    mObs->RemoveObserver(this, "document-on-opening-request");
   }
 
   Preferences::RemoveObserver(this, BASE_CSP_PREF);
@@ -246,7 +248,8 @@ nsresult ExtensionPolicyService::Observe(nsISupports* aSubject,
     if (doc) {
       CheckDocument(doc);
     }
-  } else if (!strcmp(aTopic, "http-on-opening-request")) {
+  } else if (!strcmp(aTopic, "http-on-opening-request") ||
+             !strcmp(aTopic, "document-on-opening-request")) {
     nsCOMPtr<nsIChannel> chan = do_QueryInterface(aSubject);
     if (chan) {
       CheckRequest(chan);

@@ -4,6 +4,12 @@
 
 /* eslint-env mozilla/frame-script */
 
+ChromeUtils.defineModuleGetter(
+  this,
+  "BrowserUtils",
+  "resource://gre/modules/BrowserUtils.jsm"
+);
+
 try {
   docShell
     .QueryInterface(Ci.nsIInterfaceRequestor)
@@ -45,6 +51,16 @@ addEventListener(
   },
   false
 );
+
+addMessageListener("BrowserElement:CreateAboutBlank", message => {
+  if (!content.document || content.document.documentURI != "about:blank") {
+    throw new Error("Can't create a content viewer unless on about:blank");
+  }
+  let principal = message.data;
+  principal = BrowserUtils.principalWithMatchingOA(principal,
+    content.document.nodePrincipal);
+  docShell.createAboutBlankContentViewer(principal);
+});
 
 // We may not get any responses to Browser:Init if the browser element
 // is torn down too quickly.

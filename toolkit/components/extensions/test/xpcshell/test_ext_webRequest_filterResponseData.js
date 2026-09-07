@@ -1,5 +1,7 @@
 "use strict";
 
+const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
+
 const HOSTS = new Set(["example.com", "example.org", "example.net"]);
 
 const server = createHttpServer({ hosts: HOSTS });
@@ -11,6 +13,13 @@ server.registerDirectory("/data/", do_get_file("data"));
 server.registerPathHandler("/redirect", (request, response) => {
   let params = new URLSearchParams(request.queryString);
   response.setStatusLine(request.httpVersion, 302, "Moved Temporarily");
+  response.setHeader("Location", params.get("redirect_uri"));
+  response.setHeader("Access-Control-Allow-Origin", "*");
+});
+
+server.registerPathHandler("/redirect301", (request, response) => {
+  let params = new URLSearchParams(request.queryString);
+  response.setStatusLine(request.httpVersion, 301, "Moved Permanently");
   response.setHeader("Location", params.get("redirect_uri"));
   response.setHeader("Access-Control-Allow-Origin", "*");
 });
@@ -30,6 +39,70 @@ server.registerPathHandler("/dummy.xhtml", (request, response) => {
       <body/>
     </html>
   `);
+});
+
+server.registerPathHandler("/lorem.html.gz", async (request, response) => {
+  response.processAsync();
+
+  response.setHeader(
+    "Content-Type",
+    "Content-Type: text/html; charset=utf-8",
+    false
+  );
+  response.setHeader("Content-Encoding", "gzip", false);
+
+  let data = await OS.File.read(do_get_file("data/lorem.html.gz").path);
+  response.write(String.fromCharCode(...new Uint8Array(data)));
+
+  response.finish();
+});
+
+// Test re-encoding the data stream for bug 1590898.
+add_task(async function test_stream_encoding_data() {
+  let extension = ExtensionTestUtils.loadExtension({
+    background() {
+      browser.webRequest.onBeforeRequest.addListener(
+        request => {
+          let filter = browser.webRequest.filterResponseData(request.requestId);
+          let decoder = new TextDecoder("utf-8");
+          let encoder = new TextEncoder();
+
+          filter.ondata = event => {
+            let str = decoder.decode(event.data, { stream: true });
+            filter.write(encoder.encode(str));
+            filter.disconnect();
+          };
+        },
+        {
+          urls: ["http://example.com/lorem.html.gz"],
+          types: ["main_frame"],
+        },
+        ["blocking"]
+      );
+    },
+
+    manifest: {
+      permissions: ["webRequest", "webRequestBlocking", "http://example.com/"],
+    },
+  });
+
+  await extension.startup();
+
+  let contentPage = await ExtensionTestUtils.loadContentPage(
+    "http://example.com/lorem.html.gz"
+  );
+
+  let content = await contentPage.spawn(null, () => {
+    return this.content.document.body.textContent;
+  });
+
+  ok(
+    content.includes("Lorem ipsum dolor sit amet"),
+    `expected content received`
+  );
+
+  await contentPage.close();
+  await extension.unload();
 });
 
 // Tests that the stream filter request is added to the document's load
@@ -131,7 +204,7 @@ add_task(async function test_xml_document_loadgroup_blocking() {
   await extension.unload();
 });
 
-add_task(async function() {
+add_task(async function test_filter_content_fetch() {
   let extension = ExtensionTestUtils.loadExtension({
     background() {
       let pending = [];
@@ -223,6 +296,53 @@ add_task(async function() {
 
   extension.sendMessage("done");
   await extension.awaitFinish("stream-filter");
+  await extension.unload();
+});
+
+add_task(async function test_filter_301() {
+  let extension = ExtensionTestUtils.loadExtension({
+    background() {
+      browser.webRequest.onHeadersReceived.addListener(
+        data => {
+          if (data.statusCode !== 200) {
+            return;
+          }
+          let filter = browser.webRequest.filterResponseData(data.requestId);
+
+          filter.onstop = () => {
+            filter.close();
+            browser.test.notifyPass("stream-filter");
+          };
+          filter.onerror = () => {
+            browser.test.fail(`unexpected ${filter.error}`);
+          };
+        },
+        {
+          urls: ["<all_urls>"],
+        },
+        ["blocking"]
+      );
+    },
+
+    manifest: {
+      permissions: [
+        "webRequest",
+        "webRequestBlocking",
+        "http://example.com/",
+        "http://example.org/",
+      ],
+    },
+  });
+
+  await extension.startup();
+
+  let contentPage = await ExtensionTestUtils.loadContentPage(
+    "http://example.com/redirect301?redirect_uri=http://example.org/dummy"
+  );
+
+  await extension.awaitFinish("stream-filter");
+
+  await contentPage.close();
   await extension.unload();
 });
 

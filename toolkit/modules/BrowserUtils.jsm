@@ -828,9 +828,7 @@ var BrowserUtils = {
   trimURL(aURL) {
     // This function must not modify the given URL such that calling
     // nsIURIFixup::createFixupURI with the result will produce a different URI.
-
     let url = this.removeSingleTrailingSlashFromURL(aURL);
-
     // remove http://
     if (!url.startsWith("http://")) {
       return url;
