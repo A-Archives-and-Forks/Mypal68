@@ -27,7 +27,6 @@ FINAL_TARGET_FILES.content += [
     'harness.xhtml',
     'manifestLibrary.js',
     'mochitest-e10s-utils.js',
-    'nested_setup.js',
     'redirect.html',
     'server.js',
     'shutdown-leaks-collector.js',
@@ -45,18 +44,13 @@ FINAL_TARGET_FILES.content.static += [
 FINAL_TARGET_FILES.content.tests.SimpleTest += [
     '../../docshell/test/chrome/docshell_helpers.js',
     '../modules/StructuredLog.jsm',
-    '../specialpowers/content/MozillaLogger.js',
-    '../specialpowers/content/specialpowers.js',
-    '../specialpowers/content/specialpowersAPI.js',
-    '../specialpowers/content/SpecialPowersObserverAPI.js',
-    'tests/SimpleTest/AsyncUtilsContent.js',
-    'tests/SimpleTest/ChromePowers.js',
     'tests/SimpleTest/EventUtils.js',
     'tests/SimpleTest/ExtensionTestUtils.js',
     'tests/SimpleTest/iframe-between-tests.html',
     'tests/SimpleTest/LogController.js',
     'tests/SimpleTest/MemoryStats.js',
     'tests/SimpleTest/MockObjects.js',
+    'tests/SimpleTest/MozillaLogger.js',
     'tests/SimpleTest/NativeKeyCodes.js',
     'tests/SimpleTest/paint_listener.js',
     'tests/SimpleTest/setup.js',
@@ -71,7 +65,6 @@ FINAL_TARGET_FILES.content.tests.SimpleTest += [
 FINAL_TARGET_FILES.content.tests.BrowserTestUtils += [
     'BrowserTestUtils/content/content-about-page-utils.js',
     'BrowserTestUtils/content/content-task.js',
-    'BrowserTestUtils/content/content-utils.js',
 ]
 
 MOCHITEST_MANIFESTS += [
@@ -107,7 +100,6 @@ TEST_HARNESS_FILES.testing.mochitest += [
     'manifest.webapp',
     'manifestLibrary.js',
     'mochitest_options.py',
-    'nested_setup.js',
     'pywebsocket_wrapper.py',
     'redirect.html',
     'runjunit.py',

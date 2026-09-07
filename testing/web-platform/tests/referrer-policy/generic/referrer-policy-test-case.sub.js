@@ -130,6 +130,23 @@ function ReferrerPolicyTestCase(scenario, testDescription, sanityChecker) {
   };
 
   function runTest() {
+    function historyBackPromise(t, scenario) {
+      history.back();
+      return new Promise(resolve => {
+          // Wait for completion of `history.back()` by listening the
+          // popstate events that are fired near the end of
+          // `history.back()` processing.
+          window.addEventListener('popstate', resolve, {once: true});
+
+          // Workaround for Safari: Waiting for popstate events causes
+          // timeout in a-tag tests. To avoid timeout, we anyway resolve
+          // the promise.
+          if (scenario.subresource === 'a-tag') {
+            t.step_timeout(resolve, 1000);
+          }
+        });
+    }
+
     // Request in the top-level document.
     promise_test(_ => {
       return invokeScenario(scenario)
@@ -142,28 +159,28 @@ function ReferrerPolicyTestCase(scenario, testDescription, sanityChecker) {
     // Different subresource URLs are used because getRequestURLs() is called
     // for each sub test which returns a unique URL.
     if (scenario.referrer_url == "stripped-referrer") {
-      promise_test(_ => {
+      promise_test(t => {
         history.pushState(null, null, "/");
         history.replaceState(null, null, "A".repeat(4096 - location.href.length - 1));
         return invokeScenario(scenario)
           .then(result => checkResult(scenario.referrer_url, result))
-          .finally(_ => history.back());
+          .finally(_ => historyBackPromise(t, scenario));
       }, "`Referer` header with length < 4k is not stripped to an origin.");
 
-      promise_test(_ => {
+      promise_test(t => {
         history.pushState(null, null, "/");
         history.replaceState(null, null, "A".repeat(4096 - location.href.length));
         return invokeScenario(scenario)
           .then(result => checkResult(scenario.referrer_url, result))
-          .finally(_ => history.back());
+          .finally(_ => historyBackPromise(t, scenario));
       }, "`Referer` header with length == 4k is not stripped to an origin.");
 
-      promise_test(_ => {
+      promise_test(t => {
         history.pushState(null, null, "/");
         history.replaceState(null, null, "A".repeat(4096 - location.href.length + 1));
         return invokeScenario(scenario)
           .then(result => checkResult("origin", result))
-          .finally(_ => history.back());
+          .finally(_ => historyBackPromise(t, scenario));
       }, "`Referer` header with length > 4k is stripped to an origin.");
     }
 

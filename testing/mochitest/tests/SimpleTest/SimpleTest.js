@@ -25,7 +25,7 @@ var parentRunner = null;
 // In normal test runs, the window that has a TestRunner in its parent is
 // the primary window.  In single test runs, if there is no parent and there
 // is no opener then it is the primary window.
-var isSingleTestRun = (parent == window && !opener)
+var isSingleTestRun = (parent == window && !(opener || window.arguments && window.arguments[0].SimpleTest));
 try {
   var isPrimaryTestWindow = !!parent.TestRunner || isSingleTestRun;
 } catch (e) {
@@ -52,7 +52,7 @@ try {
   function ancestor(w) {
     return w.parent != w
       ? w.parent
-      : w.opener;
+      : w.opener || (w.arguments && w.arguments[0]);
   }
 
   var w = ancestor(window);
@@ -241,6 +241,8 @@ SimpleTest._inChaosMode = false;
 SimpleTest.expected = "pass";
 SimpleTest.num_failed = 0;
 
+SpecialPowers.setAsDefaultAssertHandler();
+
 function usesFailurePatterns() {
   return Array.isArray(SimpleTest.expected);
 }
@@ -293,7 +295,7 @@ SimpleTest.ok = function(condition, name) {
   }
 };
 
-SimpleTest.record = function(condition, name, diag, stack) {
+SimpleTest.record = function(condition, name, diag, stack, expected) {
   var test = { result: !!condition, name, diag };
   let successInfo;
   let failureInfo;
@@ -1506,7 +1508,10 @@ SimpleTest.finish = function() {
       executeCleanupFunction();
     }
   };
+
   executeCleanupFunction();
+
+  SpecialPowers.notifyObservers(null, "test-complete");
 };
 
 /**

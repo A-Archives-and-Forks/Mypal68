@@ -37,7 +37,6 @@ def capabilities(server_config, **kwargs):
                             "--javascript-can-open-windows-automatically=true",
                             "--enable-xss-auditor=false",
                             "--enable-media-capabilities=true",
-                            "--enable-encrypted-media=true",
                             "--enable-media-stream=true",
                             "--enable-mock-capture-devices=true",
                             "--enable-webaudio=true"]

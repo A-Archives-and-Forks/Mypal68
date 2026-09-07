@@ -862,7 +862,6 @@ class MochitestDesktop(object):
 
     # Path to the test script on the server
     TEST_PATH = "tests"
-    NESTED_OOP_TEST_PATH = "nested_oop"
     CHROME_PATH = "redirect.html"
 
     certdbNew = False
@@ -1113,8 +1112,6 @@ class MochitestDesktop(object):
             testURL = "/".join([testHost, self.CHROME_PATH])
         elif options.flavor == 'browser':
             testURL = "about:blank"
-        if options.nested_oop:
-            testURL = "/".join([testHost, self.NESTED_OOP_TEST_PATH])
         return testURL
 
     def getTestsByScheme(self, options, testsToFilter=None, disabled=True):
@@ -1924,7 +1921,6 @@ toolbar#nav-bar {
         # Hardcoded prefs (TODO move these into a base profile)
         prefs = {
             "browser.tabs.remote.autostart": options.e10s,
-            "dom.ipc.tabs.nested.enabled": options.nested_oop,
             # Enable tracing output for detailed failures in case of
             # failing connection attempts, and hangs (bug 1397201)
             "marionette.log.level": "Trace",
@@ -2213,6 +2209,8 @@ toolbar#nav-bar {
             self.start_script_kwargs['testUrl'] = testUrl or 'about:blank'
 
             if detectShutdownLeaks:
+                env['MOZ_LOG'] = (env['MOZ_LOG'] + "," if env['MOZ_LOG'] else "") + \
+                    "DocShellAndDOMWindowLeak:3"
                 shutdownLeaks = ShutdownLeaks(self.log)
             else:
                 shutdownLeaks = None
@@ -2562,8 +2560,17 @@ toolbar#nav-bar {
         mozinfo.update({
             "e10s": options.e10s,
             "headless": options.headless,
+
+            # Until the test harness can understand default pref values,
+            # (https://bugzilla.mozilla.org/show_bug.cgi?id=1577912) this value
+            # should by synchronized with the default pref value indicated in
+            # StaticPrefList.yaml.
+            #
+            # Currently for automation, the pref defaults to true (but can be
+            # overridden with --setpref).
             "serviceworker_e10s": self.extraPrefs.get(
-                'dom.serviceWorkers.parent_intercept', False),
+                'dom.serviceWorkers.parent_intercept', True),
+
             "socketprocess_e10s": self.extraPrefs.get(
                 'network.process.enabled', False),
             "verify": options.verify,

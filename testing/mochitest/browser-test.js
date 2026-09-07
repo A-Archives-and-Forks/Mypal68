@@ -142,11 +142,6 @@ function testInit() {
     // In non-e10s, only run the ShutdownLeaksCollector in the parent process.
     ChromeUtils.import("chrome://mochikit/content/ShutdownLeaksCollector.jsm");
   }
-
-  Services.mm.loadFrameScript(
-    "chrome://mochikit/content/tests/SimpleTest/AsyncUtilsContent.js",
-    true
-  );
 }
 
 function isGenerator(value) {
@@ -165,19 +160,12 @@ function Tester(aTests, structuredLogger, aCallback) {
     this.EventUtils
   );
 
+  // Make sure our SpecialPowers actor is instantiated, in case it was
+  // registered after our DOMWindowCreated event was fired (which it
+  // most likely was).
+  void window.windowGlobalChild.getActor("SpecialPowers");
+
   var simpleTestScope = {};
-  this._scriptLoader.loadSubScript(
-    "chrome://mochikit/content/tests/SimpleTest/specialpowersAPI.js",
-    simpleTestScope
-  );
-  this._scriptLoader.loadSubScript(
-    "chrome://mochikit/content/tests/SimpleTest/SpecialPowersObserverAPI.js",
-    simpleTestScope
-  );
-  this._scriptLoader.loadSubScript(
-    "chrome://mochikit/content/tests/SimpleTest/ChromePowers.js",
-    simpleTestScope
-  );
   this._scriptLoader.loadSubScript(
     "chrome://mochikit/content/tests/SimpleTest/SimpleTest.js",
     simpleTestScope
@@ -191,6 +179,9 @@ function Tester(aTests, structuredLogger, aCallback) {
     simpleTestScope
   );
   this.SimpleTest = simpleTestScope.SimpleTest;
+
+  window.SpecialPowers.SimpleTest = this.SimpleTest;
+  window.SpecialPowers.setAsDefaultAssertHandler();
 
   var extensionUtilsScope = {
     registerCleanupFunction: fn => {
@@ -208,32 +199,25 @@ function Tester(aTests, structuredLogger, aCallback) {
 
   this.MemoryStats = simpleTestScope.MemoryStats;
   this.ContentTask = ChromeUtils.import(
-    "resource://testing-common/ContentTask.jsm",
-    null
+    "resource://testing-common/ContentTask.jsm"
   ).ContentTask;
   this.BrowserTestUtils = ChromeUtils.import(
-    "resource://testing-common/BrowserTestUtils.jsm",
-    null
+    "resource://testing-common/BrowserTestUtils.jsm"
   ).BrowserTestUtils;
   this.TestUtils = ChromeUtils.import(
-    "resource://testing-common/TestUtils.jsm",
-    null
+    "resource://testing-common/TestUtils.jsm"
   ).TestUtils;
   this.Promise = ChromeUtils.import(
-    "resource://gre/modules/Promise.jsm",
-    null
+    "resource://gre/modules/Promise.jsm"
   ).Promise;
   this.PromiseTestUtils = ChromeUtils.import(
-    "resource://testing-common/PromiseTestUtils.jsm",
-    null
+    "resource://testing-common/PromiseTestUtils.jsm"
   ).PromiseTestUtils;
   this.Assert = ChromeUtils.import(
-    "resource://testing-common/Assert.jsm",
-    null
+    "resource://testing-common/Assert.jsm"
   ).Assert;
   this.PerTestCoverageUtils = ChromeUtils.import(
-    "resource://testing-common/PerTestCoverageUtils.jsm",
-    null
+    "resource://testing-common/PerTestCoverageUtils.jsm"
   ).PerTestCoverageUtils;
 
   this.PromiseTestUtils.init();
@@ -579,6 +563,8 @@ Tester.prototype = {
           );
         }
       }
+
+      Services.obs.notifyObservers(null, "test-complete");
 
       if (
         this.currentTest.passCount === 0 &&
@@ -1286,16 +1272,29 @@ function testScope(aTester, aTest, expected) {
       self.record(condition, name);
     }
   };
-  this.record = function test_record(condition, name, ex, stack) {
-    aTest.addResult(
-      new testResult({
-        name,
-        pass: condition,
-        ex,
-        stack: stack || Components.stack.caller,
-        allowFailure: aTest.allowFailure,
-      })
-    );
+  this.record = function test_record(condition, name, ex, stack, expected) {
+    if (expected == "fail") {
+      aTest.addResult(
+        new testResult({
+          name,
+          pass: !condition,
+          todo: true,
+          ex,
+          stack: stack || Components.stack.caller,
+          allowFailure: aTest.allowFailure,
+        })
+      );
+    } else {
+      aTest.addResult(
+        new testResult({
+          name,
+          pass: condition,
+          ex,
+          stack: stack || Components.stack.caller,
+          allowFailure: aTest.allowFailure,
+        })
+      );
+    }
   };
   this.is = function test_is(a, b, name) {
     self.record(

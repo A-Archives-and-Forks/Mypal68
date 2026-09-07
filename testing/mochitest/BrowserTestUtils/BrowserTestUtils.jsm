@@ -10,8 +10,7 @@
  */
 
 // This file uses ContentTask & frame scripts, where these are available.
-/* global addEventListener, removeEventListener, sendAsyncMessage,
-          addMessageListener, removeMessageListener, ContentTaskUtils */
+/* global addEventListener, removeEventListener, ContentTaskUtils */
 
 "use strict";
 
@@ -35,22 +34,17 @@ const { ContentTask } = ChromeUtils.import(
 );
 const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "BrowserWindowTracker",
-  "resource:///modules/BrowserWindowTracker.jsm"
-);
+XPCOMUtils.defineLazyModuleGetters(this, {
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
+  E10SUtils: "resource://gre/modules/E10SUtils.jsm",
+});
 
-Services.mm.loadFrameScript(
-  "chrome://mochikit/content/tests/BrowserTestUtils/content-utils.js",
-  true
-);
-
-ChromeUtils.defineModuleGetter(
-  this,
-  "E10SUtils",
-  "resource://gre/modules/E10SUtils.jsm"
-);
+XPCOMUtils.defineLazyServiceGetters(this, {
+  ProtocolProxyService: [
+    "@mozilla.org/network/protocol-proxy-service;1",
+    "nsIProtocolProxyService",
+  ],
+});
 
 const PROCESSSELECTOR_CONTRACTID = "@mozilla.org/ipc/processselector;1";
 const OUR_PROCESSSELECTOR_CID = Components.ID(
@@ -79,13 +73,50 @@ let registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
 let selectorFactory = ComponentUtils._getFactory(NewProcessSelector);
 registrar.registerFactory(OUR_PROCESSSELECTOR_CID, "", null, selectorFactory);
 
-var gSendCharCount = 0;
-var gSynthesizeKeyCount = 0;
-var gSynthesizeCompositionCount = 0;
-var gSynthesizeCompositionChangeCount = 0;
-
 const kAboutPageRegistrationContentScript =
   "chrome://mochikit/content/tests/BrowserTestUtils/content-about-page-utils.js";
+
+/**
+ * Create and register BrowserTestUtils Window Actor.
+ */
+function registerActor() {
+  let actorOptions = {
+    parent: {
+      moduleURI: "resource://testing-common/BrowserTestUtilsParent.jsm",
+    },
+    child: {
+      moduleURI: "resource://testing-common/BrowserTestUtilsChild.jsm",
+      events: {
+        DOMContentLoaded: { capture: true },
+        load: { capture: true },
+      },
+    },
+    allFrames: true,
+    includeChrome: true,
+  };
+  ChromeUtils.registerWindowActor("BrowserTestUtils", actorOptions);
+}
+
+function registerContentEventListenerActor() {
+  let actorOptions = {
+    parent: {
+      moduleURI: "resource://testing-common/ContentEventListenerParent.jsm",
+    },
+
+    child: {
+      moduleURI: "resource://testing-common/ContentEventListenerChild.jsm",
+      events: {
+        // We need to see the creation of all new windows, in case they have
+        // a browsing context we are interesting in.
+        DOMWindowCreated: { capture: true },
+      },
+    },
+    allFrames: true,
+  };
+  ChromeUtils.registerWindowActor("ContentEventListener", actorOptions);
+}
+
+registerActor();
 
 var BrowserTestUtils = {
   /**
@@ -307,6 +338,18 @@ var BrowserTestUtils = {
   },
 
   /**
+   * If the argument is a browsingContext, return it. If the
+   * argument is a browser/frame, returns the browsing context for it.
+   */
+  getBrowsingContextFrom(browser) {
+    if (Element.isInstance(browser)) {
+      return browser.browsingContext;
+    }
+
+    return browser;
+  },
+
+  /**
    * Switches to a tab and resolves when it is ready.
    *
    * @param {tabbrowser} tabbrowser
@@ -392,23 +435,53 @@ var BrowserTestUtils = {
       return wantLoad == url;
     }
 
-    return new Promise(resolve => {
-      let mm = browser.ownerGlobal.messageManager;
-      let eventName = maybeErrorPage
-        ? "browser-test-utils:DOMContentLoadedEvent"
-        : "browser-test-utils:loadEvent";
-      mm.addMessageListener(eventName, function onLoad(msg) {
-        // See testing/mochitest/BrowserTestUtils/content/content-utils.js for
-        // the difference between visibleURL and internalURL.
-        if (
-          msg.target == browser &&
-          (!msg.data.subframe || includeSubFrames) &&
-          isWanted(maybeErrorPage ? msg.data.visibleURL : msg.data.internalURL)
-        ) {
-          mm.removeMessageListener(eventName, onLoad);
-          resolve(msg.data.internalURL);
+    // Error pages are loaded slightly differently, so listen for the
+    // DOMContentLoaded event for those instead.
+    let loadEvent = maybeErrorPage ? "DOMContentLoaded" : "load";
+    let eventName = `BrowserTestUtils:ContentEvent:${loadEvent}`;
+
+    return new Promise((resolve, reject) => {
+      function listener(event) {
+        switch (event.type) {
+          case eventName: {
+            let { browsingContext, internalURL, visibleURL } = event.detail;
+
+            // Sometimes we arrive here without an internalURL. If that's the
+            // case, just keep waiting until we get one.
+            if (!internalURL) {
+              return;
+            }
+
+            // Ignore subframes if we only care about the top-level load.
+            let subframe = browsingContext !== browsingContext.top;
+            if (subframe && !includeSubFrames) {
+              return;
+            }
+
+            // See testing/mochitest/BrowserTestUtils/content/BrowserTestUtilsChild.jsm
+            // for the difference between visibleURL and internalURL.
+            if (!isWanted(maybeErrorPage ? visibleURL : internalURL)) {
+              return;
+            }
+
+            resolve(internalURL);
+            break;
+          }
+
+          case "unload":
+            reject();
+            break;
+
+          default:
+            return;
         }
-      });
+
+        browser.removeEventListener(eventName, listener, true);
+        browser.ownerGlobal.removeEventListener("unload", listener);
+      }
+
+      browser.addEventListener(eventName, listener, true);
+      browser.ownerGlobal.addEventListener("unload", listener);
     });
   },
 
@@ -432,21 +505,29 @@ var BrowserTestUtils = {
    * @resolves Once the selected browser fires its load event.
    */
   firstBrowserLoaded(win, aboutBlank = true, checkFn = null) {
-    let mm = win.messageManager;
-    return this.waitForMessage(mm, "browser-test-utils:loadEvent", msg => {
-      if (checkFn) {
-        return checkFn(msg.target);
+    return this.waitForEvent(
+      win,
+      "BrowserTestUtils:ContentEvent:load",
+      true,
+      event => {
+        if (checkFn) {
+          return checkFn(event.target);
+        }
+        return (
+          win.gBrowser.selectedBrowser.currentURI.spec !== "about:blank" ||
+          aboutBlank
+        );
       }
-
-      let selectedBrowser = win.gBrowser.selectedBrowser;
-      return (
-        msg.target == selectedBrowser &&
-        (aboutBlank || selectedBrowser.currentURI.spec != "about:blank")
-      );
-    });
+    );
   },
 
   _webProgressListeners: new Set(),
+
+  _contentEventListenerSharedState: new Map(),
+
+  _contentEventListeners: new Map(),
+
+  _contentEventListenerActorRegistered: false,
 
   /**
    * Waits for the web progress listener associated with this tab to fire a
@@ -642,68 +723,76 @@ var BrowserTestUtils = {
       throw new Error("url should be specified if anyWindow is true");
     }
 
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
       let observe = async (win, topic, data) => {
         if (topic != "domwindowopened") {
           return;
         }
 
-        if (!anyWindow) {
-          Services.ww.unregisterNotification(observe);
-        }
-
-        // Add these event listeners now since they may fire before the
-        // DOMContentLoaded event down below.
-        let promises = [
-          this.waitForEvent(win, "focus", true),
-          this.waitForEvent(win, "activate"),
-        ];
-
-        if (url) {
-          await this.waitForEvent(win, "DOMContentLoaded");
-
-          if (win.document.documentURI != AppConstants.BROWSER_CHROME_URL) {
-            return;
+        try {
+          if (!anyWindow) {
+            Services.ww.unregisterNotification(observe);
           }
-        }
 
-        promises.push(
-          TestUtils.topicObserved(
-            "browser-delayed-startup-finished",
-            subject => subject == win
-          )
-        );
+          // Add these event listeners now since they may fire before the
+          // DOMContentLoaded event down below.
+          let promises = [
+            this.waitForEvent(win, "focus", true),
+            this.waitForEvent(win, "activate"),
+          ];
 
-        if (url) {
-          let browser = win.gBrowser.selectedBrowser;
+          if (url) {
+            await this.waitForEvent(win, "DOMContentLoaded");
 
-          if (
-            win.gMultiProcessBrowser &&
-            !E10SUtils.canLoadURIInRemoteType(
-              url,
-              win.gFissionBrowser,
-              browser.remoteType,
-              browser.remoteType /* aPreferredRemoteType */
+            if (win.document.documentURI != AppConstants.BROWSER_CHROME_URL) {
+              return;
+            }
+          }
+
+          promises.push(
+            TestUtils.topicObserved(
+              "browser-delayed-startup-finished",
+              subject => subject == win
             )
-          ) {
-            await this.waitForEvent(browser, "XULFrameLoaderCreated");
+          );
+
+          if (url) {
+            let browser = win.gBrowser.selectedBrowser;
+
+            if (
+              win.gMultiProcessBrowser &&
+              !E10SUtils.canLoadURIInRemoteType(
+                url,
+                win.gFissionBrowser,
+                browser.remoteType
+              )
+            ) {
+              await this.waitForEvent(browser, "XULFrameLoaderCreated");
+            }
+
+            let loadPromise = this.browserLoaded(
+              browser,
+              false,
+              url,
+              maybeErrorPage
+            );
+            promises.push(loadPromise);
           }
 
-          let loadPromise = this.browserLoaded(
-            browser,
-            false,
-            url,
-            maybeErrorPage
-          );
-          promises.push(loadPromise);
-        }
+          await Promise.all(promises);
 
-        await Promise.all(promises);
-
-        if (anyWindow) {
-          Services.ww.unregisterNotification(observe);
+          if (anyWindow) {
+            Services.ww.unregisterNotification(observe);
+          }
+          resolve(win);
+        } catch (err) {
+          // We failed to wait for the load in this URI. This is only an error
+          // if `anyWindow` is not set, as if it is we can just wait for another
+          // window.
+          if (!anyWindow) {
+            reject(err);
+          }
         }
-        resolve(win);
       };
       Services.ww.registerNotification(observe);
     });
@@ -761,7 +850,10 @@ var BrowserTestUtils = {
     // would try to insert the preloaded browser, which would only break things.
     await ContentTask.spawn(gBrowser.preloadedBrowser, null, async () => {
       await ContentTaskUtils.waitForCondition(() => {
-        return content.document && content.document.readyState == "complete";
+        return (
+          this.content.document &&
+          this.content.document.readyState == "complete"
+        );
       });
     });
   },
@@ -1134,6 +1226,10 @@ var BrowserTestUtils = {
    * fire until it is removed. A callable object is returned that,
    * when called, removes the event listener. Note that this function
    * works even if the browser's frameloader is swapped.
+   * Note: This will only listen for events that either have the browsing
+   * context of the browser element at the time of the call, or that are fired
+   * on windows that were created after any call to the function since the start
+   * of the test. This could be improved if needed.
    *
    * @param {xul:browser} browser
    *        The browser element to listen for events in.
@@ -1142,20 +1238,14 @@ var BrowserTestUtils = {
    * @param {function} listener
    *        Function to call in parent process when event fires.
    *        Not passed any arguments.
-   * @param {bool} useCapture [optional]
-   *        Whether to use a capturing listener.
+   * @param {object} listenerOptions [optional]
+   *        Options to pass to the event listener.
    * @param {function} checkFn [optional]
    *        Called with the Event object as argument, should return true if the
    *        event is the expected one, or false if it should be ignored and
    *        listening should continue. If not specified, the first event with
    *        the specified name resolves the returned promise. This is called
    *        within the content process and can have no closure environment.
-   * @param {bool} wantsUntrusted [optional]
-   *        Whether to accept untrusted events
-   * @param {bool} autoremove [optional]
-   *        Whether the listener should be removed when |browser| is removed
-   *        from the DOM. Note that, if this flag is true, it won't be possible
-   *        to listen for events after a frameloader swap.
    *
    * @returns function
    *        If called, the return value will remove the event listener.
@@ -1164,90 +1254,114 @@ var BrowserTestUtils = {
     browser,
     eventName,
     listener,
-    useCapture = false,
-    checkFn,
-    wantsUntrusted = false,
-    autoremove = true
+    listenerOptions = {},
+    checkFn
   ) {
     let id = gListenerId++;
-    let checkFnSource = checkFn
-      ? encodeURIComponent(escape(checkFn.toSource()))
-      : "";
+    let contentEventListeners = this._contentEventListeners;
+    contentEventListeners.set(id, { listener, browser });
 
-    // To correctly handle frameloader swaps, we load a frame script
-    // into all tabs but ignore messages from the ones not related to
-    // |browser|.
-
-    /* eslint-disable no-eval */
-    function frameScript(
-      id,
+    let eventListenerState = this._contentEventListenerSharedState;
+    eventListenerState.set(id, {
       eventName,
-      useCapture,
-      checkFnSource,
-      wantsUntrusted
-    ) {
-      let checkFn;
-      if (checkFnSource) {
-        checkFn = eval(`(() => (${unescape(checkFnSource)}))()`);
-      }
+      listenerOptions,
+      checkFnSource: checkFn ? checkFn.toSource() : "",
+    });
 
-      function listener(event) {
-        if (checkFn && !checkFn(event)) {
-          return;
+    Services.ppmm.sharedData.set(
+      "BrowserTestUtils:ContentEventListener",
+      eventListenerState
+    );
+    Services.ppmm.sharedData.flush();
+
+    if (!this._contentEventListenerActorRegistered) {
+      this._contentEventListenerActorRegistered = true;
+      registerContentEventListenerActor();
+
+      // We hadn't registered the actor yet, so any existing window
+      // for browser's BC will not have been created yet. Explicitly
+      // make sure the actors are created and ready to go now. This
+      // happens after the updating of sharedData so that the actors
+      // don't have to get created and do nothing, and then later have
+      // to be updated.
+      // Note: As mentioned in the comment at the start of this function,
+      // this will miss any windows that existed at the time that the function
+      // was initially called during this test, but that did not have the
+      // browser's browsing context.
+      let contextsToVisit = [browser.browsingContext];
+      while (contextsToVisit.length) {
+        let currentContext = contextsToVisit.pop();
+        let global = currentContext.currentWindowGlobal;
+        if (!global) {
+          continue;
         }
-        sendAsyncMessage("ContentEventListener:Run", id);
-      }
-      function removeListener(msg) {
-        if (msg.data == id) {
-          removeMessageListener("ContentEventListener:Remove", removeListener);
-          removeEventListener(eventName, listener, useCapture, wantsUntrusted);
-        }
-      }
-      addMessageListener("ContentEventListener:Remove", removeListener);
-      addEventListener(eventName, listener, useCapture, wantsUntrusted);
-    }
-    /* eslint-enable no-eval */
-
-    let frameScriptSource = `data:,(${frameScript.toString()})(${id}, "${eventName}", ${uneval(
-      useCapture
-    )}, "${checkFnSource}", ${wantsUntrusted})`;
-
-    let mm = Services.mm;
-
-    function runListener(msg) {
-      if (msg.data == id && msg.target == browser) {
-        listener();
+        let actor = browser.browsingContext.currentWindowGlobal.getActor(
+          "ContentEventListener"
+        );
+        actor.sendAsyncMessage("ContentEventListener:LateCreate");
+        contextsToVisit.push(...currentContext.getChildren());
       }
     }
-    mm.addMessageListener("ContentEventListener:Run", runListener);
-
-    let needCleanup = true;
 
     let unregisterFunction = function() {
-      if (!needCleanup) {
+      if (!eventListenerState.has(id)) {
         return;
       }
-      needCleanup = false;
-      mm.removeMessageListener("ContentEventListener:Run", runListener);
-      mm.broadcastAsyncMessage("ContentEventListener:Remove", id);
-      mm.removeDelayedFrameScript(frameScriptSource);
-      if (autoremove) {
-        Services.obs.removeObserver(cleanupObserver, "message-manager-close");
-      }
+      eventListenerState.delete(id);
+      contentEventListeners.delete(id);
+      Services.ppmm.sharedData.set(
+        "BrowserTestUtils:ContentEventListener",
+        eventListenerState
+      );
+      Services.ppmm.sharedData.flush();
     };
-
-    function cleanupObserver(subject, topic, data) {
-      if (subject == browser.messageManager) {
-        unregisterFunction();
-      }
-    }
-    if (autoremove) {
-      Services.obs.addObserver(cleanupObserver, "message-manager-close");
-    }
-
-    mm.loadFrameScript(frameScriptSource, true);
-
     return unregisterFunction;
+  },
+
+  /**
+   * This is an internal method to be invoked by
+   * BrowserTestUtilsParent.jsm when a content event we were listening for
+   * happens.
+   */
+  _receivedContentEventListener(listenerId, browser) {
+    let listenerData = this._contentEventListeners.get(listenerId);
+    if (!listenerData) {
+      return;
+    }
+    if (listenerData.browser != browser) {
+      return;
+    }
+    listenerData.listener();
+  },
+
+  /**
+   * This is an internal method that cleans up any state from content event
+   * listeners.
+   */
+  _cleanupContentEventListeners() {
+    this._contentEventListeners.clear();
+
+    if (this._contentEventListenerSharedState.size != 0) {
+      this._contentEventListenerSharedState.clear();
+      Services.ppmm.sharedData.set(
+        "BrowserTestUtils:ContentEventListener",
+        this._contentEventListenerSharedState
+      );
+      Services.ppmm.sharedData.flush();
+    }
+
+    if (this._contentEventListenerActorRegistered) {
+      this._contentEventListenerActorRegistered = false;
+      ChromeUtils.unregisterWindowActor("ContentEventListener");
+    }
+  },
+
+  observe(subject, topic, data) {
+    switch (topic) {
+      case "test-complete":
+        this._cleanupContentEventListeners();
+        break;
+    }
   },
 
   /**
@@ -1288,97 +1402,76 @@ var BrowserTestUtils = {
 
   /**
    * Waits for the next top-level document load in the current browser.  The URI
-   * of the document is compared against aExpectedURL.  The load is then stopped
+   * of the document is compared against expectedURL.  The load is then stopped
    * before it actually starts.
    *
    * @param {string} expectedURL
    *        The URL of the document that is expected to load.
    * @param {object} browser
    *        The browser to wait for.
-   * @param {boolean} [stopFromProgressListener]
-   *        Whether to cancel the load directly from the progress listener. Defaults to true.
-   *        If you're using this method to avoid hitting the network, you want the default (true).
-   *        However, the browser UI will behave differently for loads stopped directly from
-   *        the progress listener (effectively in the middle of a call to loadURI) and so there
-   *        are cases where you may want to avoid stopping the load directly from within the
-   *        progress listener callback.
+   * @param {function} checkFn (optional)
+   *        Function to run on the channel before stopping it.
    * @returns {Promise}
    */
-  waitForDocLoadAndStopIt(
-    expectedURL,
-    browser,
-    stopFromProgressListener = true
-  ) {
-    function content_script(contentStopFromProgressListener) {
-      /* eslint-env mozilla/frame-script */
-      let wp = docShell.QueryInterface(Ci.nsIWebProgress);
-
-      function stopContent(now, uri) {
-        if (now) {
-          /* Hammer time. */
-          content.stop();
-
-          /* Let the parent know we're done. */
-          sendAsyncMessage("Test:WaitForDocLoadAndStopIt", { uri });
-        } else {
-          /* eslint-disable-next-line no-undef */
-          setTimeout(stopContent.bind(null, true, uri), 0);
-        }
-      }
-
-      let progressListener = {
-        onStateChange(webProgress, req, flags, status) {
-          dump(
-            `waitForDocLoadAndStopIt: onStateChange ${flags.toString(16)}:${
-              req.name
-            }\n`
-          );
-
-          if (
-            webProgress.isTopLevel &&
-            flags & Ci.nsIWebProgressListener.STATE_START
-          ) {
-            wp.removeProgressListener(progressListener);
-            let chan = req.QueryInterface(Ci.nsIChannel);
-            dump(`waitForDocLoadAndStopIt: Document start: ${chan.URI.spec}\n`);
-            stopContent(contentStopFromProgressListener, chan.originalURI.spec);
-          }
-        },
-        QueryInterface: ChromeUtils.generateQI(["nsISupportsWeakReference"]),
-      };
-      wp.addProgressListener(progressListener, wp.NOTIFY_STATE_WINDOW);
-
-      /**
-       * As |this| is undefined and we can't extend |docShell|, adding an unload
-       * event handler is the easiest way to ensure the weakly referenced
-       * progress listener is kept alive as long as necessary.
-       */
-      addEventListener("unload", function() {
-        try {
-          wp.removeProgressListener(progressListener);
-        } catch (e) {
-          /* Will most likely fail. */
-        }
-      });
-    }
+  waitForDocLoadAndStopIt(expectedURL, browser, checkFn) {
+    let isHttp = url => /^https?:/.test(url);
 
     let stoppedDocLoadPromise = () => {
-      return new Promise((resolve, reject) => {
-        function complete({ data }) {
-          if (data.uri != expectedURL) {
-            reject(new Error(`An expected URL was loaded: ${data.uri}`));
-          }
-          mm.removeMessageListener("Test:WaitForDocLoadAndStopIt", complete);
-          resolve();
+      return new Promise(resolve => {
+        // Redirect non-http URIs to http://mochi.test:8888/, so we can still
+        // use http-on-before-connect to listen for loads. Since we're
+        // aborting the load as early as possible, it doesn't matter whether the
+        // server handles it sensibly or not. However, this also means that this
+        // helper shouldn't be used to load local URIs (about pages, chrome://
+        // URIs, etc).
+        let proxyFilter;
+        if (!isHttp(expectedURL)) {
+          proxyFilter = {
+            proxyInfo: ProtocolProxyService.newProxyInfo(
+              "http",
+              "mochi.test",
+              8888,
+              "",
+              "",
+              0,
+              4096,
+              null
+            ),
+
+            applyFilter(service, channel, defaultProxyInfo, callback) {
+              callback.onProxyFilterResult(
+                isHttp(channel.URI.spec) ? defaultProxyInfo : this.proxyInfo
+              );
+            },
+          };
+
+          ProtocolProxyService.registerChannelFilter(proxyFilter, 0);
         }
 
-        let mm = browser.messageManager;
-        mm.loadFrameScript(
-          `data:,(${content_script.toString()})(${stopFromProgressListener});`,
-          true
-        );
-        mm.addMessageListener("Test:WaitForDocLoadAndStopIt", complete);
-        dump(`waitForDocLoadAndStopIt: Waiting for URL: ${expectedURL}\n`);
+        function observer(chan) {
+          chan.QueryInterface(Ci.nsIHttpChannel);
+          if (!chan.originalURI || chan.originalURI.spec !== expectedURL) {
+            return;
+          }
+          if (checkFn && !checkFn(chan)) {
+            return;
+          }
+
+          // TODO: We should check that the channel's BrowsingContext matches
+          // the browser's. See bug 1587114.
+
+          try {
+            chan.cancel(Cr.NS_BINDING_ABORTED);
+          } finally {
+            if (proxyFilter) {
+              ProtocolProxyService.unregisterChannelFilter(proxyFilter);
+            }
+            Services.obs.removeObserver(observer, "http-on-before-connect");
+            resolve();
+          }
+        }
+
+        Services.obs.addObserver(observer, "http-on-before-connect");
       });
     };
 
@@ -1406,17 +1499,13 @@ var BrowserTestUtils = {
   /**
    *  Versions of EventUtils.jsm synthesizeMouse functions that synthesize a
    *  mouse event in a child process and return promises that resolve when the
-   *  event has fired and completed. Instead of a window, a browser is required
-   *  to be passed to this function.
+   *  event has fired and completed. Instead of a window, a browser or
+   *  browsing context is required to be passed to this function.
    *
    * @param target
    *        One of the following:
    *        - a selector string that identifies the element to target. The syntax is as
    *          for querySelector.
-   *        - An array of selector strings. Each selector after the first
-   *          selects for an element in the iframe specified by the previous
-   *          selector.
-   *        - a CPOW element (for easier test-conversion).
    *        - a function to be run in the content process that returns the element to
    *        target
    *        - null, in which case the offset is from the content document's edge.
@@ -1426,58 +1515,41 @@ var BrowserTestUtils = {
    *        y offset from target's top bounding edge
    * @param {Object} event object
    *        Additional arguments, similar to the EventUtils.jsm version
-   * @param {Browser} browser
-   *        Browser element, must not be null
+   * @param {BrowserContext|MozFrameLoaderOwner} browsingContext
+   *        Browsing context or browser element, must not be null
    *
    * @returns {Promise}
    * @resolves True if the mouse event was cancelled.
    */
-  synthesizeMouse(target, offsetX, offsetY, event, browser) {
-    return new Promise((resolve, reject) => {
-      let mm = browser.messageManager;
-      mm.addMessageListener("Test:SynthesizeMouseDone", function mouseMsg(
-        message
-      ) {
-        mm.removeMessageListener("Test:SynthesizeMouseDone", mouseMsg);
-        if (message.data.hasOwnProperty("defaultPrevented")) {
-          resolve(message.data.defaultPrevented);
-        } else {
-          reject(new Error(message.data.error));
-        }
-      });
+  synthesizeMouse(target, offsetX, offsetY, event, browsingContext) {
+    let targetFn = null;
+    if (typeof target == "function") {
+      targetFn = target.toString();
+      target = null;
+    } else if (typeof target != "string" && !Array.isArray(target)) {
+      target = null;
+    }
 
-      let cpowObject = null;
-      let targetFn = null;
-      if (typeof target == "function") {
-        targetFn = target.toString();
-        target = null;
-      } else if (typeof target != "string" && !Array.isArray(target)) {
-        cpowObject = target;
-        target = null;
-      }
-
-      mm.sendAsyncMessage(
-        "Test:SynthesizeMouse",
-        { target, targetFn, x: offsetX, y: offsetY, event },
-        { object: cpowObject }
-      );
+    browsingContext = this.getBrowsingContextFrom(browsingContext);
+    return this.sendQuery(browsingContext, "Test:SynthesizeMouse", {
+      target,
+      targetFn,
+      x: offsetX,
+      y: offsetY,
+      event,
     });
   },
 
   /**
    *  Versions of EventUtils.jsm synthesizeTouch functions that synthesize a
    *  touch event in a child process and return promises that resolve when the
-   *  event has fired and completed. Instead of a window, a browser is required
-   *  to be passed to this function.
+   *  event has fired and completed. Instead of a window, a browser or
+   *  browsing context is required to be passed to this function.
    *
    * @param target
    *        One of the following:
    *        - a selector string that identifies the element to target. The syntax is as
    *          for querySelector.
-   *        - An array of selector strings. Each selector after the first
-   *          selects for an element in the iframe specified by the previous
-   *          selector.
-   *        - a CPOW element (for easier test-conversion).
    *        - a function to be run in the content process that returns the element to
    *        target
    *        - null, in which case the offset is from the content document's edge.
@@ -1487,41 +1559,28 @@ var BrowserTestUtils = {
    *        y offset from target's top bounding edge
    * @param {Object} event object
    *        Additional arguments, similar to the EventUtils.jsm version
-   * @param {Browser} browser
-   *        Browser element, must not be null
+   * @param {BrowserContext|MozFrameLoaderOwner} browsingContext
+   *        Browsing context or browser element, must not be null
    *
    * @returns {Promise}
    * @resolves True if the touch event was cancelled.
    */
-  synthesizeTouch(target, offsetX, offsetY, event, browser) {
-    return new Promise((resolve, reject) => {
-      let mm = browser.messageManager;
-      mm.addMessageListener("Test:SynthesizeTouchDone", function touchMsg(
-        message
-      ) {
-        mm.removeMessageListener("Test:SynthesizeTouchDone", touchMsg);
-        if (message.data.hasOwnProperty("defaultPrevented")) {
-          resolve(message.data.defaultPrevented);
-        } else {
-          reject(new Error(message.data.error));
-        }
-      });
+  synthesizeTouch(target, offsetX, offsetY, event, browsingContext) {
+    let targetFn = null;
+    if (typeof target == "function") {
+      targetFn = target.toString();
+      target = null;
+    } else if (typeof target != "string" && !Array.isArray(target)) {
+      target = null;
+    }
 
-      let cpowObject = null;
-      let targetFn = null;
-      if (typeof target == "function") {
-        targetFn = target.toString();
-        target = null;
-      } else if (typeof target != "string" && !Array.isArray(target)) {
-        cpowObject = target;
-        target = null;
-      }
-
-      mm.sendAsyncMessage(
-        "Test:SynthesizeTouch",
-        { target, targetFn, x: offsetX, y: offsetY, event },
-        { object: cpowObject }
-      );
+    browsingContext = this.getBrowsingContextFrom(browsingContext);
+    return this.sendQuery(browsingContext, "Test:SynthesizeTouch", {
+      target,
+      targetFn,
+      x: offsetX,
+      y: offsetY,
+      event,
     });
   },
 
@@ -1550,10 +1609,16 @@ var BrowserTestUtils = {
    *  Version of synthesizeMouse that uses the center of the target as the mouse
    *  location. Arguments and the return value are the same.
    */
-  synthesizeMouseAtCenter(target, event, browser) {
+  synthesizeMouseAtCenter(target, event, browsingContext) {
     // Use a flag to indicate to center rather than having a separate message.
     event.centered = true;
-    return BrowserTestUtils.synthesizeMouse(target, 0, 0, event, browser);
+    return BrowserTestUtils.synthesizeMouse(
+      target,
+      0,
+      0,
+      event,
+      browsingContext
+    );
   },
 
   /**
@@ -1561,13 +1626,13 @@ var BrowserTestUtils = {
    *  window instead of a target as the offset. Otherwise, the arguments and
    *  return value are the same as synthesizeMouse.
    */
-  synthesizeMouseAtPoint(offsetX, offsetY, event, browser) {
+  synthesizeMouseAtPoint(offsetX, offsetY, event, browsingContext) {
     return BrowserTestUtils.synthesizeMouse(
       null,
       offsetX,
       offsetY,
       event,
-      browser
+      browsingContext
     );
   },
 
@@ -1597,7 +1662,7 @@ var BrowserTestUtils = {
   },
 
   /**
-   * Crashes a remote browser tab and cleans up the generated minidumps.
+   * Crashes a remote frame tab and cleans up the generated minidumps.
    * Resolves with the data from the .extra file (the crash annotations).
    *
    * @param (Browser) browser
@@ -1608,15 +1673,19 @@ var BrowserTestUtils = {
    *        tab crash page has loaded.
    * @param (bool) shouldClearMinidumps
    *        True if the minidumps left behind by the crash should be removed.
+   * @param (BrowsingContext) browsingContext
+   *        The context where the frame leaves. Default to
+   *        top level context if not supplied.
    *
    * @returns (Promise)
    * @resolves An Object with key-value pairs representing the data from the
    *           crash report's extra file (if applicable).
    */
-  async crashBrowser(
+  async crashFrame(
     browser,
     shouldShowTabCrashPage = true,
-    shouldClearMinidumps = true
+    shouldClearMinidumps = true,
+    browsingContext
   ) {
     let extra = {};
 
@@ -1651,26 +1720,6 @@ var BrowserTestUtils = {
         file.remove(false);
       }
     }
-
-    // This frame script is injected into the remote browser, and used to
-    // intentionally crash the tab. We crash by using js-ctypes and dereferencing
-    // a bad pointer. The crash should happen immediately upon loading this
-    // frame script.
-    let frame_script = () => {
-      const { ctypes } = ChromeUtils.import(
-        "resource://gre/modules/ctypes.jsm"
-      );
-
-      let dies = function() {
-        privateNoteIntentionalCrash();
-        let zero = new ctypes.intptr_t(8);
-        let badptr = ctypes.cast(zero, ctypes.PointerType(ctypes.int32_t));
-        badptr.contents;
-      };
-
-      dump("\nEt tu, Brute?\n");
-      dies();
-    };
 
     let expectedPromises = [];
 
@@ -1767,10 +1816,12 @@ var BrowserTestUtils = {
       );
     }
 
-    // This frame script will crash the remote browser as soon as it is
-    // evaluated.
-    let mm = browser.messageManager;
-    mm.loadFrameScript("data:,(" + frame_script.toString() + ")();", false);
+    // Trigger crash by sending a message to BrowserTestUtils actor.
+    this.sendAsyncMessage(
+      browsingContext || browser.browsingContext,
+      "BrowserTestUtils:CrashFrame",
+      {}
+    );
 
     await Promise.all(expectedPromises);
 
@@ -1783,6 +1834,56 @@ var BrowserTestUtils = {
     }
 
     return extra;
+  },
+
+  /**
+   * Attempts to simulate a launch fail by crashing a browser, but
+   * stripping the browser of its childID so that the TabCrashHandler
+   * thinks it was a launch fail.
+   *
+   * @param browser (<xul:browser>)
+   *   The browser to simulate a content process launch failure on.
+   * @return Promise
+   * @resolves undefined
+   *   Resolves when the TabCrashHandler should be done handling the
+   *   simulated crash.
+   */
+  simulateProcessLaunchFail(browser, dueToBuildIDMismatch = false) {
+    const NORMAL_CRASH_TOPIC = "ipc:content-shutdown";
+
+    Object.defineProperty(browser.frameLoader, "childID", {
+      get: () => 0,
+    });
+
+    let sawNormalCrash = false;
+    let observer = (subject, topic, data) => {
+      sawNormalCrash = true;
+    };
+
+    Services.obs.addObserver(observer, NORMAL_CRASH_TOPIC);
+
+    Services.obs.notifyObservers(
+      browser.frameLoader,
+      "oop-frameloader-crashed"
+    );
+
+    let eventType = dueToBuildIDMismatch
+      ? "oop-browser-buildid-mismatch"
+      : "oop-browser-crashed";
+
+    let event = new browser.ownerGlobal.CustomEvent(eventType, {
+      bubbles: true,
+    });
+    event.isTopFrame = true;
+    browser.dispatchEvent(event);
+
+    Services.obs.removeObserver(observer, NORMAL_CRASH_TOPIC);
+
+    if (sawNormalCrash) {
+      throw new Error(`Unexpectedly saw ${NORMAL_CRASH_TOPIC}`);
+    }
+
+    return new Promise(resolve => TestUtils.executeSoon(resolve));
   },
 
   /**
@@ -1817,102 +1918,63 @@ var BrowserTestUtils = {
   /**
    * Version of EventUtils' `sendChar` function; it will synthesize a keypress
    * event in a child process and returns a Promise that will resolve when the
-   * event was fired. Instead of a Window, a Browser object is required to be
-   * passed to this function.
+   * event was fired. Instead of a Window, a Browser or Browsing Context
+   * is required to be passed to this function.
    *
    * @param {String} char
    *        A character for the keypress event that is sent to the browser.
-   * @param {Browser} browser
-   *        Browser element, must not be null.
+   * @param {BrowserContext|MozFrameLoaderOwner} browsingContext
+   *        Browsing context or browser element, must not be null
    *
    * @returns {Promise}
    * @resolves True if the keypress event was synthesized.
    */
-  sendChar(char, browser) {
-    return new Promise(resolve => {
-      let seq = ++gSendCharCount;
-      let mm = browser.messageManager;
-
-      mm.addMessageListener("Test:SendCharDone", function charMsg(message) {
-        if (message.data.seq != seq) {
-          return;
-        }
-
-        mm.removeMessageListener("Test:SendCharDone", charMsg);
-        resolve(message.data.result);
-      });
-
-      mm.sendAsyncMessage("Test:SendChar", {
-        char,
-        seq,
-      });
-    });
+  sendChar(char, browsingContext) {
+    browsingContext = this.getBrowsingContextFrom(browsingContext);
+    return this.sendQuery(browsingContext, "Test:SendChar", { char });
   },
 
   /**
    * Version of EventUtils' `synthesizeKey` function; it will synthesize a key
    * event in a child process and returns a Promise that will resolve when the
-   * event was fired. Instead of a Window, a Browser object is required to be
-   * passed to this function.
+   * event was fired. Instead of a Window, a Browser or Browsing Context
+   * is required to be passed to this function.
    *
    * @param {String} key
    *        See the documentation available for EventUtils#synthesizeKey.
    * @param {Object} event
    *        See the documentation available for EventUtils#synthesizeKey.
-   * @param {Browser} browser
-   *        Browser element, must not be null.
+   * @param {BrowserContext|MozFrameLoaderOwner} browsingContext
+   *        Browsing context or browser element, must not be null
    *
    * @returns {Promise}
    */
-  synthesizeKey(key, event, browser) {
-    return new Promise(resolve => {
-      let seq = ++gSynthesizeKeyCount;
-      let mm = browser.messageManager;
-
-      mm.addMessageListener("Test:SynthesizeKeyDone", function keyMsg(message) {
-        if (message.data.seq != seq) {
-          return;
-        }
-
-        mm.removeMessageListener("Test:SynthesizeKeyDone", keyMsg);
-        resolve();
-      });
-
-      mm.sendAsyncMessage("Test:SynthesizeKey", { key, event, seq });
+  synthesizeKey(key, event, browsingContext) {
+    browsingContext = this.getBrowsingContextFrom(browsingContext);
+    return this.sendQuery(browsingContext, "Test:SynthesizeKey", {
+      key,
+      event,
     });
   },
 
   /**
    * Version of EventUtils' `synthesizeComposition` function; it will synthesize
    * a composition event in a child process and returns a Promise that will
-   * resolve when the event was fired. Instead of a Window, a Browser object is
-   * required to be passed to this function.
+   * resolve when the event was fired. Instead of a Window, a Browser or
+   * Browsing Context is required to be passed to this function.
    *
    * @param {Object} event
    *        See the documentation available for EventUtils#synthesizeComposition.
-   * @param {Browser} browser
-   *        Browser element, must not be null.
+   * @param {BrowserContext|MozFrameLoaderOwner} browsingContext
+   *        Browsing context or browser element, must not be null
    *
    * @returns {Promise}
    * @resolves False if the composition event could not be synthesized.
    */
-  synthesizeComposition(event, browser) {
-    return new Promise(resolve => {
-      let seq = ++gSynthesizeCompositionCount;
-      let mm = browser.messageManager;
-
-      mm.addMessageListener("Test:SynthesizeCompositionDone", function compMsg(
-        message
-      ) {
-        if (message.data.seq != seq) {
-          return;
-        }
-
-        mm.removeMessageListener("Test:SynthesizeCompositionDone", compMsg);
-        resolve(message.data.result);
-      });
-
-      mm.sendAsyncMessage("Test:SynthesizeComposition", { event, seq });
+  synthesizeComposition(event, browsingContext) {
+    browsingContext = this.getBrowsingContextFrom(browsingContext);
+    return this.sendQuery(browsingContext, "Test:SynthesizeComposition", {
+      event,
     });
   },
 
@@ -1920,36 +1982,19 @@ var BrowserTestUtils = {
    * Version of EventUtils' `synthesizeCompositionChange` function; it will
    * synthesize a compositionchange event in a child process and returns a
    * Promise that will resolve when the event was fired. Instead of a Window, a
-   * Browser object is required to be passed to this function.
+   * Browser or Browsing Context object is required to be passed to this function.
    *
    * @param {Object} event
    *        See the documentation available for EventUtils#synthesizeCompositionChange.
-   * @param {Browser} browser
-   *        Browser element, must not be null.
+   * @param {BrowserContext|MozFrameLoaderOwner} browsingContext
+   *        Browsing context or browser element, must not be null
    *
    * @returns {Promise}
    */
-  synthesizeCompositionChange(event, browser) {
-    return new Promise(resolve => {
-      let seq = ++gSynthesizeCompositionChangeCount;
-      let mm = browser.messageManager;
-
-      mm.addMessageListener(
-        "Test:SynthesizeCompositionChangeDone",
-        function compMsg(message) {
-          if (message.data.seq != seq) {
-            return;
-          }
-
-          mm.removeMessageListener(
-            "Test:SynthesizeCompositionChangeDone",
-            compMsg
-          );
-          resolve();
-        }
-      );
-
-      mm.sendAsyncMessage("Test:SynthesizeCompositionChange", { event, seq });
+  synthesizeCompositionChange(event, browsingContext) {
+    browsingContext = this.getBrowsingContextFrom(browsingContext);
+    return this.sendQuery(browsingContext, "Test:SynthesizeCompositionChange", {
+      event,
     });
   },
 
@@ -2203,4 +2248,130 @@ var BrowserTestUtils = {
     }
     return tabbrowser.addTab(uri, params);
   },
+
+  /**
+   * There are two ways to listen for observers in a content process:
+   *   1. Call contentTopicObserved which will watch for an observer notification
+   *      in a content process to occur, and will return a promise which resolves
+   *      when that notification occurs.
+   *   2. Enclose calls to contentTopicObserved inside a pair of calls to
+   *      startObservingTopics and stopObservingTopics. Usually this pair will be
+   *      placed at the start and end of a test or set of tests. Any observer
+   *      notification that happens between the start and stop that doesn't match
+   *      any explicitly expected by using contentTopicObserved will cause
+   *      stopObservingTopics to reject with an error.
+   *      For example:
+   *        await BrowserTestUtils.startObservingTopics(bc, ["a", "b", "c"]);
+   *        await BrowserTestUtils contentTopicObserved(bc, "a", 2);
+   *        await BrowserTestUtils.stopObservingTopics(bc, ["a", "b", "c"]);
+   *      This will expect two "a" notifications to occur, but will fail if more
+   *      than two occur, or if any "b" or "c" notifications occur.
+   * Note that this function doesn't handle adding a listener for the same topic
+   * more than once. To do that, use the aCount argument.
+   *
+   * @param aBrowsingContext
+   *        The browsing context associated with the content process to listen to.
+   * @param {string} aTopic
+   *        Observer topic to listen to. May be null to listen to any topic.
+   * @param {number} aCount
+   *        Number of such matching topics to listen to, defaults to 1. A match
+   *        occurs when the topic and filter function match.
+   * @param {function} aFilterFn
+   *        Function to be evaluated in the content process which should
+   *        return true if the notification matches. This function is passed
+   *        the same arguments as nsIObserver.observe(). May be null to
+   *        always match.
+   * @returns {Promise} resolves when the notification occurs.
+   */
+  contentTopicObserved(aBrowsingContext, aTopic, aCount = 1, aFilterFn = null) {
+    return this.sendQuery(aBrowsingContext, "BrowserTestUtils:ObserveTopic", {
+      topic: aTopic,
+      count: aCount,
+      filterFunctionSource: aFilterFn ? aFilterFn.toSource() : null,
+    });
+  },
+
+  /**
+   * Starts observing a list of topics in a content process. Use contentTopicObserved
+   * to allow an observer notification. Any other observer notification that occurs that
+   * matches one of the specified topics will cause the promise to reject.
+   *
+   * Calling this function more than once adds additional topics to be observed without
+   * replacing the existing ones.
+   *
+   * @param aBrowsingContext
+   *        The browsing context associated with the content process to listen to.
+   * @param {array of strings} aTopics array of observer topics
+   * @returns {Promise} resolves when the listeners have been added.
+   */
+  startObservingTopics(aBrowsingContext, aTopics) {
+    return this.sendQuery(
+      aBrowsingContext,
+      "BrowserTestUtils:StartObservingTopics",
+      {
+        topics: aTopics,
+      }
+    );
+  },
+
+  /**
+   * Stop listening to a set of observer topics.
+   *
+   * @param aBrowsingContext
+   *        The browsing context associated with the content process to listen to.
+   * @param {array of strings} aTopics array of observer topics. If empty, then all
+   *                           current topics being listened to are removed.
+   * @returns {Promise} promise that fails if an unexpected observer occurs.
+   */
+  stopObservingTopics(aBrowsingContext, aTopics) {
+    return this.sendQuery(
+      aBrowsingContext,
+      "BrowserTestUtils:StopObservingTopics",
+      {
+        topics: aTopics,
+      }
+    );
+  },
+
+  /**
+   * Sends a message to a specific BrowserTestUtils window actor.
+   * @param aBrowsingContext
+   *        The browsing context where the actor lives.
+   * @param {string} aMessageName
+   *        Name of the message to be sent to the actor.
+   * @param {object} aMessageData
+   *        Extra information to pass to the actor.
+   */
+  async sendAsyncMessage(aBrowsingContext, aMessageName, aMessageData) {
+    if (!aBrowsingContext.currentWindowGlobal) {
+      await this.waitForCondition(() => aBrowsingContext.currentWindowGlobal);
+    }
+
+    let actor = aBrowsingContext.currentWindowGlobal.getActor(
+      "BrowserTestUtils"
+    );
+    actor.sendAsyncMessage(aMessageName, aMessageData);
+  },
+
+  /**
+   * Sends a query to a specific BrowserTestUtils window actor.
+   * @param aBrowsingContext
+   *        The browsing context where the actor lives.
+   * @param {string} aMessageName
+   *        Name of the message to be sent to the actor.
+   * @param {object} aMessageData
+   *        Extra information to pass to the actor.
+   */
+  async sendQuery(aBrowsingContext, aMessageName, aMessageData) {
+    if (!aBrowsingContext.currentWindowGlobal) {
+      await this.waitForCondition(() => aBrowsingContext.currentWindowGlobal);
+    }
+
+    let actor = aBrowsingContext.currentWindowGlobal.getActor(
+      "BrowserTestUtils"
+    );
+    return actor.sendQuery(aMessageName, aMessageData);
+  },
 };
+
+Services.obs.addObserver(BrowserTestUtils, "test-complete");

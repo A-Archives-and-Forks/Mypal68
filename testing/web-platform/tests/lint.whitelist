@@ -113,7 +113,6 @@ INDENT TABS: html/semantics/embedded-content/the-canvas-element/size.attributes.
 
 # Intentional use of print statements
 PRINT STATEMENT: dom/nodes/Document-createElement-namespace-tests/generate.py
-PRINT STATEMENT: encrypted-media/polyfill/make-polyfill-tests.py
 PRINT STATEMENT: webdriver/tests/support/helpers.py
 
 # semi-legitimate use of console.*
@@ -172,6 +171,7 @@ SET TIMEOUT: html/browsers/history/the-location-interface/*
 SET TIMEOUT: html/browsers/history/the-session-history-of-browsing-contexts/*
 SET TIMEOUT: html/browsers/offline/*
 SET TIMEOUT: html/browsers/the-window-object/*
+SET TIMEOUT: html/cross-origin/resources/*
 SET TIMEOUT: html/editing/dnd/*
 SET TIMEOUT: html/semantics/embedded-content/the-iframe-element/*
 SET TIMEOUT: html/semantics/embedded-content/the-img-element/*
@@ -312,6 +312,9 @@ SET TIMEOUT: css/css-fonts/font-display/font-display-feature-policy-01.tentative
 SET TIMEOUT: css/css-fonts/font-display/font-display-feature-policy-02.tentative.html
 SET TIMEOUT: css/css-fonts/font-display/font-display-preload.html
 SET TIMEOUT: html/browsers/windows/auxiliary-browsing-contexts/resources/close-opener.html
+SET TIMEOUT: html/cross-origin-embedder-policy/resources/navigate-none.sub.html
+SET TIMEOUT: html/cross-origin-embedder-policy/resources/navigate-require-corp.sub.html
+SET TIMEOUT: html/cross-origin-embedder-policy/resources/navigate-require-corp-same-site.sub.html
 SET TIMEOUT: html/dom/documents/dom-tree-accessors/Document.currentScript.html
 SET TIMEOUT: html/webappapis/timers/*
 SET TIMEOUT: resources/chromium/*
