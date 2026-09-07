@@ -29,6 +29,7 @@ let gLoginList;
 const TEST_LOGIN_1 = {
   guid: "123456789",
   origin: "https://abc.example.com",
+  httpRealm: null,
   username: "user1",
   password: "pass1",
   title: "abc.example.com",
@@ -39,6 +40,7 @@ const TEST_LOGIN_1 = {
 const TEST_LOGIN_2 = {
   guid: "987654321",
   origin: "https://example.com",
+  httpRealm: null,
   username: "user2",
   password: "pass2",
   title: "example.com",
@@ -49,9 +51,21 @@ const TEST_LOGIN_2 = {
 const TEST_LOGIN_3 = {
   guid: "1111122222",
   origin: "https://def.example.com",
+  httpRealm: null,
   username: "",
   password: "pass3",
   title: "def.example.com",
+  // new Date("June 1, 2019").getTime()
+  timeLastUsed: 1559361600000,
+  timePasswordChanged: 1559361600000,
+};
+const TEST_HTTP_AUTH_LOGIN_1 = {
+  guid: "8675309",
+  origin: "https://httpauth.example.com",
+  httpRealm: "My Realm",
+  username: "http_auth_user",
+  password: "pass4",
+  title: "httpauth.example.com (My Realm)",
   // new Date("June 1, 2019").getTime()
   timeLastUsed: 1559361600000,
   timePasswordChanged: 1559361600000,
@@ -199,6 +213,29 @@ add_task(async function test_filtered_list() {
   loginListItems = gLoginList.shadowRoot.querySelectorAll(".login-list-item[data-guid]");
   ok(!loginListItems[0].hidden, "user1 should be visible");
   ok(!loginListItems[1].hidden, "user2 should be visible");
+
+  info("Add an HTTP Auth login");
+  gLoginList.setLogins([TEST_LOGIN_1, TEST_LOGIN_2, TEST_HTTP_AUTH_LOGIN_1]);
+  await asyncElementRendered();
+  is(JSON.parse(countSpan.getAttribute("data-l10n-args")).count, 3, "Count should match full list length");
+  info("Filter by httpRealm");
+  window.dispatchEvent(new CustomEvent("AboutLoginsFilterLogins", {
+    bubbles: true,
+    detail: "realm",
+  }));
+  is(JSON.parse(countSpan.getAttribute("data-l10n-args")).count, 1, "Count should match result amount");
+  loginListItems = gLoginList.shadowRoot.querySelectorAll(".login-list-item[data-guid]");
+  ok(loginListItems[0].hidden, "user1 should be hidden");
+  ok(loginListItems[1].hidden, "user2 should be hidden");
+  ok(!loginListItems[2].hidden, "http_auth_user should be visible");
+  is(loginListItems[2].querySelector(".username").textContent, "http_auth_user", "Verify the login with a matching httpRealm is visible");
+
+  gLoginList.setLogins([TEST_LOGIN_1, TEST_LOGIN_2]);
+  window.dispatchEvent(new CustomEvent("AboutLoginsFilterLogins", {
+    bubbles: true,
+    detail: "",
+  }));
+  await asyncElementRendered();
 });
 
 add_task(async function test_login_modified() {
@@ -301,9 +338,9 @@ add_task(async function test_sorted_list() {
   dispatchChangeEvent(loginSort);
   let loginListItems = gLoginList.shadowRoot.querySelectorAll(".login-list-item:not([hidden])");
   is(loginListItems.length, 3, "The list should contain the three stored logins");
-  let timeUsed1 = loginListItems[0]._login.timeLastUsed;
-  let timeUsed2 = loginListItems[1]._login.timeLastUsed;
-  let timeUsed3 = loginListItems[2]._login.timeLastUsed;
+  let timeUsed1 = gLoginList._logins[loginListItems[0].dataset.guid].login.timeLastUsed;
+  let timeUsed2 = gLoginList._logins[loginListItems[1].dataset.guid].login.timeLastUsed;
+  let timeUsed3 = gLoginList._logins[loginListItems[2].dataset.guid].login.timeLastUsed;
   is(timeUsed1 > timeUsed2, true, "Logins sorted by timeLastUsed. First: " + timeUsed1 + "; Second: " + timeUsed2);
   is(timeUsed2 > timeUsed3, true, "Logins sorted by timeLastUsed. Second: " + timeUsed2 + "; Third: " + timeUsed3);
 
@@ -311,9 +348,9 @@ add_task(async function test_sorted_list() {
   loginSort.selectedIndex = 0;
   dispatchChangeEvent(loginSort);
   loginListItems = gLoginList.shadowRoot.querySelectorAll(".login-list-item:not([hidden])");
-  let title1 = loginListItems[0]._login.title;
-  let title2 = loginListItems[1]._login.title;
-  let title3 = loginListItems[2]._login.title;
+  let title1 = gLoginList._logins[loginListItems[0].dataset.guid].login.title;
+  let title2 = gLoginList._logins[loginListItems[1].dataset.guid].login.title;
+  let title3 = gLoginList._logins[loginListItems[2].dataset.guid].login.title;
   is(title1.localeCompare(title2), -1, "Logins sorted by title. First: " + title1 + "; Second: " + title2);
   is(title2.localeCompare(title3), -1, "Logins sorted by title. Second: " + title2 + "; Third: " + title3);
 
@@ -321,9 +358,9 @@ add_task(async function test_sorted_list() {
   loginSort.selectedIndex = 2;
   dispatchChangeEvent(loginSort);
   loginListItems = gLoginList.shadowRoot.querySelectorAll(".login-list-item:not([hidden])");
-  let pwChanged1 = loginListItems[0]._login.timePasswordChanged;
-  let pwChanged2 = loginListItems[1]._login.timePasswordChanged;
-  let pwChanged3 = loginListItems[2]._login.timePasswordChanged;
+  let pwChanged1 = gLoginList._logins[loginListItems[0].dataset.guid].login.timePasswordChanged;
+  let pwChanged2 = gLoginList._logins[loginListItems[1].dataset.guid].login.timePasswordChanged;
+  let pwChanged3 = gLoginList._logins[loginListItems[2].dataset.guid].login.timePasswordChanged;
   is(pwChanged1 > pwChanged2, true, "Logins sorted by timePasswordChanged. First: " + pwChanged1 + "; Second: " + pwChanged2);
   is(pwChanged2 > pwChanged3, true, "Logins sorted by timePasswordChanged. Second: " + pwChanged2 + "; Third: " + pwChanged3);
 });

@@ -486,7 +486,7 @@ const startupPhases = {
       path: "ProfD:cert9.db",
       condition: WIN,
       read: 5,
-      stat: 2,
+      stat: 4,
     },
     {
       // bug 1370516 - NSS should be initialized off main thread.
@@ -494,7 +494,7 @@ const startupPhases = {
       condition: WIN,
       ignoreIfUnused: true, // if canonicalize(ProfD) == ProfD, we'll use the previous entry.
       canonicalize: true,
-      stat: 2,
+      stat: 4,
     },
     {
       // bug 1370516 - NSS should be initialized off main thread.
@@ -521,7 +521,7 @@ const startupPhases = {
       path: "ProfD:key4.db",
       condition: WIN,
       read: 8,
-      stat: 2,
+      stat: 4,
     },
     {
       // bug 1370516 - NSS should be initialized off main thread.
@@ -529,7 +529,7 @@ const startupPhases = {
       condition: WIN,
       ignoreIfUnused: true, // if canonicalize(ProfD) == ProfD, we'll use the previous entry.
       canonicalize: true,
-      stat: 2,
+      stat: 4,
     },
     {
       // bug 1370516 - NSS should be initialized off main thread.

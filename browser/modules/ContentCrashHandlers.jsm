@@ -4,12 +4,7 @@
 
 "use strict";
 
-var EXPORTED_SYMBOLS = [
-  "PluginCrashReporter",
-  "SubframeCrashHandler",
-  "TabCrashHandler",
-  "UnsubmittedCrashHandler",
-];
+var EXPORTED_SYMBOLS = ["TabCrashHandler", "UnsubmittedCrashHandler"];
 
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
@@ -81,6 +76,7 @@ var TabCrashHandler = {
   browserMap: new BrowserWeakMap(),
   unseenCrashedChildIDs: [],
   crashedBrowserQueues: new Map(),
+  restartRequiredBrowsers: new WeakSet(),
   testBuildIDMismatch: false,
 
   get prefs() {
@@ -250,9 +246,12 @@ var TabCrashHandler = {
 
     let sentBrowser = false;
     for (let weakBrowser of browserQueue) {
-      let browser = weakBrowser.browser.get();
+      let browser = weakBrowser.get();
       if (browser) {
-        if (weakBrowser.restartRequired || this.testBuildIDMismatch) {
+        if (
+          this.restartRequiredBrowsers.has(browser) ||
+          this.testBuildIDMismatch
+        ) {
           this.sendToRestartRequiredPage(browser);
         } else {
           this.sendToTabCrashedPage(browser);
@@ -285,6 +284,7 @@ var TabCrashHandler = {
     }
 
     let childID = browser.frameLoader.childID;
+
     let browserQueue = this.crashedBrowserQueues.get(childID);
     if (!browserQueue) {
       browserQueue = [];
@@ -296,10 +296,45 @@ var TabCrashHandler = {
     // this queue will be flushed. The weak reference is to avoid
     // leaking browsers in case anything goes wrong during this
     // teardown process.
-    browserQueue.push({
-      browser: Cu.getWeakReference(browser),
-      restartRequired,
+    browserQueue.push(Cu.getWeakReference(browser));
+
+    if (restartRequired) {
+      this.restartRequiredBrowsers.add(browser);
+    }
+
+    // In the event that the content process failed to launch, then
+    // the childID will be 0. In that case, we will never receive
+    // a dumpID nor an ipc:content-shutdown observer notification,
+    // so we should flush the queue for childID 0 immediately.
+    if (childID == 0) {
+      this.flushCrashedBrowserQueue(0);
+    }
+  },
+
+  /**
+   * Called by a tabbrowser when it notices that a background browser
+   * has crashed. This will flip its remoteness to non-remote, and attempt
+   * to revive the crashed tab so that upon selection the tab either shows
+   * an error page, or automatically restores.
+   *
+   * @param browser (<xul:browser>)
+   *        The background browser that just crashed.
+   * @param restartRequired (bool)
+   *        Whether or not a browser restart is required to recover.
+   */
+  onBackgroundBrowserCrash(browser, restartRequired) {
+    if (restartRequired) {
+      this.restartRequiredBrowsers.add(browser);
+    }
+
+    let gBrowser = browser.getTabBrowser();
+    let tab = gBrowser.getTabForBrowser(browser);
+
+    gBrowser.updateBrowserRemoteness(browser, {
+      remoteType: E10SUtils.NOT_REMOTE,
     });
+
+    SessionStore.reviveCrashedTab(tab);
   },
 
   /**
@@ -336,6 +371,13 @@ var TabCrashHandler = {
         this.sendToTabCrashedPage(browser);
         return true;
       }
+    } else if (childID === 0) {
+      if (this.restartRequiredBrowsers.has(browser)) {
+        this.sendToRestartRequiredPage(browser);
+      } else {
+        this.sendToTabCrashedPage(browser);
+      }
+      return true;
     }
 
     return false;
@@ -588,15 +630,20 @@ var TabCrashHandler = {
 
     return this.childMap.get(this.browserMap.get(browser));
   },
-};
 
-var SubframeCrashHandler = {
-  onSubframeCrash(browsingContext) {
-    // A subframe has crashed. We have to inform the parent frame so that it
-    // can show suitable UI.
-    let parentWg = browsingContext.parent.currentWindowGlobal;
-    let actor = parentWg.getActor("SubframeCrash");
-    actor.sendAsyncMessage("SubframeCrashed", { id: browsingContext.id });
+  /**
+   * This is intended for TESTING ONLY. It returns the amount of
+   * content processes that have crashed such that we're still waiting
+   * for dump IDs for their crash reports.
+   *
+   * For our automated tests, accessing the crashed content process
+   * count helps us test the behaviour when content processes crash due
+   * to launch failure, since in those cases we should not increase the
+   * crashed browser queue (since we never receive dump IDs for launch
+   * failures).
+   */
+  get queuedCrashedBrowsers() {
+    return this.crashedBrowserQueues.size;
   },
 };
 
@@ -980,156 +1027,5 @@ var UnsubmittedCrashHandler = {
         },
       }).catch(Cu.reportError);
     }
-  },
-};
-
-var PluginCrashReporter = {
-  /**
-   * Makes the PluginCrashReporter ready to hear about and
-   * submit crash reports.
-   */
-  init() {
-    if (this.initialized) {
-      return;
-    }
-
-    this.initialized = true;
-    this.crashReports = new Map();
-
-    Services.obs.addObserver(this, "plugin-crashed");
-    Services.obs.addObserver(this, "gmp-plugin-crash");
-    Services.obs.addObserver(this, "profile-after-change");
-  },
-
-  uninit() {
-    Services.obs.removeObserver(this, "plugin-crashed");
-    Services.obs.removeObserver(this, "gmp-plugin-crash");
-    Services.obs.removeObserver(this, "profile-after-change");
-    this.initialized = false;
-  },
-
-  observe(subject, topic, data) {
-    switch (topic) {
-      case "plugin-crashed": {
-        let propertyBag = subject;
-        if (
-          !(propertyBag instanceof Ci.nsIPropertyBag2) ||
-          !(propertyBag instanceof Ci.nsIWritablePropertyBag2) ||
-          !propertyBag.hasKey("runID") ||
-          !propertyBag.hasKey("pluginDumpID")
-        ) {
-          Cu.reportError(
-            "PluginCrashReporter can not read plugin information."
-          );
-          return;
-        }
-
-        let runID = propertyBag.getPropertyAsUint32("runID");
-        let pluginDumpID = propertyBag.getPropertyAsAString("pluginDumpID");
-        let browserDumpID = propertyBag.getPropertyAsAString("browserDumpID");
-        if (pluginDumpID) {
-          this.crashReports.set(runID, { pluginDumpID, browserDumpID });
-        }
-        break;
-      }
-      case "gmp-plugin-crash": {
-        let propertyBag = subject;
-        if (
-          !(propertyBag instanceof Ci.nsIWritablePropertyBag2) ||
-          !propertyBag.hasKey("pluginID") ||
-          !propertyBag.hasKey("pluginDumpID") ||
-          !propertyBag.hasKey("pluginName")
-        ) {
-          Cu.reportError(
-            "PluginCrashReporter can not read plugin information."
-          );
-          return;
-        }
-
-        let pluginID = propertyBag.getPropertyAsUint32("pluginID");
-        let pluginDumpID = propertyBag.getPropertyAsAString("pluginDumpID");
-        if (pluginDumpID) {
-          this.crashReports.set(pluginID, { pluginDumpID });
-        }
-
-        // Only the parent process gets the gmp-plugin-crash observer
-        // notification, so we need to inform any content processes that
-        // the GMP has crashed.
-        if (Services.ppmm) {
-          let pluginName = propertyBag.getPropertyAsAString("pluginName");
-          Services.ppmm.broadcastAsyncMessage("gmp-plugin-crash", {
-            pluginName,
-            pluginID,
-          });
-        }
-        break;
-      }
-      case "profile-after-change":
-        this.uninit();
-        break;
-    }
-  },
-
-  /**
-   * Submit a crash report for a crashed NPAPI plugin.
-   *
-   * @param runID
-   *        The runID of the plugin that crashed. A run ID is a unique
-   *        identifier for a particular run of a plugin process - and is
-   *        analogous to a process ID (though it is managed by Gecko instead
-   *        of the operating system).
-   * @param keyVals
-   *        An object whose key-value pairs will be merged
-   *        with the ".extra" file submitted with the report.
-   *        The properties of htis object will override properties
-   *        of the same name in the .extra file.
-   */
-  submitCrashReport(runID, keyVals) {
-    if (!this.crashReports.has(runID)) {
-      Cu.reportError(
-        `Could not find plugin dump IDs for run ID ${runID}.` +
-          `It is possible that a report was already submitted.`
-      );
-      return;
-    }
-
-    keyVals = keyVals || {};
-    let { pluginDumpID, browserDumpID } = this.crashReports.get(runID);
-
-    let submissionPromise = CrashSubmit.submit(pluginDumpID, {
-      recordSubmission: true,
-      extraExtraKeyVals: keyVals,
-    });
-
-    if (browserDumpID) {
-      CrashSubmit.submit(browserDumpID).catch(Cu.reportError);
-    }
-
-    this.broadcastState(runID, "submitting");
-
-    submissionPromise.then(
-      () => {
-        this.broadcastState(runID, "success");
-      },
-      () => {
-        this.broadcastState(runID, "failed");
-      }
-    );
-
-    this.crashReports.delete(runID);
-  },
-
-  broadcastState(runID, state) {
-    for (let window of Services.wm.getEnumerator("navigator:browser")) {
-      let mm = window.messageManager;
-      mm.broadcastAsyncMessage("BrowserPlugins:CrashReportSubmitted", {
-        runID,
-        state,
-      });
-    }
-  },
-
-  hasCrashReport(runID) {
-    return this.crashReports.has(runID);
   },
 };

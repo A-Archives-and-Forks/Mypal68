@@ -37,11 +37,11 @@ this.urlbar = class extends ExtensionAPI {
           };
         }).api(),
 
-        openViewOnFocus: getSettingsAPI(
-          context.extension.id, "openViewOnFocus",
-          () => {
-            return UrlbarPrefs.get("openViewOnFocus");
-          }),
+        openViewOnFocus: getSettingsAPI({
+          context,
+          name: "openViewOnFocus",
+          callback: () => UrlbarPrefs.get("openViewOnFocus"),
+        }),
       },
     };
   }

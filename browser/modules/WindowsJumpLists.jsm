@@ -199,7 +199,7 @@ var WinTaskbarJumpList = {
 
   _pendingStatements: {},
   _hasPendingStatements: function WTBJL__hasPendingStatements() {
-    return Object.keys(this._pendingStatements).length > 0;
+    return !!Object.keys(this._pendingStatements).length;
   },
 
   async _buildList() {
@@ -246,7 +246,7 @@ var WinTaskbarJumpList = {
   async _startBuild() {
     this._builder.abortListBuild();
     let URIsToRemove = await this._builder.initListBuild();
-    if (URIsToRemove.length > 0) {
+    if (URIsToRemove.length) {
       // Prior to building, delete removed items from history.
       this._clearHistory(URIsToRemove);
     }
@@ -283,7 +283,7 @@ var WinTaskbarJumpList = {
       items.appendElement(item);
     }, this);
 
-    if (items.length > 0) {
+    if (items.length) {
       this._builder.addListToBuild(
         this._builder.JUMPLIST_CATEGORY_TASKS,
         items
@@ -292,7 +292,7 @@ var WinTaskbarJumpList = {
   },
 
   _buildCustom: function WTBJL__buildCustom(title, items) {
-    if (items.length > 0) {
+    if (items.length) {
       this._builder.addListToBuild(
         this._builder.JUMPLIST_CATEGORY_CUSTOMLIST,
         items,
@@ -408,7 +408,7 @@ var WinTaskbarJumpList = {
     ].createInstance(Ci.nsILocalHandlerApp);
     handlerApp.executable = file;
     // handlers default to the leaf name if a name is not specified
-    if (name && name.length != 0) {
+    if (name && name.length) {
       handlerApp.name = name;
     }
     handlerApp.detailedDescription = description;
@@ -480,7 +480,7 @@ var WinTaskbarJumpList = {
       })
       .filter(uri => !!uri);
 
-    if (URIsToRemove.length > 0) {
+    if (URIsToRemove.length) {
       PlacesUtils.history.remove(URIsToRemove).catch(Cu.reportError);
     }
   },

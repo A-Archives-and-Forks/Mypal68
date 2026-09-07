@@ -1,8 +1,11 @@
 "use strict";
 
-const {AddonTestUtils} = ChromeUtils.import("resource://testing-common/AddonTestUtils.jsm");
+const { AddonTestUtils } = ChromeUtils.import(
+  "resource://testing-common/AddonTestUtils.jsm"
+);
 
 XPCOMUtils.defineLazyModuleGetters(this, {
+  ExtensionParent: "resource://gre/modules/ExtensionParent.jsm",
   UrlbarController: "resource:///modules/UrlbarController.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
   UrlbarProvidersManager: "resource:///modules/UrlbarProvidersManager.jsm",
@@ -11,7 +14,23 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 
 AddonTestUtils.init(this);
 AddonTestUtils.overrideCertDB();
-AddonTestUtils.createAppInfo("xpcshell@tests.mozilla.org", "XPCShell", "1", "42");
+AddonTestUtils.createAppInfo(
+  "xpcshell@tests.mozilla.org",
+  "XPCShell",
+  "1",
+  "42"
+);
+
+function promiseUninstallCompleted(extensionId) {
+  return new Promise(resolve => {
+    // eslint-disable-next-line mozilla/balanced-listeners
+    ExtensionParent.apiManager.on("uninstall-complete", (type, { id }) => {
+      if (id === extensionId) {
+        executeSoon(resolve);
+      }
+    });
+  });
+}
 
 add_task(async function startup() {
   await AddonTestUtils.promiseStartupManager();
@@ -191,11 +210,15 @@ add_task(async function test_registerProvider() {
                    "Should return to the default providers");
 });
 
+// Tests the openViewOnFocus property.
 add_task(async function test_setOpenViewOnFocus() {
   let getPrefValue = () => UrlbarPrefs.get("openViewOnFocus");
 
-  Assert.equal(getPrefValue(), false,
-               "Open-view-on-focus mode should be disabled by default");
+  Assert.equal(
+    getPrefValue(),
+    false,
+    "Open-view-on-focus mode should be disabled by default"
+  );
 
   let ext = ExtensionTestUtils.loadExtension({
     manifest: {
@@ -204,17 +227,28 @@ add_task(async function test_setOpenViewOnFocus() {
     isPrivileged: true,
     incognitoOverride: "spanning",
     useAddonManager: "temporary",
-    background() {
-      browser.urlbar.openViewOnFocus.set({value: true});
+    async background() {
+      await browser.urlbar.openViewOnFocus.set({ value: true });
+      browser.test.sendMessage("ready");
     },
   });
   await ext.startup();
+  await ext.awaitMessage("ready");
 
-  Assert.equal(getPrefValue(), true,
-               "Successfully enabled the open-view-on-focus mode");
+  Assert.equal(
+    getPrefValue(),
+    true,
+    "Successfully enabled the open-view-on-focus mode"
+  );
 
+  let completed = promiseUninstallCompleted(ext.id);
   await ext.unload();
+  await completed;
 
-  Assert.equal(getPrefValue(), false,
-               "Open-view-on-focus mode should be reset after unloading the add-on");
+  Assert.equal(
+    getPrefValue(),
+    false,
+    "Open-view-on-focus mode should be reset after unloading the add-on"
+  );
 });
+

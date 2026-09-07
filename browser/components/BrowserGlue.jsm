@@ -28,14 +28,224 @@ ChromeUtils.defineModuleGetter(
 
 const PREF_PDFJS_ISDEFAULT_CACHE_STATE = "pdfjs.enabledCache.state";
 
+/**
+ * Fission-compatible JSWindowActor implementations.
+ * Detailed documentation of these is in dom/docs/Fission.rst,
+ * available at https://firefox-source-docs.mozilla.org/dom/Fission.html#jswindowactor
+ */
 let ACTORS = {
-  SubframeCrash: {
+  BrowserTab: {
     parent: {
-      moduleURI: "resource:///actors/SubframeCrashParent.jsm",
+      moduleURI: "resource:///actors/BrowserTabParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/BrowserTabChild.jsm",
+
+      events: {
+        DOMWindowCreated: {},
+        MozAfterPaint: {},
+        "MozDOMPointerLock:Entered": {},
+        "MozDOMPointerLock:Exited": {},
+      },
+    },
+  },
+
+  ClickHandler: {
+    parent: {
+      moduleURI: "resource:///actors/ClickHandlerParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/ClickHandlerChild.jsm",
+      events: {
+        click: { capture: true, mozSystemGroup: true },
+        auxclick: { capture: true, mozSystemGroup: true },
+      },
+    },
+
+    allFrames: true,
+  },
+
+  // Collects description and icon information from meta tags.
+  ContentMeta: {
+    parent: {
+      moduleURI: "resource:///actors/ContentMetaParent.jsm",
     },
 
     child: {
-      moduleURI: "resource:///actors/SubframeCrashChild.jsm",
+      moduleURI: "resource:///actors/ContentMetaChild.jsm",
+      events: {
+        DOMMetaAdded: {},
+      },
+    },
+  },
+
+  ContextMenu: {
+    parent: {
+      moduleURI: "resource:///actors/ContextMenuParent.jsm",
+    },
+
+    child: {
+      moduleURI: "resource:///actors/ContextMenuChild.jsm",
+      events: {
+        "contextmenu": { mozSystemGroup: true },
+      },
+    },
+
+    allFrames: true,
+  },
+
+  DOMFullscreen: {
+    parent: {
+      moduleURI: "resource:///actors/DOMFullscreenParent.jsm",
+    },
+
+    child: {
+      moduleURI: "resource:///actors/DOMFullscreenChild.jsm",
+      group: "browsers",
+      events: {
+        "MozDOMFullscreen:Request": {},
+        "MozDOMFullscreen:Entered": {},
+        "MozDOMFullscreen:NewOrigin": {},
+        "MozDOMFullscreen:Exit": {},
+        "MozDOMFullscreen:Exited": {},
+      },
+    },
+
+    allFrames: true,
+  },
+
+  FormValidation: {
+    parent: {
+      moduleURI: "resource:///actors/FormValidationParent.jsm",
+    },
+
+    child: {
+      moduleURI: "resource:///actors/FormValidationChild.jsm",
+      events: {
+        MozInvalidForm: {},
+      },
+    },
+
+    allFrames: true,
+  },
+
+  LightweightTheme: {
+    child: {
+      moduleURI: "resource:///actors/LightweightThemeChild.jsm",
+      events: {
+        pageshow: { mozSystemGroup: true },
+      },
+    },
+    includeChrome: true,
+    allFrames: true,
+    matches: [
+      "about:home",
+      "about:newtab",
+      "about:welcome",
+      "chrome://browser/content/syncedtabs/sidebar.xhtml",
+      "chrome://browser/content/places/historySidebar.xul",
+      "chrome://browser/content/places/bookmarksSidebar.xul",
+    ],
+  },
+
+  LinkHandler: {
+    parent: {
+      moduleURI: "resource:///actors/LinkHandlerParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/LinkHandlerChild.jsm",
+      events: {
+        DOMHeadElementParsed: {},
+        DOMLinkAdded: {},
+        DOMLinkChanged: {},
+        pageshow: {},
+        pagehide: {},
+      },
+    },
+  },
+
+  PageStyle: {
+    parent: {
+      moduleURI: "resource:///actors/PageStyleParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/PageStyleChild.jsm",
+      events: {
+        pageshow: {},
+      },
+    },
+
+    // Only matching web pages, as opposed to internal about:, chrome: or
+    // resource: pages. See https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Match_patterns
+    matches: ["*://*/*"],
+    allFrames: true,
+  },
+
+  PageInfo: {
+    child: {
+      moduleURI: "resource:///actors/PageInfoChild.jsm",
+    },
+
+    allFrames: true,
+  },
+
+  Plugin: {
+    parent: {
+      moduleURI: "resource:///actors/PluginParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/PluginChild.jsm",
+      events: {
+        PluginBindingAttached: { capture: true, wantUntrusted: true },
+        PluginCrashed: { capture: true },
+        PluginOutdated: { capture: true },
+        PluginInstantiated: { capture: true },
+        PluginRemoved: { capture: true },
+        HiddenPlugin: { capture: true },
+      },
+
+      observers: ["decoder-doctor-notification"],
+    },
+
+    allFrames: true,
+  },
+
+  Prompt: {
+    parent: {
+      moduleURI: "resource:///actors/PromptParent.jsm",
+    },
+
+    allFrames: true,
+  },
+
+  RFPHelper: {
+    parent: {
+      moduleURI: "resource:///actors/RFPHelperParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/RFPHelperChild.jsm",
+      events: {
+        resize: {},
+      },
+    },
+
+    allFrames: true,
+  },
+
+  SwitchDocumentDirection: {
+    child: {
+      moduleURI: "resource:///actors/SwitchDocumentDirectionChild.jsm",
+    },
+
+    allFrames: true,
+  },
+
+  WebRTC: {
+    parent: {
+      moduleURI: "resource:///actors/WebRTCParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/WebRTCChild.jsm",
     },
 
     allFrames: true,
@@ -63,6 +273,7 @@ let LEGACY_ACTORS = {
         "AboutLogins:LoginModified",
         "AboutLogins:LoginRemoved",
         "AboutLogins:MasterPasswordResponse",
+        "AboutLogins:ShowLoginItemError",
       ],
     },
   },
@@ -81,49 +292,6 @@ let LEGACY_ACTORS = {
     },
   },
 
-  BrowserTab: {
-    child: {
-      module: "resource:///actors/BrowserTabChild.jsm",
-      group: "browsers",
-
-      events: {
-        DOMWindowCreated: { once: true },
-        MozAfterPaint: { once: true },
-        "MozDOMPointerLock:Entered": {},
-        "MozDOMPointerLock:Exited": {},
-      },
-
-      messages: [
-        "AllowScriptsToClose",
-        "Browser:AppTab",
-        "Browser:HasSiblings",
-        "Browser:Reload",
-        "MixedContent:ReenableProtection",
-        "SwitchDocumentDirection",
-        "UpdateCharacterSet",
-      ],
-    },
-  },
-
-  ClickHandler: {
-    child: {
-      module: "resource:///actors/ClickHandlerChild.jsm",
-      events: {
-        click: { capture: true, mozSystemGroup: true },
-        auxclick: { capture: true, mozSystemGroup: true },
-      },
-    },
-  },
-
-  ContextMenu: {
-    child: {
-      module: "resource:///actors/ContextMenuChild.jsm",
-      events: {
-        contextmenu: { mozSystemGroup: true },
-      },
-    },
-  },
-
   ContentSearch: {
     child: {
       module: "resource:///actors/ContentSearchChild.jsm",
@@ -139,53 +307,6 @@ let LEGACY_ACTORS = {
         ContentSearchClient: { capture: true, wantUntrusted: true },
       },
       messages: ["ContentSearch"],
-    },
-  },
-
-  DOMFullscreen: {
-    child: {
-      module: "resource:///actors/DOMFullscreenChild.jsm",
-      group: "browsers",
-      events: {
-        "MozDOMFullscreen:Request": {},
-        "MozDOMFullscreen:Entered": {},
-        "MozDOMFullscreen:NewOrigin": {},
-        "MozDOMFullscreen:Exit": {},
-        "MozDOMFullscreen:Exited": {},
-      },
-      messages: ["DOMFullscreen:Entered", "DOMFullscreen:CleanUp"],
-    },
-  },
-
-  FormValidation: {
-    child: {
-      module: "resource:///actors/FormValidationChild.jsm",
-      events: {
-        MozInvalidForm: {},
-      },
-    },
-  },
-
-  LightweightTheme: {
-    child: {
-      module: "resource:///actors/LightweightThemeChild.jsm",
-      matches: ["about:home", "about:newtab", "about:welcome"],
-      events: {
-        pageshow: { mozSystemGroup: true },
-      },
-    },
-  },
-
-  LinkHandler: {
-    child: {
-      module: "resource:///actors/LinkHandlerChild.jsm",
-      events: {
-        DOMHeadElementParsed: {},
-        DOMLinkAdded: {},
-        DOMLinkChanged: {},
-        pageshow: {},
-        pagehide: {},
-      },
     },
   },
 
@@ -214,79 +335,11 @@ let LEGACY_ACTORS = {
     },
   },
 
-  PageInfo: {
-    child: {
-      module: "resource:///actors/PageInfoChild.jsm",
-      messages: ["PageInfo:getData"],
-    },
-  },
-
-  PageStyle: {
-    child: {
-      module: "resource:///actors/PageStyleChild.jsm",
-      group: "browsers",
-      events: {
-        pageshow: {},
-      },
-      messages: ["PageStyle:Switch", "PageStyle:Disable"],
-      // Only matching web pages, as opposed to internal about:, chrome: or
-      // resource: pages. See https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Match_patterns
-      matches: ["*://*/*"],
-    },
-  },
-
-  Plugin: {
-    child: {
-      module: "resource:///actors/PluginChild.jsm",
-      events: {
-        PluginBindingAttached: { capture: true, wantUntrusted: true },
-        PluginCrashed: { capture: true },
-        PluginOutdated: { capture: true },
-        PluginInstantiated: { capture: true },
-        PluginRemoved: { capture: true },
-        HiddenPlugin: { capture: true },
-      },
-
-      messages: [
-        "BrowserPlugins:ActivatePlugins",
-        "BrowserPlugins:ContextMenuCommand",
-        "BrowserPlugins:NPAPIPluginProcessCrashed",
-        "BrowserPlugins:CrashReportSubmitted",
-        "BrowserPlugins:Test:ClearCrashData",
-      ],
-
-      observers: ["decoder-doctor-notification"],
-    },
-  },
-
-  RFPHelper: {
-    child: {
-      module: "resource:///actors/RFPHelperChild.jsm",
-      group: "browsers",
-      events: {
-        resize: {},
-      },
-    },
-  },
-
   URIFixup: {
     child: {
       module: "resource:///actors/URIFixupChild.jsm",
       group: "browsers",
       observers: ["keyword-uri-fixup"],
-    },
-  },
-
-  WebRTC: {
-    child: {
-      module: "resource:///actors/WebRTCChild.jsm",
-      messages: [
-        "rtcpeer:Allow",
-        "rtcpeer:Deny",
-        "webrtc:Allow",
-        "webrtc:Deny",
-        "webrtc:StopSharing",
-      ],
     },
   },
 };
@@ -391,7 +444,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   AddonManager: "resource://gre/modules/AddonManager.jsm",
   AppMenuNotifications: "resource://gre/modules/AppMenuNotifications.jsm",
   AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
-  AutoCompletePopup: "resource://gre/modules/AutoCompletePopup.jsm",
   Blocklist: "resource://gre/modules/Blocklist.jsm",
   BookmarkHTMLUtils: "resource://gre/modules/BookmarkHTMLUtils.jsm",
   BookmarkJSONUtils: "resource://gre/modules/BookmarkJSONUtils.jsm",
@@ -399,7 +451,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   ContextualIdentityService:
     "resource://gre/modules/ContextualIdentityService.jsm",
-  DateTimePickerParent: "resource://gre/modules/DateTimePickerParent.jsm",
   ExtensionsUI: "resource:///modules/ExtensionsUI.jsm",
   FxAccounts: "resource://gre/modules/FxAccounts.jsm",
   HomePage: "resource:///modules/HomePage.jsm",
@@ -433,12 +484,8 @@ XPCOMUtils.defineLazyModuleGetters(this, {
 XPCOMUtils.defineLazyModuleGetters(this, {
   AboutLoginsParent: "resource:///modules/AboutLoginsParent.jsm",
   AsyncPrefs: "resource://gre/modules/AsyncPrefs.jsm",
-  ContentClick: "resource:///modules/ContentClick.jsm",
-  FormValidationHandler: "resource:///modules/FormValidationHandler.jsm",
-  LoginManagerParent: "resource://gre/modules/LoginManagerParent.jsm",
-  PictureInPicture: "resource://gre/modules/PictureInPicture.jsm",
+  PluginManager: "resource:///actors/PluginParent.jsm",
   ReaderParent: "resource:///modules/ReaderParent.jsm",
-  RemotePrompt: "resource:///modules/RemotePrompt.jsm",
 });
 
 /**
@@ -456,7 +503,6 @@ let initializedModules = {};
   ],
   ["ContentSearch", "resource:///modules/ContentSearch.jsm", "init"],
   ["UpdateListener", "resource://gre/modules/UpdateListener.jsm", "init"],
-  ["webrtcUI", "resource:///modules/webrtcUI.jsm", "init"],
 ].forEach(([name, resource, init]) => {
   XPCOMUtils.defineLazyGetter(this, name, () => {
     ChromeUtils.import(resource, initializedModules);
@@ -467,7 +513,6 @@ let initializedModules = {};
 
 if (AppConstants.MOZ_CRASHREPORTER) {
   XPCOMUtils.defineLazyModuleGetters(this, {
-    PluginCrashReporter: "resource:///modules/ContentCrashHandlers.jsm",
     UnsubmittedCrashHandler: "resource:///modules/ContentCrashHandlers.jsm",
   });
 }
@@ -498,6 +543,8 @@ const listeners = {
     "update-downloaded": ["UpdateListener"],
     "update-available": ["UpdateListener"],
     "update-error": ["UpdateListener"],
+    "gmp-plugin-crash": ["PluginManager"],
+    "plugin-crashed": ["PluginManager"],
   },
 
   ppmm: {
@@ -511,9 +558,6 @@ const listeners = {
     "AsyncPrefs:SetPref": ["AsyncPrefs"],
     "AsyncPrefs:ResetPref": ["AsyncPrefs"],
     // PLEASE KEEP THIS LIST IN SYNC WITH THE LISTENERS ADDED IN AsyncPrefs.init
-
-    "webrtc:UpdateGlobalIndicators": ["webrtcUI"],
-    "webrtc:UpdatingIndicators": ["webrtcUI"],
   },
 
   mm: {
@@ -525,34 +569,9 @@ const listeners = {
     "AboutLogins:OpenSite": ["AboutLoginsParent"],
     "AboutLogins:Subscribe": ["AboutLoginsParent"],
     "AboutLogins:UpdateLogin": ["AboutLoginsParent"],
-    "Content:Click": ["ContentClick"],
     ContentSearch: ["ContentSearch"],
-    "FormValidation:ShowPopup": ["FormValidationHandler"],
-    "FormValidation:HidePopup": ["FormValidationHandler"],
-    "PictureInPicture:Request": ["PictureInPicture"],
-    "PictureInPicture:Close": ["PictureInPicture"],
-    "PictureInPicture:Playing": ["PictureInPicture"],
-    "PictureInPicture:Paused": ["PictureInPicture"],
-    "PictureInPicture:OpenToggleContextMenu": ["PictureInPicture"],
-    "Prompt:Open": ["RemotePrompt"],
     "Reader:FaviconRequest": ["ReaderParent"],
     "Reader:UpdateReaderButton": ["ReaderParent"],
-    // PLEASE KEEP THIS LIST IN SYNC WITH THE MOBILE LISTENERS IN BrowserCLH.js
-    "PasswordManager:findLogins": ["LoginManagerParent"],
-    "PasswordManager:findRecipes": ["LoginManagerParent"],
-    "PasswordManager:onFormSubmit": ["LoginManagerParent"],
-    "PasswordManager:onGeneratedPasswordFilledOrEdited": ["LoginManagerParent"],
-    "PasswordManager:autoCompleteLogins": ["LoginManagerParent"],
-    "PasswordManager:removeLogin": ["LoginManagerParent"],
-    "PasswordManager:insecureLoginFormPresent": ["LoginManagerParent"],
-    "PasswordManager:OpenPreferences": ["LoginManagerParent"],
-    // PLEASE KEEP THIS LIST IN SYNC WITH THE MOBILE LISTENERS IN BrowserCLH.js
-    "rtcpeer:CancelRequest": ["webrtcUI"],
-    "rtcpeer:Request": ["webrtcUI"],
-    "webrtc:CancelRequest": ["webrtcUI"],
-    "webrtc:Request": ["webrtcUI"],
-    "webrtc:StopRecording": ["webrtcUI"],
-    "webrtc:UpdateBrowserIndicators": ["webrtcUI"],
   },
 
   observe(subject, topic, data) {
@@ -1315,9 +1334,6 @@ BrowserGlue.prototype = {
   // the first browser window has finished initializing
   _onFirstWindowLoaded: function BG__onFirstWindowLoaded(aWindow) {
     TabCrashHandler.init();
-    if (AppConstants.MOZ_CRASHREPORTER) {
-      PluginCrashReporter.init();
-    }
 
     ProcessHangMonitor.init();
 
@@ -1385,8 +1401,6 @@ BrowserGlue.prototype = {
 
     this._checkForOldBuildUpdates();
 
-    AutoCompletePopup.init();
-    DateTimePickerParent.init();
     // Check if Sync is configured
     if (Services.prefs.prefHasUserValue("services.sync.username")) {
       WeaveService.init();
@@ -1450,8 +1464,6 @@ BrowserGlue.prototype = {
     PageThumbs.uninit();
     NewTabUtils.uninit();
     AboutPrivateBrowsingHandler.uninit();
-    AutoCompletePopup.uninit();
-    DateTimePickerParent.uninit();
 
     RFPHelper.uninit();
   },

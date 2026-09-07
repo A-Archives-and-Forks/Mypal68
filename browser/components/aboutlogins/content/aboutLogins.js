@@ -2,28 +2,22 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let gElements = {};
+// The init code isn't wrapped in a DOMContentLoaded/load event listener so the
+// page works properly when restored from session restore.
+const gElements = {
+  loginList: document.querySelector("login-list"),
+  loginItem: document.querySelector("login-item"),
+  loginFilter: document.querySelector("login-filter"),
+};
 
-document.addEventListener(
-  "DOMContentLoaded",
-  () => {
-    gElements.loginList = document.querySelector("login-list");
-    gElements.loginItem = document.querySelector("login-item");
-    gElements.loginFilter = document.querySelector("login-filter");
+let { searchParams } = new URL(document.location);
+if (searchParams.get("filter")) {
+  gElements.loginFilter.value = searchParams.get("filter");
+}
 
-    let { searchParams } = new URL(document.location);
-    if (searchParams.get("filter")) {
-      gElements.loginFilter.value = searchParams.get("filter");
-    }
+document.dispatchEvent(new CustomEvent("AboutLoginsInit", { bubbles: true }));
 
-    document.dispatchEvent(
-      new CustomEvent("AboutLoginsInit", { bubbles: true })
-    );
-
-    gElements.loginFilter.focus();
-  },
-  { once: true }
-);
+gElements.loginFilter.focus();
 
 window.addEventListener("AboutLoginsChromeToContent", event => {
   switch (event.detail.messageType) {
@@ -44,6 +38,10 @@ window.addEventListener("AboutLoginsChromeToContent", event => {
     case "LoginRemoved": {
       gElements.loginList.loginRemoved(event.detail.value);
       gElements.loginItem.loginRemoved(event.detail.value);
+      break;
+    }
+    case "ShowLoginItemError": {
+      gElements.loginItem.showLoginItemError(event.detail.value);
       break;
     }
   }

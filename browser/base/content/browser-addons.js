@@ -273,12 +273,6 @@ var gXPInstallObserver = {
         install.install();
       }
       installInfo = null;
-
-      Services.telemetry
-        .getHistogramById("SECURITY_UI")
-        .add(
-          Ci.nsISecurityUITelemetry.WARNING_CONFIRM_ADDON_INSTALL_CLICK_THROUGH
-        );
     };
 
     let cancelInstallation = () => {
@@ -418,10 +412,6 @@ var gXPInstallObserver = {
     );
 
     removeNotificationOnEnd(popup, installInfo.installs);
-
-    Services.telemetry
-      .getHistogramById("SECURITY_UI")
-      .add(Ci.nsISecurityUITelemetry.WARNING_CONFIRM_ADDON_INSTALL);
   },
 
   // IDs of addon install related notifications
@@ -438,12 +428,11 @@ var gXPInstallObserver = {
 
   // Remove all opened addon installation notifications
   removeAllNotifications(browser) {
-    this.NOTIFICATION_IDS.forEach(id => {
-      let notification = PopupNotifications.getNotification(id, browser);
-      if (notification) {
-        PopupNotifications.remove(notification);
-      }
-    });
+    let notifications = this.NOTIFICATION_IDS.map(id =>
+      PopupNotifications.getNotification(id, browser)
+    ).filter(notification => notification != null);
+
+    PopupNotifications.remove(notifications, true);
   },
 
   observe(aSubject, aTopic, aData) {
@@ -536,10 +525,6 @@ var gXPInstallObserver = {
         options.removeOnDismissal = true;
         options.persistent = false;
 
-        let secHistogram = Services.telemetry.getHistogramById("SECURITY_UI");
-        secHistogram.add(
-          Ci.nsISecurityUITelemetry.WARNING_ADDON_ASKING_PREVENTED
-        );
         let popup = PopupNotifications.show(
           browser,
           notificationID,
@@ -603,17 +588,12 @@ var gXPInstallObserver = {
           );
         };
 
-        let secHistogram = Services.telemetry.getHistogramById("SECURITY_UI");
         action = {
           label: gNavigatorBundle.getString("xpinstallPromptMessage.install"),
           accessKey: gNavigatorBundle.getString(
             "xpinstallPromptMessage.install.accesskey"
           ),
-          callback() {
-            secHistogram.add(
-              Ci.nsISecurityUITelemetry
-                .WARNING_ADDON_ASKING_PREVENTED_CLICK_THROUGH
-            );
+          callback: () => {
             installInfo.install();
           },
         };
@@ -651,9 +631,6 @@ var gXPInstallObserver = {
           },
         };
 
-        secHistogram.add(
-          Ci.nsISecurityUITelemetry.WARNING_ADDON_ASKING_PREVENTED
-        );
         let popup = PopupNotifications.show(
           browser,
           notificationID,

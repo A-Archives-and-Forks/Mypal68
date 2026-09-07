@@ -35,6 +35,9 @@ with Files("test/historySwipeAnimation/**"):
 with Files("test/keyboard/**"):
     BUG_COMPONENT = ("Firefox", "Keyboard Navigation")
 
+with Files("test/outOfProcess/**"):
+    BUG_COMPONENT = ("Firefox", "General")
+
 with Files("test/pageActions/**"):
     BUG_COMPONENT = ("Firefox", "Toolbars and Customization")
 
@@ -130,9 +133,6 @@ with Files("browser-pageActions.js"):
 
 with Files("browser-places.js"):
     BUG_COMPONENT = ("Firefox", "Bookmarks & History")
-
-with Files("browser-plugins.js"):
-    BUG_COMPONENT = ("Core", "Plug-ins")
 
 with Files("browser-sync.js"):
     BUG_COMPONENT = ("Firefox", "Sync")

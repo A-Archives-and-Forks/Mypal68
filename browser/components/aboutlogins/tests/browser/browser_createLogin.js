@@ -13,6 +13,12 @@ add_task(async function setup() {
 });
 
 add_task(async function test_create_login() {
+  let browser = gBrowser.selectedBrowser;
+  await ContentTask.spawn(browser, null, async () => {
+    let loginList = Cu.waiveXrays(content.document.querySelector("login-list"));
+    ok(!loginList._selectedGuid, "should not be a selected guid by default");
+  });
+
   let testCases = [
     ["ftp://ftp.example.com/", "ftp://ftp.example.com"],
     ["https://example.com/foo", "https://example.com"],
@@ -32,7 +38,6 @@ add_task(async function test_create_login() {
       (_, data) => data == "addLogin"
     );
 
-    let browser = gBrowser.selectedBrowser;
     await ContentTask.spawn(browser, originTuple, async aOriginTuple => {
       let createButton = content.document
         .querySelector("login-list")
@@ -80,40 +85,40 @@ add_task(async function test_create_login() {
         let loginList = Cu.waiveXrays(
           content.document.querySelector("login-list")
         );
-        let loginFound = await ContentTaskUtils.waitForCondition(() => {
-          return loginList._loginGuidsSortedOrder.length == aExpectedCount;
+        let loginGuid = await ContentTaskUtils.waitForCondition(() => {
+          return loginList._loginGuidsSortedOrder.find(
+            guid => loginList._logins[guid].login.origin == aOriginTuple[1]
+          );
         }, "Waiting for login to be displayed");
-        ok(loginFound, "Expected number of logins found in login-list");
+        ok(loginGuid, "Expected login found in login-list");
 
-        let loginListItem = [
-          ...loginList.shadowRoot.querySelectorAll(".login-list-item"),
-        ].find(l => l._login && l._login.origin == aOriginTuple[1]);
+        let loginItem = Cu.waiveXrays(
+          content.document.querySelector("login-item")
+        );
+        is(loginItem._login.guid, loginGuid, "login-item should match");
+
+        let { login, listItem } = loginList._logins[loginGuid];
         ok(
-          !!loginListItem,
+          listItem.classList.contains("selected"),
+          "list item should be selected"
+        );
+        ok(
+          !!listItem,
           `Stored login should only include the origin of the URL provided during creation (${
             aOriginTuple[1]
           })`
         );
         is(
-          loginListItem._login.username,
+          login.username,
           "testuser1",
           "Stored login should have username provided during creation"
         );
         is(
-          loginListItem._login.password,
+          login.password,
           "testpass1",
           "Stored login should have password provided during creation"
         );
-        loginListItem.click();
 
-        let loginItem = Cu.waiveXrays(
-          content.document.querySelector("login-item")
-        );
-        is(
-          loginItem._login.guid,
-          loginListItem._login.guid,
-          "Login should be selected"
-        );
         let editButton = loginItem.shadowRoot.querySelector(".edit-button");
         editButton.click();
 
@@ -160,4 +165,127 @@ add_task(async function test_create_login() {
       );
     });
   }
+});
+
+add_task(async function test_cancel_create_login() {
+  let browser = gBrowser.selectedBrowser;
+  await ContentTask.spawn(browser, null, async () => {
+    let loginList = Cu.waiveXrays(content.document.querySelector("login-list"));
+    ok(
+      loginList._selectedGuid,
+      "there should be a selected guid before create mode"
+    );
+    ok(
+      loginList._blankLoginListItem.hidden,
+      "the blank login list item should be hidden before create mode"
+    );
+
+    let createButton = content.document
+      .querySelector("login-list")
+      .shadowRoot.querySelector(".create-login-button");
+    createButton.click();
+
+    ok(
+      !loginList._selectedGuid,
+      "there should be no selected guid when in create mode"
+    );
+    ok(
+      !loginList._blankLoginListItem.hidden,
+      "the blank login list item should be visible in create mode"
+    );
+
+    let loginItem = Cu.waiveXrays(content.document.querySelector("login-item"));
+    let cancelButton = loginItem.shadowRoot.querySelector(".cancel-button");
+    cancelButton.click();
+
+    ok(
+      loginList._selectedGuid,
+      "there should be a selected guid after canceling create mode"
+    );
+    ok(
+      loginList._blankLoginListItem.hidden,
+      "the blank login list item should be hidden after canceling create mode"
+    );
+  });
+});
+
+add_task(async function test_create_duplicate_login() {
+  let browser = gBrowser.selectedBrowser;
+  EXPECTED_ERROR_MESSAGE = "This login already exists.";
+  await ContentTask.spawn(browser, null, async () => {
+    let loginList = Cu.waiveXrays(content.document.querySelector("login-list"));
+    let createButton = loginList._createLoginButton;
+    createButton.click();
+
+    let loginItem = Cu.waiveXrays(content.document.querySelector("login-item"));
+    let originInput = loginItem.shadowRoot.querySelector(
+      "input[name='origin']"
+    );
+    let usernameInput = loginItem.shadowRoot.querySelector(
+      "input[name='username']"
+    );
+    await ContentTaskUtils.waitForCondition(
+      () => loginItem.dataset.editing,
+      "waiting for 'edit' mode"
+    );
+
+    let passwordInput = loginItem.shadowRoot.querySelector(
+      "input[name='password']"
+    );
+    const EXISTING_ORIGIN = "https://example.com";
+    const EXISTING_USERNAME = "testuser2";
+    originInput.value = EXISTING_ORIGIN;
+    usernameInput.value = EXISTING_USERNAME;
+    passwordInput.value = "different password value";
+
+    let saveChangesButton = loginItem.shadowRoot.querySelector(
+      ".save-changes-button"
+    );
+    saveChangesButton.click();
+
+    await ContentTaskUtils.waitForCondition(
+      () => !loginItem._errorMessage.hidden,
+      "waiting until the error message is visible"
+    );
+    let duplicatedGuid = Object.values(loginList._logins).find(
+      v =>
+        v.login.origin == EXISTING_ORIGIN &&
+        v.login.username == EXISTING_USERNAME
+    ).login.guid;
+    is(
+      loginItem._errorMessageLink.dataset.errorGuid,
+      duplicatedGuid,
+      "Error message has GUID of existing duplicated login set on it"
+    );
+
+    let confirmationDialog = Cu.waiveXrays(
+      content.document.querySelector("confirmation-dialog")
+    );
+    ok(
+      confirmationDialog.hidden,
+      "the discard-changes dialog should be hidden before clicking the error-message-text"
+    );
+    loginItem._errorMessageLink.querySelector("a").click();
+    ok(
+      !confirmationDialog.hidden,
+      "the discard-changes dialog should be visible"
+    );
+    let discardChangesButton = confirmationDialog.shadowRoot.querySelector(
+      ".confirm-button"
+    );
+    discardChangesButton.click();
+
+    await ContentTaskUtils.waitForCondition(
+      () =>
+        Object.keys(loginItem._login).length > 1 &&
+        loginItem._login.guid == duplicatedGuid,
+      "waiting until the existing duplicated login is selected"
+    );
+    is(
+      loginList._selectedGuid,
+      duplicatedGuid,
+      "the duplicated login should be selected in the list"
+    );
+  });
+  EXPECTED_ERROR_MESSAGE = null;
 });

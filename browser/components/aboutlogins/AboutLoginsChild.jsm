@@ -49,6 +49,9 @@ class AboutLoginsChild extends ActorChild {
           doLoginsMatch(loginA, loginB) {
             return LoginHelper.doLoginsMatch(loginA, loginB, {});
           },
+          getLoginOrigin(uriString) {
+            return LoginHelper.getLoginOrigin(uriString);
+          },
           promptForMasterPassword(resolve) {
             masterPasswordPromise = {
               resolve,
@@ -125,6 +128,9 @@ class AboutLoginsChild extends ActorChild {
         if (masterPasswordPromise) {
           masterPasswordPromise.resolve(message.data);
         }
+        break;
+      case "AboutLogins:ShowLoginItemError":
+        this.sendToContent("ShowLoginItemError", message.data);
         break;
     }
   }

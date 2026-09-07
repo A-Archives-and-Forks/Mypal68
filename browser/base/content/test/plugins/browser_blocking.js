@@ -10,6 +10,15 @@ function updateAllTestPlugins(aState) {
   setTestPluginEnabledState(aState, "Second Test Plug-in");
 }
 
+function promisePluginActivated() {
+  return ContentTask.spawn(gBrowser.selectedBrowser, null, function() {
+    return ContentTaskUtils.waitForCondition(
+      () => content.document.getElementById("test").activated,
+      "Wait for plugin to be activated"
+    );
+  });
+}
+
 add_task(async function() {
   registerCleanupFunction(async function() {
     clearAllPluginPermissions();
@@ -193,6 +202,7 @@ add_task(async function() {
 
   PopupNotifications.panel.firstElementChild.button.click();
 
+  await promisePluginActivated();
   pluginInfo = await promiseForPluginInfo("test");
   is(
     pluginInfo.pluginFallbackType,
@@ -307,6 +317,7 @@ add_task(async function() {
 
   PopupNotifications.panel.firstElementChild.button.click();
 
+  await promisePluginActivated();
   pluginInfo = await promiseForPluginInfo("test");
   ok(pluginInfo.activated, "Test 24a, Plugin should be active.");
 
@@ -345,6 +356,7 @@ add_task(async function() {
 
   PopupNotifications.panel.firstElementChild.button.click();
 
+  await promisePluginActivated();
   pluginInfo = await promiseForPluginInfo("test");
   ok(pluginInfo.activated, "Test 24b, Plugin should be active.");
 

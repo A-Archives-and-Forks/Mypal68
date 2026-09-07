@@ -55,7 +55,7 @@ pref("extensions.webextensions.background-delayed-startup", true);
 pref("devtools.storage.extensionStorage.enabled", false);
 
 // Dictionary download preference
-pref("browser.dictionaries.download.url", "data:text/plain,");
+pref("browser.dictionaries.download.url", "https://addons.mozilla.org/%LOCALE%/firefox/language-tools/");
 
 // At startup, should we check to see if the installation
 // date is older than some threshold
@@ -333,13 +333,9 @@ pref("permissions.default.shortcuts", 0);
   pref("permissions.desktop-notification.postPrompt.enabled", false);
 #endif
 
-pref("permissions.postPrompt.animate", true);
+pref("permissions.fullscreen.allowed", false);
 
-#ifdef NIGHTLY_BUILD
-  pref("permissions.delegation.enable", true);
-#else
-  pref("permissions.delegation.enable", false);
-#endif
+pref("permissions.postPrompt.animate", true);
 
 // handle links targeting new windows
 // 1=current window/tab, 2=new window, 3=new tab in most recent window
@@ -419,19 +415,15 @@ pref("browser.tabs.delayHidingAudioPlayingIconMS", 3000);
   pref("browser.tabs.remote.separatePrivilegedContentProcess", true);
 // This pref will cause assertions when a remoteType triggers a process switch
 // to a new remoteType it should not be able to trigger.
-pref("browser.tabs.remote.enforceRemoteTypeRestrictions", true);
+  pref("browser.tabs.remote.enforceRemoteTypeRestrictions", true);
 #endif
 
-#ifdef NIGHTLY_BUILD
-  // allow_eval_with_system_principal is enabled on Firefox Desktop only at this
-  // point in time
-  pref("security.allow_eval_with_system_principal", false);
-  pref("browser.tabs.remote.useHTTPResponseProcessSelection", true);
-#else
-  // Disabled outside of nightly due to bug 1554217
-  pref("browser.tabs.remote.useHTTPResponseProcessSelection", false);
-#endif
+// allow_eval_* is enabled on Firefox Desktop only at this
+// point in time
+pref("security.allow_eval_with_system_principal", false);
+pref("security.allow_eval_in_parent_process", false);
 
+pref("security.allow_parent_unrestricted_js_loads", false);
 
 // Unload tabs when available memory is running low
 pref("browser.tabs.unloadOnLowMemory", false);
@@ -1208,9 +1200,6 @@ pref("security.identitypopup.recordEventElemetry", true);
 // Block insecure active content on https pages
 pref("security.mixed_content.block_active_content", true);
 
-// Show degraded UI for http pages with password fields.
-pref("security.insecure_password.ui.enabled", true);
-
 // Show in-content login form warning UI for insecure login fields
 pref("security.insecure_field_warning.contextual.enabled", true);
 
@@ -1422,6 +1411,12 @@ pref("privacy.userContext.extension", "");
 // tab in the default container
 pref("privacy.userContext.newTabContainerOnLeftClick.enabled", false);
 
+// Set to true to allow the user to silence all notifications when
+// sharing the screen.
+pref("privacy.webrtc.allowSilencingNotifications", false);
+// Set to true to use the legacy WebRTC global indicator
+pref("privacy.webrtc.legacyGlobalIndicator", true);
+
 // Start the browser in e10s mode
 pref("browser.tabs.remote.autostart", true);
 pref("browser.tabs.remote.desktopbehavior", true);
@@ -1465,8 +1460,8 @@ pref("reader.errors.includeURLs", true);
 
 pref("view_source.tab", true);
 
-// SW + Push intentionally disabled on ESR per bug 1557565
 pref("dom.serviceWorkers.enabled", false);
+
 pref("dom.push.enabled", false);
 
 // These are the thumbnail width/height set in about:newtab.
@@ -1499,6 +1494,8 @@ pref("signon.showAutoCompleteFooter", true);
 #else
   pref("signon.management.page.enabled", false);
 #endif
+pref("signon.showAutoCompleteOrigins", true);
+pref("signon.includeOtherSubdomainsInLookup", true);
 
 // Enable the "Simplify Page" feature in Print Preview. This feature
 // is disabled by default in toolkit.
@@ -1942,4 +1939,3 @@ pref("devtools.debugger.features.async-live-stacks", false);
 // This is currently not exposed by any UI to avoid making
 // about:devtools-toolbox tabs unusable by mistake.
 pref("devtools.popup.disable_autohide", false);
-

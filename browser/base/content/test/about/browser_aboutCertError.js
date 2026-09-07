@@ -174,7 +174,14 @@ add_task(async function checkAdvancedDetails() {
 
         let advancedButton = doc.getElementById("advancedButton");
         advancedButton.click();
-        let el = doc.getElementById("errorCode");
+
+        // Wait until fluent sets the errorCode inner text.
+        let el;
+        await ContentTaskUtils.waitForCondition(() => {
+          el = doc.getElementById("errorCode");
+          return el.textContent != "";
+        }, "error code has been set inside the advanced button panel");
+
         return { textContent: el.textContent, tagName: el.tagName };
       }
     );
@@ -252,7 +259,14 @@ add_task(async function checkAdvancedDetailsForHSTS() {
 
         let advancedButton = doc.getElementById("advancedButton");
         advancedButton.click();
-        let ec = doc.getElementById("errorCode");
+
+        // Wait until fluent sets the errorCode inner text.
+        let ec;
+        await ContentTaskUtils.waitForCondition(() => {
+          ec = doc.getElementById("errorCode");
+          return ec.textContent != "";
+        }, "error code has been set inside the advanced button panel");
+
         let cdl = doc.getElementById("cert_domain_link");
         return {
           ecTextContent: ec.textContent,

@@ -80,11 +80,12 @@ function makeMockPermissionRequest(browser) {
   };
   let types = Cc["@mozilla.org/array;1"].createInstance(Ci.nsIMutableArray);
   types.appendElement(type);
+  let principal = browser.contentPrincipal;
   let result = {
     types,
     isHandlingUserInput: false,
-    principal: browser.contentPrincipal,
-    topLevelPrincipal: browser.contentPrincipal,
+    principal,
+    topLevelPrincipal: principal,
     requester: null,
     _cancelled: false,
     cancel() {
@@ -93,6 +94,9 @@ function makeMockPermissionRequest(browser) {
     _allowed: false,
     allow() {
       this._allowed = true;
+    },
+    getDelegatePrincipal(aType) {
+      return principal;
     },
     QueryInterface: ChromeUtils.generateQI(["nsIContentPermissionRequest"]),
   };

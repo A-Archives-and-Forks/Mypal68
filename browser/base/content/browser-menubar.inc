@@ -184,7 +184,7 @@
                               oncommand="gPageStyleMenu.disableStyle();"
                               type="radio" data-l10n-id="menu-view-page-style-no-style"/>
                     <menuitem id="menu_pageStylePersistentOnly"
-                              oncommand="gPageStyleMenu.switchStyleSheet('');"
+                              oncommand="gPageStyleMenu.switchStyleSheet(null);"
                               type="radio"
                               checked="true" data-l10n-id="menu-view-page-basic-style"/>
                     <menuseparator/>
@@ -226,7 +226,7 @@
                 <menuseparator hidden="true" id="documentDirection-separator"/>
                 <menuitem id="documentDirection-swap"
                           hidden="true"
-                          oncommand="gBrowser.selectedBrowser.sendMessageToActor('SwitchDocumentDirection', {}, 'SwitchDocumentDirection');" data-l10n-id="menu-view-bidi-switch-page-direction"/>
+                          oncommand="gBrowser.selectedBrowser.sendMessageToActor('SwitchDocumentDirection', {}, 'SwitchDocumentDirection', 'roots');" data-l10n-id="menu-view-bidi-switch-page-direction"/>
               </menupopup>
             </menu>
 

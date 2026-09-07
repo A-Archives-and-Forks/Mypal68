@@ -43,7 +43,6 @@ login-item-delete-button = Delete
 login-item-origin-label = Website Address
 login-item-origin =
   .placeholder = https://www.example.com
-login-item-open-site-button = Launch
 login-item-username-label = Username
 login-item-username =
   .placeholder = name@example.com
@@ -82,3 +81,7 @@ confirm-delete-dialog-confirm-button = Delete
 confirm-discard-changes-dialog-title = Discard unsaved changes?
 confirm-discard-changes-dialog-message = All unsaved changes will be lost.
 confirm-discard-changes-dialog-confirm-button = Discard
+
+about-logins-error-message-duplicate-login-with-link = An entry for { $loginTitle } with that username already exists. <a data-l10n-name="duplicate-link">Go to existing entry?</a>
+
+about-logins-error-message-default = An error occurred while trying to save this password.

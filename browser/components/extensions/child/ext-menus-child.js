@@ -13,7 +13,7 @@ this.menusChild = class extends ExtensionAPI {
         getTargetElement(targetElementId) {
           let element;
           let lastMenuTarget = ContextMenuChild.getLastTarget(
-            context.messageManager
+            context.contentWindow.docShell.browsingContext
           );
           if (
             lastMenuTarget &&

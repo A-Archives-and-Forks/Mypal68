@@ -37,8 +37,14 @@ export default class LoginItem extends HTMLElement {
     );
     this._deleteButton = this.shadowRoot.querySelector(".delete-button");
     this._editButton = this.shadowRoot.querySelector(".edit-button");
+    this._errorMessage = this.shadowRoot.querySelector(".error-message");
+    this._errorMessageLink = this._errorMessage.querySelector(
+      ".error-message-link"
+    );
+    this._errorMessageText = this._errorMessage.querySelector(
+      ".error-message-text"
+    );
     this._form = this.shadowRoot.querySelector("form");
-    this._openSiteButton = this.shadowRoot.querySelector(".open-site-button");
     this._originInput = this.shadowRoot.querySelector("input[name='origin']");
     this._usernameInput = this.shadowRoot.querySelector(
       "input[name='username']"
@@ -59,19 +65,20 @@ export default class LoginItem extends HTMLElement {
 
     this.render();
 
-    this._originInput.addEventListener("blur", this);
     this._cancelButton.addEventListener("click", this);
     this._copyPasswordButton.addEventListener("click", this);
     this._copyUsernameButton.addEventListener("click", this);
     this._deleteButton.addEventListener("click", this);
     this._editButton.addEventListener("click", this);
+    this._errorMessageLink.addEventListener("click", this);
     this._form.addEventListener("submit", this);
-    this._openSiteButton.addEventListener("click", this);
+    this._originInput.addEventListener("blur", this);
     this._originInput.addEventListener("click", this);
+    this._originInput.addEventListener("auxclick", this);
     this._revealCheckbox.addEventListener("click", this);
-    window.addEventListener("AboutLoginsCreateLogin", this);
     window.addEventListener("AboutLoginsInitialLoginSelected", this);
     window.addEventListener("AboutLoginsLoginSelected", this);
+    window.addEventListener("AboutLoginsShowBlankLogin", this);
   }
 
   async render() {
@@ -95,36 +102,45 @@ export default class LoginItem extends HTMLElement {
         ? "login-item-save-new-button"
         : "login-item-save-changes-button"
     );
-    await this._updatePasswordRevealState();
+    this._updatePasswordRevealState();
+  }
+
+  showLoginItemError(error) {
+    if (error.errorMessage.includes("This login already exists")) {
+      document.l10n.setAttributes(
+        this._errorMessageLink,
+        "about-logins-error-message-duplicate-login-with-link",
+        {
+          loginTitle: error.login.title,
+        }
+      );
+      this._errorMessageLink.dataset.errorGuid = error.existingLoginGuid;
+      this._errorMessageText.hidden = true;
+      this._errorMessageLink.hidden = false;
+    } else {
+      this._errorMessageText.hidden = false;
+      this._errorMessageLink.hidden = true;
+    }
+    this._errorMessage.hidden = false;
   }
 
   async handleEvent(event) {
     switch (event.type) {
-      case "AboutLoginsCreateLogin": {
-        this.setLogin({});
-        break;
-      }
       case "AboutLoginsInitialLoginSelected": {
         this.setLogin(event.detail, { skipFocusChange: true });
         break;
       }
       case "AboutLoginsLoginSelected": {
-        let login = event.detail;
-        if (this.hasPendingChanges()) {
-          event.preventDefault();
-          this.showConfirmationDialog("discard-changes", () => {
-            // Clear any pending changes
-            this.setLogin(login);
-
-            window.dispatchEvent(
-              new CustomEvent("AboutLoginsLoginSelected", {
-                detail: login,
-                cancelable: true,
-              })
-            );
-          });
-        } else {
-          this.setLogin(login);
+        this.confirmPendingChangesOnEvent(event, event.detail);
+        break;
+      }
+      case "AboutLoginsShowBlankLogin": {
+        this.confirmPendingChangesOnEvent(event, {});
+        break;
+      }
+      case "auxclick": {
+        if (event.button == 1) {
+          this._handleOriginClick();
         }
         break;
       }
@@ -142,7 +158,16 @@ export default class LoginItem extends HTMLElement {
       case "click": {
         let classList = event.currentTarget.classList;
         if (classList.contains("reveal-password-checkbox")) {
-          await this._updatePasswordRevealState();
+          if (this._revealCheckbox.checked) {
+            let masterPasswordAuth = await new Promise(resolve => {
+              window.AboutLoginsUtils.promptForMasterPassword(resolve);
+            });
+            if (!masterPasswordAuth) {
+              this._revealCheckbox.checked = false;
+              return;
+            }
+          }
+          this._updatePasswordRevealState();
 
           let method = this._revealCheckbox.checked ? "show" : "hide";
           return;
@@ -158,8 +183,14 @@ export default class LoginItem extends HTMLElement {
             } else {
               this.setLogin(this._login);
             }
-          } else {
+          } else if (!this.hasPendingChanges()) {
             window.dispatchEvent(new CustomEvent("AboutLoginsClearSelection"));
+          } else {
+            this.showConfirmationDialog("discard-changes", () => {
+              window.dispatchEvent(
+                new CustomEvent("AboutLoginsClearSelection")
+              );
+            });
           }
           return;
         }
@@ -195,7 +226,14 @@ export default class LoginItem extends HTMLElement {
           return;
         }
         if (classList.contains("delete-button")) {
-          this.confirmDelete();
+          this.showConfirmationDialog("delete", () => {
+            document.dispatchEvent(
+              new CustomEvent("AboutLoginsDeleteLogin", {
+                bubbles: true,
+                detail: this._login,
+              })
+            );
+          });
           return;
         }
         if (classList.contains("edit-button")) {
@@ -203,15 +241,22 @@ export default class LoginItem extends HTMLElement {
           return;
         }
         if (
-          classList.contains("open-site-button") ||
-          (classList.contains("origin-input") && !this.readOnly)
+          event.target.dataset.l10nName == "duplicate-link" &&
+          event.currentTarget.dataset.errorGuid
         ) {
-          document.dispatchEvent(
-            new CustomEvent("AboutLoginsOpenSite", {
-              bubbles: true,
-              detail: this._login,
+          let existingDuplicateLogin = {
+            guid: event.currentTarget.dataset.errorGuid,
+          };
+          window.dispatchEvent(
+            new CustomEvent("AboutLoginsLoginSelected", {
+              detail: existingDuplicateLogin,
+              cancelable: true,
             })
           );
+          return;
+        }
+        if (classList.contains("origin-input")) {
+          this._handleOriginClick();
         }
         break;
       }
@@ -219,6 +264,10 @@ export default class LoginItem extends HTMLElement {
         // Prevent page navigation form submit behavior.
         event.preventDefault();
         if (!this._isFormValid({ reportErrors: true })) {
+          return;
+        }
+        if (!this.hasPendingChanges()) {
+          this._toggleEditing(false);
           return;
         }
         let loginUpdates = this._loginFromForm();
@@ -239,6 +288,31 @@ export default class LoginItem extends HTMLElement {
           );
         }
       }
+    }
+  }
+
+  /**
+   * Helper to show the "Discard changes" confirmation dialog and delay the
+   * received event after confirmation.
+   * @param {object} event The event to be delayed.
+   * @param {object} login The login to be shown on confirmation.
+   */
+  confirmPendingChangesOnEvent(event, login) {
+    if (this.hasPendingChanges()) {
+      event.preventDefault();
+      this.showConfirmationDialog("discard-changes", () => {
+        // Clear any pending changes
+        this.setLogin(login);
+
+        window.dispatchEvent(
+          new CustomEvent(event.type, {
+            detail: login,
+            cancelable: false,
+          })
+        );
+      });
+    } else {
+      this.setLogin(login);
     }
   }
 
@@ -268,31 +342,23 @@ export default class LoginItem extends HTMLElement {
         break;
       }
     }
+    let wasExistingLogin = !!this._login.guid;
+    let method = type == "delete" ? "delete" : "cancel";
     let dialogPromise = dialog.show(options);
-    dialogPromise.then(onConfirm, () => {});
+    dialogPromise.then(
+      () => {
+        try {
+          onConfirm();
+        } catch (ex) {}
+      },
+      () => {}
+    );
     return dialogPromise;
   }
 
-  /**
-   * Toggles the confirm delete dialog, completing the deletion if the user
-   * agrees.
-   */
-  confirmDelete() {
-    this.showConfirmationDialog("delete", () => {
-      document.dispatchEvent(
-        new CustomEvent("AboutLoginsDeleteLogin", {
-          bubbles: true,
-          detail: this._login,
-        })
-      );
-    });
-  }
-
   hasPendingChanges() {
-    let { origin = "", username = "", password = "" } = this._login || {};
-
     let valuesChanged = !window.AboutLoginsUtils.doLoginsMatch(
-      { origin, username, password },
+      Object.assign({ username: "", password: "", origin: "" }, this._login),
       this._loginFromForm()
     );
 
@@ -341,9 +407,16 @@ export default class LoginItem extends HTMLElement {
       return;
     }
 
-    this._toggleEditing(false);
-    this._login = login;
-    this.render();
+    let valuesChanged =
+      this.dataset.editing &&
+      !window.AboutLoginsUtils.doLoginsMatch(login, this._loginFromForm());
+    if (valuesChanged) {
+      this.showConfirmationDialog("discard-changes", () => {
+        this.setLogin(login);
+      });
+    } else {
+      this.setLogin(login);
+    }
   }
 
   /**
@@ -358,9 +431,14 @@ export default class LoginItem extends HTMLElement {
       return;
     }
 
-    this._toggleEditing(false);
-    this._login = login;
-    this.render();
+    this.setLogin(login);
+    this.dispatchEvent(
+      new CustomEvent("AboutLoginsLoginSelected", {
+        bubbles: true,
+        composed: true,
+        detail: login,
+      })
+    );
   }
 
   /**
@@ -375,9 +453,18 @@ export default class LoginItem extends HTMLElement {
       return;
     }
 
-    this._toggleEditing(false);
     this._login = {};
+    this._toggleEditing(false);
     this.render();
+  }
+
+  _handleOriginClick() {
+    document.dispatchEvent(
+      new CustomEvent("AboutLoginsOpenSite", {
+        bubbles: true,
+        detail: this._login,
+      })
+    );
   }
 
   /**
@@ -406,11 +493,12 @@ export default class LoginItem extends HTMLElement {
   }
 
   _loginFromForm() {
-    return {
+    return Object.assign({}, this._login, {
       username: this._usernameInput.value.trim(),
-      password: this._passwordInput.value.trim(),
-      origin: this._originInput.value.trim(),
-    };
+      password: this._passwordInput.value,
+      origin:
+        window.AboutLoginsUtils.getLoginOrigin(this._originInput.value) || "",
+    });
   }
 
   /**
@@ -449,20 +537,12 @@ export default class LoginItem extends HTMLElement {
       this._originInput.focus();
     } else {
       delete this.dataset.editing;
+      // Only reset the reveal checkbox when exiting 'edit' mode
+      this._revealCheckbox.checked = false;
     }
   }
 
-  async _updatePasswordRevealState() {
-    if (this._revealCheckbox.checked) {
-      let masterPasswordAuth = await new Promise(resolve => {
-        window.AboutLoginsUtils.promptForMasterPassword(resolve);
-      });
-      if (!masterPasswordAuth) {
-        this._revealCheckbox.checked = false;
-        return;
-      }
-    }
-
+  _updatePasswordRevealState() {
     let titleId = this._revealCheckbox.checked
       ? "login-item-password-reveal-checkbox-hide"
       : "login-item-password-reveal-checkbox-show";

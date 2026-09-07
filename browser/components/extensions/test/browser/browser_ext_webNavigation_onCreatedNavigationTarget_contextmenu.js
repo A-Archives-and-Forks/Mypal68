@@ -9,8 +9,17 @@ SpecialPowers.pushPrefEnv({
 async function clickContextMenuItem({
   pageElementSelector,
   contextMenuItemLabel,
+  frameIndex,
 }) {
-  const contentAreaContextMenu = await openContextMenu(pageElementSelector);
+  let contentAreaContextMenu;
+  if (frameIndex == null) {
+    contentAreaContextMenu = await openContextMenu(pageElementSelector);
+  } else {
+    contentAreaContextMenu = await openContextMenuInFrame(
+      pageElementSelector,
+      frameIndex
+    );
+  }
   const item = contentAreaContextMenu.getElementsByAttribute(
     "label",
     contextMenuItemLabel
@@ -131,14 +140,10 @@ add_task(
       extension,
       async openNavTarget() {
         await clickContextMenuItem({
-          pageElementSelector: () => {
-            // This code runs as a framescript in the child process and it returns the
-            // target link in the subframe.
-            return this.content.frames[0].document.querySelector(
-              "#test-create-new-tab-from-context-menu-subframe"
-            );
-          },
+          pageElementSelector:
+            "#test-create-new-tab-from-context-menu-subframe",
           contextMenuItemLabel: "Open Link in New Tab",
+          frameIndex: 0,
         });
       },
       expectedWebNavProps: {
@@ -154,14 +159,10 @@ add_task(
       extension,
       async openNavTarget() {
         await clickContextMenuItem({
-          pageElementSelector: () => {
-            // This code runs as a framescript in the child process and it returns the
-            // target link in the subframe.
-            return this.content.frames[0].document.querySelector(
-              "#test-create-new-window-from-context-menu-subframe"
-            );
-          },
+          pageElementSelector:
+            "#test-create-new-window-from-context-menu-subframe",
           contextMenuItemLabel: "Open Link in New Window",
+          frameIndex: 0,
         });
       },
       expectedWebNavProps: {

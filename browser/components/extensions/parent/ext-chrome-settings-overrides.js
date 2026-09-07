@@ -13,6 +13,12 @@ var { ExtensionParent } = ChromeUtils.import(
 
 ChromeUtils.defineModuleGetter(
   this,
+  "ExtensionPermissions",
+  "resource://gre/modules/ExtensionPermissions.jsm"
+);
+
+ChromeUtils.defineModuleGetter(
+  this,
   "ExtensionSettingsStore",
   "resource://gre/modules/ExtensionSettingsStore.jsm"
 );
@@ -73,7 +79,10 @@ XPCOMUtils.defineLazyGetter(this, "homepagePopup", () => {
 // and check if the homepage is active, then show the doorhanger in that case.
 async function handleInitialHomepagePopup(extensionId, homepageUrl) {
   // browser.startup.page == 1 is show homepage.
-  if (Services.prefs.getIntPref("browser.startup.page") == 1) {
+  if (
+    Services.prefs.getIntPref("browser.startup.page") == 1 &&
+    windowTracker.topWindow
+  ) {
     let { gBrowser } = windowTracker.topWindow;
     let tab = gBrowser.selectedTab;
     let currentUrl = gBrowser.currentURI.spec;
@@ -94,6 +103,71 @@ async function handleInitialHomepagePopup(extensionId, homepageUrl) {
   homepagePopup.addObserver(extensionId);
 }
 
+/**
+ * Handles the homepage url setting for an extension.
+ *
+ * @param {object} extension
+ *   The extension setting the hompage url.
+ * @param {string} homepageUrl
+ *   The homepage url to set.
+ */
+async function handleHomepageUrl(extension, homepageUrl) {
+  let inControl;
+  if (
+    extension.startupReason == "ADDON_INSTALL" ||
+    extension.startupReason == "ADDON_ENABLE"
+  ) {
+    inControl = await ExtensionPreferencesManager.setSetting(
+      extension.id,
+      "homepage_override",
+      homepageUrl
+    );
+  } else {
+    let item = await ExtensionPreferencesManager.getSetting(
+      "homepage_override"
+    );
+    inControl = item && item.id && item.id == extension.id;
+  }
+
+  if (inControl) {
+    Services.prefs.setBoolPref(
+      HOMEPAGE_PRIVATE_ALLOWED,
+      extension.privateBrowsingAllowed
+    );
+    // Also set this now as an upgraded browser will need this.
+    Services.prefs.setBoolPref(HOMEPAGE_EXTENSION_CONTROLLED, true);
+    if (extension.startupReason == "APP_STARTUP") {
+      handleInitialHomepagePopup(extension.id, homepageUrl);
+    } else {
+      homepagePopup.addObserver(extension.id);
+    }
+  }
+
+  // We need to monitor permission change and update the preferences.
+  // eslint-disable-next-line mozilla/balanced-listeners
+  extension.on("add-permissions", async (ignoreEvent, permissions) => {
+    if (permissions.permissions.includes("internal:privateBrowsingAllowed")) {
+      let item = await ExtensionPreferencesManager.getSetting(
+        "homepage_override"
+      );
+      if (item && item.id == extension.id) {
+        Services.prefs.setBoolPref(HOMEPAGE_PRIVATE_ALLOWED, true);
+      }
+    }
+  });
+  // eslint-disable-next-line mozilla/balanced-listeners
+  extension.on("remove-permissions", async (ignoreEvent, permissions) => {
+    if (permissions.permissions.includes("internal:privateBrowsingAllowed")) {
+      let item = await ExtensionPreferencesManager.getSetting(
+        "homepage_override"
+      );
+      if (item && item.id == extension.id) {
+        Services.prefs.setBoolPref(HOMEPAGE_PRIVATE_ALLOWED, false);
+      }
+    }
+  });
+}
+
 // When an extension starts up, a search engine may asynchronously be
 // registered, without blocking the startup. When an extension is
 // uninstalled, we need to wait for this registration to finish
@@ -106,31 +180,23 @@ this.chrome_settings_overrides = class extends ExtensionAPI {
     await ExtensionSettingsStore.initialize();
     let item = ExtensionSettingsStore.getSetting(
       DEFAULT_SEARCH_STORE_TYPE,
-      DEFAULT_SEARCH_SETTING_NAME
+      DEFAULT_SEARCH_SETTING_NAME,
+      id
     );
     if (!item) {
       return;
     }
-    if (
-      Services.search.defaultEngine.name != item.value &&
-      Services.search.defaultEngine.name != item.initialValue
-    ) {
-      // The current engine is not the same as the value that the ExtensionSettingsStore has.
-      // This means that the user changed the engine, so we shouldn't control it anymore.
-      // Do nothing and remove our entry from the ExtensionSettingsStore.
-      ExtensionSettingsStore.removeSetting(
-        id,
-        DEFAULT_SEARCH_STORE_TYPE,
-        DEFAULT_SEARCH_SETTING_NAME
-      );
-      return;
-    }
+    let control = await ExtensionSettingsStore.getLevelOfControl(
+      id,
+      DEFAULT_SEARCH_STORE_TYPE,
+      DEFAULT_SEARCH_SETTING_NAME
+    );
     item = ExtensionSettingsStore[action](
       id,
       DEFAULT_SEARCH_STORE_TYPE,
       DEFAULT_SEARCH_SETTING_NAME
     );
-    if (item) {
+    if (item && control == "controlled_by_this_extension") {
       try {
         let engine = Services.search.getEngineByName(
           item.value || item.initialValue
@@ -181,6 +247,22 @@ this.chrome_settings_overrides = class extends ExtensionAPI {
     ]);
   }
 
+  static async onEnabling(id) {
+    await ExtensionSettingsStore.initialize();
+    let item = await ExtensionSettingsStore.getSetting(
+      DEFAULT_SEARCH_STORE_TYPE,
+      DEFAULT_SEARCH_SETTING_NAME,
+      id
+    );
+    if (item) {
+      ExtensionSettingsStore.enable(
+        id,
+        DEFAULT_SEARCH_STORE_TYPE,
+        DEFAULT_SEARCH_SETTING_NAME
+      );
+    }
+  }
+
   static async onUninstall(id) {
     let searchStartupPromise = pendingSearchSetupTasks.get(id);
     if (searchStartupPromise) {
@@ -194,11 +276,12 @@ this.chrome_settings_overrides = class extends ExtensionAPI {
     ]);
   }
 
-  static onUpdate(id, manifest) {
+  static async onUpdate(id, manifest) {
     let haveHomepage =
       manifest &&
       manifest.chrome_settings_overrides &&
       manifest.chrome_settings_overrides.homepage;
+
     if (!haveHomepage) {
       ExtensionPreferencesManager.removeSetting(id, "homepage_override");
     }
@@ -207,85 +290,40 @@ this.chrome_settings_overrides = class extends ExtensionAPI {
       manifest &&
       manifest.chrome_settings_overrides &&
       manifest.chrome_settings_overrides.search_provider;
+
     if (!haveSearchProvider) {
       this.removeSearchSettings(id);
+    } else if (
+      !!haveSearchProvider.is_default &&
+      (await ExtensionSettingsStore.initialize()) &&
+      ExtensionSettingsStore.hasSetting(
+        id,
+        DEFAULT_SEARCH_STORE_TYPE,
+        DEFAULT_SEARCH_SETTING_NAME
+      )
+    ) {
+      // is_default has been removed, but we still have a setting. Remove it.
+      chrome_settings_overrides.processDefaultSearchSetting(
+        "removeSetting",
+        id
+      );
     }
   }
 
-  static onDisable(id) {
+  static async onDisable(id) {
     homepagePopup.clearConfirmation(id);
 
-    chrome_settings_overrides.processDefaultSearchSetting("disable", id);
-    chrome_settings_overrides.removeEngine(id);
+    await chrome_settings_overrides.processDefaultSearchSetting("disable", id);
+    await chrome_settings_overrides.removeEngine(id);
   }
 
   async onManifestEntry(entryName) {
     let { extension } = this;
     let { manifest } = extension;
-
-    await ExtensionSettingsStore.initialize();
-
     let homepageUrl = manifest.chrome_settings_overrides.homepage;
 
     if (homepageUrl) {
-      let inControl;
-      if (
-        extension.startupReason == "ADDON_INSTALL" ||
-        extension.startupReason == "ADDON_ENABLE"
-      ) {
-        inControl = await ExtensionPreferencesManager.setSetting(
-          extension.id,
-          "homepage_override",
-          homepageUrl
-        );
-      } else {
-        let item = await ExtensionPreferencesManager.getSetting(
-          "homepage_override"
-        );
-        inControl = item && item.id == extension.id;
-      }
-
-      if (inControl) {
-        Services.prefs.setBoolPref(
-          HOMEPAGE_PRIVATE_ALLOWED,
-          extension.privateBrowsingAllowed
-        );
-        // Also set this now as an upgraded browser will need this.
-        Services.prefs.setBoolPref(HOMEPAGE_EXTENSION_CONTROLLED, true);
-        if (extension.startupReason == "APP_STARTUP") {
-          handleInitialHomepagePopup(extension.id, homepageUrl);
-        } else {
-          homepagePopup.addObserver(extension.id);
-        }
-      }
-
-      // We need to monitor permission change and update the preferences.
-      // eslint-disable-next-line mozilla/balanced-listeners
-      extension.on("add-permissions", async (ignoreEvent, permissions) => {
-        if (
-          permissions.permissions.includes("internal:privateBrowsingAllowed")
-        ) {
-          let item = await ExtensionPreferencesManager.getSetting(
-            "homepage_override"
-          );
-          if (item && item.id == extension.id) {
-            Services.prefs.setBoolPref(HOMEPAGE_PRIVATE_ALLOWED, true);
-          }
-        }
-      });
-      // eslint-disable-next-line mozilla/balanced-listeners
-      extension.on("remove-permissions", async (ignoreEvent, permissions) => {
-        if (
-          permissions.permissions.includes("internal:privateBrowsingAllowed")
-        ) {
-          let item = await ExtensionPreferencesManager.getSetting(
-            "homepage_override"
-          );
-          if (item && item.id == extension.id) {
-            Services.prefs.setBoolPref(HOMEPAGE_PRIVATE_ALLOWED, false);
-          }
-        }
-      });
+      await handleHomepageUrl(extension, homepageUrl);
     }
     if (manifest.chrome_settings_overrides.search_provider) {
       // Registering a search engine can potentially take a long while,
@@ -310,82 +348,75 @@ this.chrome_settings_overrides = class extends ExtensionAPI {
     let { extension } = this;
     let { manifest } = extension;
     let searchProvider = manifest.chrome_settings_overrides.search_provider;
-    if (searchProvider.is_default) {
-      await searchInitialized;
-      if (!this.extension) {
-        Cu.reportError(
-          `Extension shut down before search provider was registered`
-        );
-        return;
-      }
+
+    // If we're not being requested to be set as default, then all we need
+    // to do is to add the engine to the service. The search service can cope
+    // with receiving added engines before it is initialised, so we don't have
+    // to wait for it.
+    if (!searchProvider.is_default) {
+      await this.addSearchEngine();
+      return;
+    }
+
+    await searchInitialized;
+    if (!this.extension) {
+      Cu.reportError(
+        `Extension shut down before search provider was registered`
+      );
+      return;
     }
 
     let engineName = searchProvider.name.trim();
-    if (searchProvider.is_default) {
-      let engine = Services.search.getEngineByName(engineName);
-      if (engine && engine.isAppProvided) {
-        // Needs to be called every time to handle reenabling, but
-        // only sets default for install or enable.
-        await this.setDefault(engineName);
-        // For built in search engines, we don't do anything further
-        return;
-      }
+    let engine = Services.search.getEngineByName(engineName);
+    if (engine && engine.isAppProvided) {
+      // Needs to be called every time to handle reenabling, but
+      // only sets default for install or enable.
+      await this.setDefault(engineName);
+      // For built in search engines, we don't do anything further
+      return;
     }
     await this.addSearchEngine();
-    if (searchProvider.is_default) {
-      if (extension.startupReason === "ADDON_INSTALL") {
-        // Don't ask if it already the current engine
-        let engine = Services.search.getEngineByName(engineName);
-        let defaultEngine = await Services.search.getDefault();
-        if (defaultEngine.name != engine.name) {
-          let subject = {
-            wrappedJSObject: {
-              // This is a hack because we don't have the browser of
-              // the actual install. This means the popup might show
-              // in a different window. Will be addressed in a followup bug.
-              browser: windowTracker.topWindow.gBrowser.selectedBrowser,
-              name: this.extension.name,
-              icon: this.extension.iconURL,
-              currentEngine: defaultEngine.name,
-              newEngine: engineName,
-              respond(allow) {
-                if (allow) {
-                  ExtensionSettingsStore.addSetting(
-                    extension.id,
-                    DEFAULT_SEARCH_STORE_TYPE,
-                    DEFAULT_SEARCH_SETTING_NAME,
-                    engineName,
-                    () => defaultEngine.name
-                  );
-                  Services.search.defaultEngine = Services.search.getEngineByName(
-                    engineName
-                  );
-                }
-              },
+    if (extension.startupReason === "ADDON_INSTALL") {
+      // Don't ask if it already the current engine
+      let engine = Services.search.getEngineByName(engineName);
+      let defaultEngine = await Services.search.getDefault();
+      if (defaultEngine.name != engine.name) {
+        let subject = {
+          wrappedJSObject: {
+            // This is a hack because we don't have the browser of
+            // the actual install. This means the popup might show
+            // in a different window. Will be addressed in a followup bug.
+            browser: windowTracker.topWindow.gBrowser.selectedBrowser,
+            name: this.extension.name,
+            icon: this.extension.iconURL,
+            currentEngine: defaultEngine.name,
+            newEngine: engineName,
+            async respond(allow) {
+              if (allow) {
+                await ExtensionSettingsStore.initialize();
+                ExtensionSettingsStore.addSetting(
+                  extension.id,
+                  DEFAULT_SEARCH_STORE_TYPE,
+                  DEFAULT_SEARCH_SETTING_NAME,
+                  engineName,
+                  () => defaultEngine.name
+                );
+                Services.search.defaultEngine = Services.search.getEngineByName(
+                  engineName
+                );
+              }
             },
-          };
-          Services.obs.notifyObservers(
-            subject,
-            "webextension-defaultsearch-prompt"
-          );
-        }
-      } else {
-        // Needs to be called every time to handle reenabling, but
-        // only sets default for install or enable.
-        this.setDefault(engineName);
+          },
+        };
+        Services.obs.notifyObservers(
+          subject,
+          "webextension-defaultsearch-prompt"
+        );
       }
-    } else if (
-      ExtensionSettingsStore.hasSetting(
-        extension.id,
-        DEFAULT_SEARCH_STORE_TYPE,
-        DEFAULT_SEARCH_SETTING_NAME
-      )
-    ) {
-      // is_default has been removed, but we still have a setting. Remove it.
-      chrome_settings_overrides.processDefaultSearchSetting(
-        "removeSetting",
-        extension.id
-      );
+    } else {
+      // Needs to be called every time to handle reenabling, but
+      // only sets default for install or enable.
+      this.setDefault(engineName);
     }
   }
 
@@ -393,6 +424,10 @@ this.chrome_settings_overrides = class extends ExtensionAPI {
     let { extension } = this;
     if (extension.startupReason === "ADDON_INSTALL") {
       let defaultEngine = await Services.search.getDefault();
+      await ExtensionSettingsStore.initialize();
+      // We should only get here if an extension is setting an app-provided
+      // engine to default and we are ignoring the addons other engine settings.
+      // In this case we do not show the prompt to the user.
       let item = await ExtensionSettingsStore.addSetting(
         extension.id,
         DEFAULT_SEARCH_STORE_TYPE,
@@ -404,10 +439,18 @@ this.chrome_settings_overrides = class extends ExtensionAPI {
         Services.search.getEngineByName(item.value)
       );
     } else if (extension.startupReason === "ADDON_ENABLE") {
-      chrome_settings_overrides.processDefaultSearchSetting(
-        "enable",
-        extension.id
+      // We would be called for every extension being enabled, we should verify
+      // that it has control and only then set it as default
+      let control = await ExtensionSettingsStore.getLevelOfControl(
+        extension.id,
+        DEFAULT_SEARCH_STORE_TYPE,
+        DEFAULT_SEARCH_SETTING_NAME
       );
+      if (control === "controlled_by_this_extension") {
+        await Services.search.setDefault(
+          Services.search.getEngineByName(engineName)
+        );
+      }
     }
   }
 
@@ -416,6 +459,7 @@ this.chrome_settings_overrides = class extends ExtensionAPI {
     try {
       let engines = await Services.search.addEnginesFromExtension(extension);
       if (engines.length) {
+        await ExtensionSettingsStore.initialize();
         await ExtensionSettingsStore.addSetting(
           extension.id,
           DEFAULT_SEARCH_STORE_TYPE,
@@ -432,21 +476,28 @@ this.chrome_settings_overrides = class extends ExtensionAPI {
 };
 
 ExtensionPreferencesManager.addSetting("homepage_override", {
-  prefNames: [HOMEPAGE_PREF, HOMEPAGE_EXTENSION_CONTROLLED],
+  prefNames: [
+    HOMEPAGE_PREF,
+    HOMEPAGE_EXTENSION_CONTROLLED,
+    HOMEPAGE_PRIVATE_ALLOWED,
+  ],
   // ExtensionPreferencesManager will call onPrefsChanged when control changes
   // and it updates the preferences. We are passed the item from
   // ExtensionSettingsStore that details what is in control. If there is an id
   // then control has changed to an extension, if there is no id then control
   // has been returned to the user.
-  onPrefsChanged(item) {
+  async onPrefsChanged(item) {
     if (item.id) {
       homepagePopup.addObserver(item.id);
 
       let policy = ExtensionParent.WebExtensionPolicy.getByID(item.id);
-      Services.prefs.setBoolPref(
-        HOMEPAGE_PRIVATE_ALLOWED,
-        policy && policy.privateBrowsingAllowed
-      );
+      let allowed = policy && policy.privateBrowsingAllowed;
+      if (!policy) {
+        // We'll generally hit this path during safe mode changes.
+        let perms = await ExtensionPermissions.get(item.id);
+        allowed = perms.permissions.includes("internal:privateBrowsingAllowed");
+      }
+      Services.prefs.setBoolPref(HOMEPAGE_PRIVATE_ALLOWED, allowed);
       Services.prefs.setBoolPref(HOMEPAGE_EXTENSION_CONTROLLED, true);
     } else {
       homepagePopup.removeObserver();
@@ -456,9 +507,13 @@ ExtensionPreferencesManager.addSetting("homepage_override", {
     }
   },
   setCallback(value) {
+    // Setting the pref will result in onPrefsChanged being called, which
+    // will then set HOMEPAGE_PRIVATE_ALLOWED.  We want to ensure that this
+    // pref will be set/unset as apropriate.
     return {
       [HOMEPAGE_PREF]: value,
       [HOMEPAGE_EXTENSION_CONTROLLED]: !!value,
+      [HOMEPAGE_PRIVATE_ALLOWED]: false,
     };
   },
 });

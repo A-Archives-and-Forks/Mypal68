@@ -1,15 +1,6 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-/**
- * This is a temporary workaround to
- * be resolved in bug 1539000.
- */
-ChromeUtils.import("resource://testing-common/PromiseTestUtils.jsm", this);
-PromiseTestUtils.whitelistRejectionsGlobally(
-  /Too many characters in placeable/
-);
-
 add_task(async function setup() {
   await SpecialPowers.pushPrefEnv({
     set: [
@@ -95,26 +86,27 @@ add_task(async function test_copy_multiple() {
     let { width, height } = endRow.valueCell.getBoundingClientRect();
 
     // Drag from the top left of the first row to the bottom right of the last.
-    await BrowserTestUtils.synthesizeMouse(
+    EventUtils.synthesizeMouse(
       startRow.nameCell,
       1,
       1,
       { type: "mousedown" },
-      this.browser
+      this.browser.contentWindow
     );
-    await BrowserTestUtils.synthesizeMouse(
+
+    EventUtils.synthesizeMouse(
       endRow.valueCell,
       width - 1,
       height - 1,
       { type: "mousemove" },
-      this.browser
+      this.browser.contentWindow
     );
-    await BrowserTestUtils.synthesizeMouse(
+    EventUtils.synthesizeMouse(
       endRow.valueCell,
       width - 1,
       height - 1,
       { type: "mouseup" },
-      this.browser
+      this.browser.contentWindow
     );
 
     await SimpleTest.promiseClipboardChange(expectedString, async () => {

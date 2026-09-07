@@ -62,18 +62,6 @@ function getBrowser(panel) {
       )
     );
     readyPromise = promiseEvent(browser, "XULFrameLoaderCreated");
-
-    window.messageManager.addMessageListener("contextmenu", openContextMenu);
-    window.addEventListener(
-      "unload",
-      () => {
-        window.messageManager.removeMessageListener(
-          "contextmenu",
-          openContextMenu
-        );
-      },
-      { once: true }
-    );
   } else {
     readyPromise = Promise.resolve();
   }
@@ -81,11 +69,6 @@ function getBrowser(panel) {
   stack.appendChild(browser);
 
   return readyPromise.then(() => {
-    browser.messageManager.loadFrameScript(
-      "chrome://browser/content/content.js",
-      false,
-      true
-    );
     ExtensionParent.apiManager.emit(
       "extension-browser-inserted",
       browser,

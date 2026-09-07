@@ -45,9 +45,7 @@ add_task(async function() {
     gTestBrowser,
     "PluginBindingAttached",
     pluginBindingAttached,
-    true,
-    null,
-    true
+    { capture: true, wantUntrusted: true }
   );
 
   let testRoot = getRootDirectory(gTestPath).replace(

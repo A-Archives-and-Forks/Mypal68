@@ -123,15 +123,6 @@ var gIdentityHandler = {
     return this._state & Ci.nsIWebProgressListener.STATE_CERT_DISTRUST_IMMINENT;
   },
 
-  get _hasInsecureLoginForms() {
-    // checks if the page has been flagged for an insecure login. Also checks
-    // if the pref to degrade the UI is set to true
-    return (
-      LoginManagerParent.hasInsecureLoginForms(gBrowser.selectedBrowser) &&
-      Services.prefs.getBoolPref("security.insecure_password.ui.enabled")
-    );
-  },
-
   // smart getters
   get _identityPopup() {
     delete this._identityPopup;
@@ -195,12 +186,7 @@ var gIdentityHandler = {
       ...document.querySelectorAll(".identity-popup-mcb-learn-more"),
     ]);
   },
-  get _identityPopupInsecureLoginFormsLearnMore() {
-    delete this._identityPopupInsecureLoginFormsLearnMore;
-    return (this._identityPopupInsecureLoginFormsLearnMore = document.getElementById(
-      "identity-popup-insecure-login-forms-learn-more"
-    ));
-  },
+
   get _identityIconLabels() {
     delete this._identityIconLabels;
     return (this._identityIconLabels = document.getElementById(
@@ -389,9 +375,10 @@ var gIdentityHandler = {
   },
 
   enableMixedContentProtection() {
-    gBrowser.selectedBrowser.messageManager.sendAsyncMessage(
+    gBrowser.selectedBrowser.sendMessageToActor(
       "MixedContent:ReenableProtection",
-      {}
+      {},
+      "BrowserTab"
     );
     BrowserReload();
     PanelMultiView.hidePopup(this._identityPopup);
@@ -501,19 +488,6 @@ var gIdentityHandler = {
       );
       Services.console.logMessage(consoleMsg);
     }
-  },
-
-  /**
-   * This is called asynchronously when requested by the Logins module, after
-   * the insecure login forms state for the page has been updated.
-   */
-  refreshForInsecureLoginForms() {
-    // Check this._uri because we don't want to refresh the user interface if
-    // this is called before the first page load in the window for any reason.
-    if (!this._uri) {
-      return;
-    }
-    this.refreshIdentityBlock();
   },
 
   updateSharingIndicator() {
@@ -746,11 +720,6 @@ var gIdentityHandler = {
         icon_label = gNavigatorBundle.getString("identity.notSecure.label");
         this._identityBox.classList.add("notSecureText");
       }
-      if (this._hasInsecureLoginForms) {
-        // Insecure login forms can only be present on "unknown identity"
-        // pages, either already insecure or with mixed active content loaded.
-        this._identityBox.classList.add("insecureLoginForms");
-      }
     }
 
     if (this._isCertUserOverridden) {
@@ -795,10 +764,7 @@ var gIdentityHandler = {
 
     // Show blocked popup icon in the identity-box if popups are blocked
     // irrespective of popup permission capability value.
-    if (
-      gBrowser.selectedBrowser.blockedPopups &&
-      gBrowser.selectedBrowser.blockedPopups.length
-    ) {
+    if (gBrowser.selectedBrowser.popupBlocker.getBlockedPopupCount()) {
       let icon = permissionAnchors.popup;
       icon.setAttribute("showing", "true");
     }
@@ -859,10 +825,7 @@ var gIdentityHandler = {
     this._identityPopupMixedContentLearnMore.forEach(e =>
       e.setAttribute("href", baseURL + "mixed-content")
     );
-    this._identityPopupInsecureLoginFormsLearnMore.setAttribute(
-      "href",
-      baseURL + "insecure-password"
-    );
+
     this._identityPopupCustomRootLearnMore.setAttribute(
       "href",
       baseURL + "enterprise-roots"
@@ -890,12 +853,6 @@ var gIdentityHandler = {
     } else if (this._isSecureConnection) {
       connection = "secure";
       customRoot = this._hasCustomRoot();
-    }
-
-    // Determine if there are insecure login forms.
-    let loginforms = "secure";
-    if (this._hasInsecureLoginForms) {
-      loginforms = "insecure";
     }
 
     // Determine the mixed content state.
@@ -936,7 +893,6 @@ var gIdentityHandler = {
     for (let id of elementIDs) {
       let element = document.getElementById(id);
       updateAttribute(element, "connection", connection);
-      updateAttribute(element, "loginforms", loginforms);
       updateAttribute(element, "ciphers", ciphers);
       updateAttribute(element, "mixedcontent", mixedcontent);
       updateAttribute(element, "isbroken", this._isBrokenConnection);
@@ -1066,29 +1022,19 @@ var gIdentityHandler = {
     }
 
     // If we are in DOM full-screen, exit it before showing the identity popup
+    // (see bug 1557041)
     if (document.fullscreen) {
       // Open the identity popup after DOM full-screen exit
       // We need to wait for the exit event and after that wait for the fullscreen exit transition to complete
       // If we call _openPopup before the full-screen transition ends it can get cancelled
       // Only waiting for painted is not sufficient because we could still be in the full-screen enter transition.
-      let exitedEventReceived = false;
-      window.messageManager.addMessageListener(
-        "DOMFullscreen:Painted",
-        function listener() {
-          if (!exitedEventReceived) {
-            return;
-          }
-          window.messageManager.removeMessageListener(
-            "DOMFullscreen:Painted",
-            listener
-          );
-          gIdentityHandler._openPopup(event);
-        }
-      );
+      this._exitedEventReceived = false;
+      this._event = event;
+      Services.obs.addObserver(this, "fullscreen-painted");
       window.addEventListener(
         "MozDOMFullscreen:Exited",
         () => {
-          exitedEventReceived = true;
+          this._exitedEventReceived = true;
         },
         { once: true }
       );
@@ -1151,16 +1097,29 @@ var gIdentityHandler = {
   },
 
   observe(subject, topic, data) {
-    // Exclude permissions which do not appear in the UI in order to avoid
-    // doing extra work here.
-    if (
-      topic == "perm-changed" &&
-      subject &&
-      SitePermissions.listPermissions().includes(
-        subject.QueryInterface(Ci.nsIPermission).type
-      )
-    ) {
-      this.refreshIdentityBlock();
+    switch (topic) {
+      case "perm-changed": {
+        // Exclude permissions which do not appear in the UI in order to avoid
+        // doing extra work here.
+        if (
+          subject &&
+          SitePermissions.listPermissions().includes(
+            subject.QueryInterface(Ci.nsIPermission).type
+          )
+        ) {
+          this.refreshIdentityBlock();
+        }
+        break;
+      }
+      case "fullscreen-painted": {
+        if (subject != window || !this._exitedEventReceived) {
+          return;
+        }
+        Services.obs.removeObserver(this, "fullscreen-painted");
+        this._openPopup(this._event);
+        delete this._event;
+        break;
+      }
     }
   },
 
@@ -1245,6 +1204,7 @@ var gIdentityHandler = {
       }
     }
 
+    let totalBlockedPopups = gBrowser.selectedBrowser.popupBlocker.getBlockedPopupCount();
     let hasBlockedPopupIndicator = false;
     for (let permission of permissions) {
       if (permission.id == "storage-access") {
@@ -1258,21 +1218,13 @@ var gIdentityHandler = {
       }
       this._permissionList.appendChild(item);
 
-      if (
-        permission.id == "popup" &&
-        gBrowser.selectedBrowser.blockedPopups &&
-        gBrowser.selectedBrowser.blockedPopups.length
-      ) {
-        this._createBlockedPopupIndicator();
+      if (permission.id == "popup" && totalBlockedPopups) {
+        this._createBlockedPopupIndicator(totalBlockedPopups);
         hasBlockedPopupIndicator = true;
       }
     }
 
-    if (
-      gBrowser.selectedBrowser.blockedPopups &&
-      gBrowser.selectedBrowser.blockedPopups.length &&
-      !hasBlockedPopupIndicator
-    ) {
+    if (totalBlockedPopups && !hasBlockedPopupIndicator) {
       let permission = {
         id: "popup",
         state: SitePermissions.getDefault("popup"),
@@ -1280,7 +1232,7 @@ var gIdentityHandler = {
       };
       let item = this._createPermissionItem(permission);
       this._permissionList.appendChild(item);
-      this._createBlockedPopupIndicator();
+      this._createBlockedPopupIndicator(totalBlockedPopups);
     }
 
     // Show a placeholder text if there's no permission and no reload hint.
@@ -1475,7 +1427,10 @@ var gIdentityHandler = {
             }
           }
         }
-        browser.messageManager.sendAsyncMessage("webrtc:StopSharing", windowId);
+        let bc = this._sharingState.webRTC.browsingContext;
+        bc.currentWindowGlobal
+          .getActor("WebRTC")
+          .sendAsyncMessage("webrtc:StopSharing", windowId);
         webrtcUI.forgetActivePermissionsFromBrowser(gBrowser.selectedBrowser);
       }
       SitePermissions.removeFromPrincipal(
@@ -1495,7 +1450,7 @@ var gIdentityHandler = {
     return container;
   },
 
-  _createBlockedPopupIndicator() {
+  _createBlockedPopupIndicator(aTotalBlockedPopups) {
     let indicator = document.createXULElement("hbox");
     indicator.setAttribute("class", "identity-popup-permission-item");
     indicator.setAttribute("align", "center");
@@ -1508,18 +1463,17 @@ var gIdentityHandler = {
     text.setAttribute("flex", "1");
     text.setAttribute("class", "identity-popup-permission-label");
 
-    let popupCount = gBrowser.selectedBrowser.blockedPopups.length;
     let messageBase = gNavigatorBundle.getString(
       "popupShowBlockedPopupsIndicatorText"
     );
-    let message = PluralForm.get(popupCount, messageBase).replace(
+    let message = PluralForm.get(aTotalBlockedPopups, messageBase).replace(
       "#1",
-      popupCount
+      aTotalBlockedPopups
     );
     text.textContent = message;
 
     text.addEventListener("click", () => {
-      gPopupBlockerObserver.showAllBlockedPopups(gBrowser.selectedBrowser);
+      gBrowser.selectedBrowser.popupBlocker.unblockAllPopups();
     });
 
     indicator.appendChild(icon);

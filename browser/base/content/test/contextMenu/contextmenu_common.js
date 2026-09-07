@@ -358,10 +358,8 @@ async function test_contextmenu(selector, menuItems, options = {}) {
   }
 
   if (!options.skipFocusChange) {
-    await ContentTask.spawn(
-      gBrowser.selectedBrowser,
-      [lastElementSelector, selector],
-      async function([contentLastElementSelector, contentSelector]) {
+    await SpecialPowers.spawn(
+      gBrowser.selectedBrowser, [[lastElementSelector, selector]], async function([contentLastElementSelector, contentSelector]) {
         if (contentLastElementSelector) {
           let contentLastElement = content.document.querySelector(
             contentLastElementSelector
@@ -383,7 +381,7 @@ async function test_contextmenu(selector, menuItems, options = {}) {
 
   if (options.waitForSpellCheck) {
     info("Waiting for spell check");
-    await ContentTask.spawn(gBrowser.selectedBrowser, selector, async function(
+    await SpecialPowers.spawn(gBrowser.selectedBrowser, [selector], async function(
       contentSelector
     ) {
       let { onSpellCheck } = ChromeUtils.import(

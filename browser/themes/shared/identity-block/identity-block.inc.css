@@ -304,7 +304,6 @@
 }
 
 #identity-box[pageproxystate="valid"].notSecure > #connection-icon,
-#identity-box[pageproxystate="valid"].insecureLoginForms > #connection-icon,
 #identity-box[pageproxystate="valid"].mixedActiveContent > #connection-icon {
   list-style-image: url(chrome://browser/skin/connection-mixed-active-loaded.svg);
   visibility: visible;

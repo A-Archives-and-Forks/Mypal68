@@ -83,6 +83,12 @@
       <link rel="stylesheet" href="chrome://global/skin/in-content/common.css">
       <link rel="stylesheet" href="chrome://browser/content/aboutlogins/common.css">
       <link rel="stylesheet" href="chrome://browser/content/aboutlogins/components/login-item.css">
+      <div class="error-message">
+        <span class="error-message-text" data-l10n-id="about-logins-error-message-default"></span>
+        <span class="error-message-link">
+          <a data-l10n-name="duplicate-link" href=""></a>
+        </span>
+      </div>
       <div class="header">
         <h2 class="title">
           <span class="login-item-title"></span>
@@ -97,7 +103,6 @@
             <span class="origin-label field-label" data-l10n-id="login-item-origin-label"></span>
             <input type="url" name="origin" class="origin-input" required data-l10n-id="login-item-origin" dir="auto"/>
           </label>
-          <button class="open-site-button" data-l10n-id="login-item-open-site-button" type="button"></button>
         </div>
         <div class="detail-row">
           <label class="detail-cell">

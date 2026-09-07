@@ -238,11 +238,6 @@ ContentRestoreInternal.prototype = {
           ? E10SUtils.deserializeCSP(loadArguments.csp)
           : null;
 
-        if (loadArguments.userContextId) {
-          webNavigation.setOriginAttributesBeforeLoading({
-            userContextId: loadArguments.userContextId,
-          });
-        }
         let loadURIOptions = {
           triggeringPrincipal,
           loadFlags: loadArguments.flags,

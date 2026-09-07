@@ -54,16 +54,10 @@ const convertSubjectToLogin = subject => {
   return augmentVanillaLoginObject(login);
 };
 
-const SCHEME_REGEX = new RegExp(/^http(s)?:\/\//);
 const SUBDOMAIN_REGEX = new RegExp(/^www\d*\./);
 const augmentVanillaLoginObject = login => {
-  let title;
-  try {
-    title = new URL(login.origin).host;
-  } catch (ex) {
-    title = login.origin.replace(SCHEME_REGEX, "");
-  }
-  title = title.replace(SUBDOMAIN_REGEX, "");
+  // Note that `displayOrigin` can also include a httpRealm.
+  let title = login.displayOrigin.replace(SUBDOMAIN_REGEX, "");
   return Object.assign({}, login, {
     title,
   });
@@ -73,14 +67,14 @@ var AboutLoginsParent = {
   _l10n: null,
   _subscribers: new WeakSet(),
 
-  // Listeners are added in BrowserGlue.jsm
   async receiveMessage(message) {
-    // Only respond to messages sent from about:logins.
-    if (
-      message.target.remoteType != EXPECTED_ABOUTLOGINS_REMOTE_TYPE ||
-      message.target.contentPrincipal.originNoSuffix != ABOUT_LOGINS_ORIGIN
-    ) {
-      return;
+      throw new Error(
+        `AboutLoginsParent: Received ${
+          message.name
+        } message the remote type didn't match expectations: ${
+          message.target.remoteType
+        } == ${EXPECTED_ABOUTLOGINS_REMOTE_TYPE}`
+      );
     }
 
     switch (message.name) {
@@ -100,7 +94,12 @@ var AboutLoginsParent = {
           usernameField: "",
           passwordField: "",
         });
-        Services.logins.addLogin(LoginHelper.vanillaObjectToLogin(newLogin));
+        newLogin = LoginHelper.vanillaObjectToLogin(newLogin);
+        try {
+          Services.logins.addLogin(newLogin);
+        } catch (error) {
+          this.handleLoginStorageErrors(newLogin, error, message);
+        }
         break;
       }
       case "AboutLogins:DeleteLogin": {
@@ -233,11 +232,33 @@ var AboutLoginsParent = {
         if (loginUpdates.hasOwnProperty("password")) {
           modifiedLogin.password = loginUpdates.password;
         }
-
-        Services.logins.modifyLogin(logins[0], modifiedLogin);
+        try {
+          Services.logins.modifyLogin(logins[0], modifiedLogin);
+        } catch (error) {
+          this.handleLoginStorageErrors(modifiedLogin, error, message);
+        }
         break;
       }
     }
+  },
+
+  handleLoginStorageErrors(login, error, message) {
+    let messageObject = {
+      login: augmentVanillaLoginObject(LoginHelper.loginToVanillaObject(login)),
+      errorMessage: error.message,
+    };
+
+    if (error.message.includes("This login already exists")) {
+      // See comment in LoginHelper.createLoginAlreadyExistsError as to
+      // why we need to call .toString() on the nsISupportsString.
+      messageObject.existingLoginGuid = error.data.toString();
+    }
+
+    const messageManager = message.target.messageManager;
+    messageManager.sendAsyncMessage(
+      "AboutLogins:ShowLoginItemError",
+      messageObject
+    );
   },
 
   async observe(subject, topic, type) {

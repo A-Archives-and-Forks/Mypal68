@@ -345,9 +345,6 @@ class BasePopup {
       setupBrowser(browser);
       let mm = browser.messageManager;
 
-      // Sets the context information for context menus.
-      mm.loadFrameScript("chrome://browser/content/content.js", true, true);
-
       mm.loadFrameScript(
         "chrome://extensions/content/ext-browser-content.js",
         false,

@@ -29,17 +29,19 @@ function sendObserverNotification(topic) {
 }
 
 function setTrackEnabled(audio, video) {
-  return ContentTask.spawn(gBrowser.selectedBrowser, { audio, video }, function(
-    args
-  ) {
-    let stream = content.wrappedJSObject.gStreams[0];
-    if (args.audio != null) {
-      stream.getAudioTracks()[0].enabled = args.audio;
+  return SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [{ audio, video }],
+    function(args) {
+      let stream = content.wrappedJSObject.gStreams[0];
+      if (args.audio != null) {
+        stream.getAudioTracks()[0].enabled = args.audio;
+      }
+      if (args.video != null) {
+        stream.getVideoTracks()[0].enabled = args.video;
+      }
     }
-    if (args.video != null) {
-      stream.getVideoTracks()[0].enabled = args.video;
-    }
-  });
+  );
 }
 
 async function getVideoTrackMuted() {
@@ -75,41 +77,45 @@ async function getAudioTrackEvents() {
 }
 
 function cloneTracks(audio, video) {
-  return ContentTask.spawn(gBrowser.selectedBrowser, { audio, video }, function(
-    args
-  ) {
-    if (!content.wrappedJSObject.gClones) {
-      content.wrappedJSObject.gClones = [];
+  return SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [{ audio, video }],
+    function(args) {
+      if (!content.wrappedJSObject.gClones) {
+        content.wrappedJSObject.gClones = [];
+      }
+      let clones = content.wrappedJSObject.gClones;
+      let stream = content.wrappedJSObject.gStreams[0];
+      if (args.audio != null) {
+        clones.push(stream.getAudioTracks()[0].clone());
+      }
+      if (args.video != null) {
+        clones.push(stream.getVideoTracks()[0].clone());
+      }
     }
-    let clones = content.wrappedJSObject.gClones;
-    let stream = content.wrappedJSObject.gStreams[0];
-    if (args.audio != null) {
-      clones.push(stream.getAudioTracks()[0].clone());
-    }
-    if (args.video != null) {
-      clones.push(stream.getVideoTracks()[0].clone());
-    }
-  });
+  );
 }
 
 function stopClonedTracks(audio, video) {
-  return ContentTask.spawn(gBrowser.selectedBrowser, { audio, video }, function(
-    args
-  ) {
-    let clones = content.wrappedJSObject.gClones || [];
-    if (args.audio != null) {
-      clones.filter(t => t.kind == "audio").forEach(t => t.stop());
+  return SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [{ audio, video }],
+    function(args) {
+      let clones = content.wrappedJSObject.gClones || [];
+      if (args.audio != null) {
+        clones.filter(t => t.kind == "audio").forEach(t => t.stop());
+      }
+      if (args.video != null) {
+        clones.filter(t => t.kind == "video").forEach(t => t.stop());
+      }
+      let liveClones = clones.filter(t => t.readyState == "live");
+      if (!liveClones.length) {
+        delete content.wrappedJSObject.gClones;
+      } else {
+        content.wrappedJSObject.gClones = liveClones;
+      }
     }
-    if (args.video != null) {
-      clones.filter(t => t.kind == "video").forEach(t => t.stop());
-    }
-    let liveClones = clones.filter(t => t.readyState == "live");
-    if (liveClones.length == 0) {
-      delete content.wrappedJSObject.gClones;
-    } else {
-      content.wrappedJSObject.gClones = liveClones;
-    }
-  });
+  );
 }
 
 var gTests = [
@@ -117,18 +123,23 @@ var gTests = [
     desc:
       "getUserMedia audio+video: disabling the stream shows the paused indicator",
     run: async function checkDisabled() {
+      let observerPromise = expectObserverCalled("getUserMedia:request");
       let promise = promisePopupNotificationShown("webRTC-shareDevices");
       await promiseRequestDevice(true, true);
       await promise;
-      await expectObserverCalled("getUserMedia:request");
+      await observerPromise;
       checkDeviceSelectors(true, true);
 
       let indicator = promiseIndicatorWindow();
+      let observerPromise1 = expectObserverCalled(
+        "getUserMedia:response:allow"
+      );
+      let observerPromise2 = expectObserverCalled("recording-device-events");
       await promiseMessage("ok", () => {
         PopupNotifications.panel.firstElementChild.button.click();
       });
-      await expectObserverCalled("getUserMedia:response:allow");
-      await expectObserverCalled("recording-device-events");
+      await observerPromise1;
+      await observerPromise2;
       Assert.deepEqual(
         await getMediaCaptureState(),
         { audio: true, video: true },
@@ -141,6 +152,7 @@ var gTests = [
       });
 
       // Disable both audio and video.
+      observerPromise = expectObserverCalled("recording-device-events", 2);
       await setTrackEnabled(false, false);
 
       // Wait for capture state to propagate to the UI asynchronously.
@@ -151,7 +163,7 @@ var gTests = [
         "video should be disabled"
       );
 
-      await expectObserverCalled("recording-device-events", 2);
+      await observerPromise;
 
       // The identity UI should show both as disabled.
       await checkSharingUI({
@@ -160,6 +172,7 @@ var gTests = [
       });
 
       // Enable only audio again.
+      observerPromise = expectObserverCalled("recording-device-events");
       await setTrackEnabled(true);
 
       await BrowserTestUtils.waitForCondition(
@@ -169,7 +182,7 @@ var gTests = [
         "audio should be enabled"
       );
 
-      await expectObserverCalled("recording-device-events");
+      await observerPromise;
 
       // The identity UI should show only video as disabled.
       await checkSharingUI({
@@ -178,6 +191,7 @@ var gTests = [
       });
 
       // Enable video again.
+      observerPromise = expectObserverCalled("recording-device-events");
       await setTrackEnabled(null, true);
 
       await BrowserTestUtils.waitForCondition(
@@ -186,7 +200,7 @@ var gTests = [
         "video should be enabled"
       );
 
-      await expectObserverCalled("recording-device-events");
+      await observerPromise;
 
       // Both streams should show as running.
       await checkSharingUI({
@@ -201,18 +215,23 @@ var gTests = [
     desc:
       "getUserMedia audio+video: disabling the original tracks and stopping enabled clones shows the paused indicator",
     run: async function checkDisabledAfterCloneStop() {
+      let observerPromise = expectObserverCalled("getUserMedia:request");
       let promise = promisePopupNotificationShown("webRTC-shareDevices");
       await promiseRequestDevice(true, true);
       await promise;
-      await expectObserverCalled("getUserMedia:request");
+      await observerPromise;
       checkDeviceSelectors(true, true);
 
       let indicator = promiseIndicatorWindow();
+      let observerPromise1 = expectObserverCalled(
+        "getUserMedia:response:allow"
+      );
+      let observerPromise2 = expectObserverCalled("recording-device-events");
       await promiseMessage("ok", () => {
         PopupNotifications.panel.firstElementChild.button.click();
       });
-      await expectObserverCalled("getUserMedia:response:allow");
-      await expectObserverCalled("recording-device-events");
+      await observerPromise1;
+      await observerPromise2;
       Assert.deepEqual(
         await getMediaCaptureState(),
         { audio: true, video: true },
@@ -230,7 +249,7 @@ var gTests = [
       // Disable both audio and video.
       await setTrackEnabled(false, false);
 
-      await expectNoObserverCalled();
+      observerPromise = expectObserverCalled("recording-device-events", 2);
 
       // Stop the clones. This should disable the sharing indicators.
       await stopClonedTracks(true, true);
@@ -245,7 +264,7 @@ var gTests = [
         "video and audio should be disabled"
       );
 
-      await expectObserverCalled("recording-device-events", 2);
+      await observerPromise;
 
       // The identity UI should show both as disabled.
       await checkSharingUI({
@@ -254,6 +273,7 @@ var gTests = [
       });
 
       // Enable only audio again.
+      observerPromise = expectObserverCalled("recording-device-events");
       await setTrackEnabled(true);
 
       await BrowserTestUtils.waitForCondition(
@@ -263,7 +283,7 @@ var gTests = [
         "audio should be enabled"
       );
 
-      await expectObserverCalled("recording-device-events");
+      await observerPromise;
 
       // The identity UI should show only video as disabled.
       await checkSharingUI({
@@ -272,6 +292,7 @@ var gTests = [
       });
 
       // Enable video again.
+      observerPromise = expectObserverCalled("recording-device-events");
       await setTrackEnabled(null, true);
 
       await BrowserTestUtils.waitForCondition(
@@ -280,7 +301,7 @@ var gTests = [
         "video should be enabled"
       );
 
-      await expectObserverCalled("recording-device-events");
+      await observerPromise;
 
       // Both streams should show as running.
       await checkSharingUI({
@@ -295,10 +316,11 @@ var gTests = [
     desc:
       "getUserMedia screen: disabling the stream shows the paused indicator",
     run: async function checkScreenDisabled() {
+      let observerPromise = expectObserverCalled("getUserMedia:request");
       let promise = promisePopupNotificationShown("webRTC-shareDevices");
       await promiseRequestDevice(false, true, null, "screen");
       await promise;
-      await expectObserverCalled("getUserMedia:request");
+      await observerPromise;
 
       is(
         PopupNotifications.getNotification("webRTC-shareDevices").anchorID,
@@ -314,11 +336,15 @@ var gTests = [
       menulist.getItemAtIndex(menulist.itemCount - 1).doCommand();
 
       let indicator = promiseIndicatorWindow();
+      let observerPromise1 = expectObserverCalled(
+        "getUserMedia:response:allow"
+      );
+      let observerPromise2 = expectObserverCalled("recording-device-events");
       await promiseMessage("ok", () => {
         PopupNotifications.panel.firstElementChild.button.click();
       });
-      await expectObserverCalled("getUserMedia:response:allow");
-      await expectObserverCalled("recording-device-events");
+      await observerPromise1;
+      await observerPromise2;
       Assert.deepEqual(
         await getMediaCaptureState(),
         { screen: "Screen" },
@@ -328,6 +354,7 @@ var gTests = [
       await indicator;
       await checkSharingUI({ screen: "Screen" });
 
+      observerPromise = expectObserverCalled("recording-device-events");
       await setTrackEnabled(null, false);
 
       // Wait for capture state to propagate to the UI asynchronously.
@@ -335,18 +362,19 @@ var gTests = [
         () => window.gIdentityHandler._sharingState.screen == "ScreenPaused",
         "screen should be disabled"
       );
-      await expectObserverCalled("recording-device-events");
+      await observerPromise;
       await checkSharingUI({ screen: "ScreenPaused" }, window, {
         screen: "Screen",
       });
 
+      observerPromise = expectObserverCalled("recording-device-events");
       await setTrackEnabled(null, true);
 
       await BrowserTestUtils.waitForCondition(
         () => window.gIdentityHandler._sharingState.screen == "Screen",
         "screen should be enabled"
       );
-      await expectObserverCalled("recording-device-events");
+      await observerPromise;
       await checkSharingUI({ screen: "Screen" });
       await closeStream();
     },

@@ -111,6 +111,20 @@ class FaviconLoad {
       Ci.nsIContentPolicy.TYPE_INTERNAL_IMAGE_FAVICON
     );
 
+    if (this.channel instanceof Ci.nsIHttpChannel) {
+      this.channel.QueryInterface(Ci.nsIHttpChannel);
+      let referrerInfo = Cc["@mozilla.org/referrer-info;1"].createInstance(
+        Ci.nsIReferrerInfo
+      );
+      // Sometimes node is a document and sometimes it is an element. We need
+      // to set the referrer info correctly either way.
+      if (iconInfo.node.nodeType == iconInfo.node.DOCUMENT_NODE) {
+        referrerInfo.initWithDocument(iconInfo.node);
+      } else {
+        referrerInfo.initWithElement(iconInfo.node);
+      }
+      this.channel.referrerInfo = referrerInfo;
+    }
     this.channel.loadFlags |=
       Ci.nsIRequest.LOAD_BACKGROUND |
       Ci.nsIRequest.VALIDATE_NEVER |
@@ -413,7 +427,7 @@ function guessType(icon) {
  * @param {integer} preferredWidth The preferred width for tab icons.
  */
 function selectIcons(iconInfos, preferredWidth) {
-  if (iconInfos.length == 0) {
+  if (!iconInfos.length) {
     return {
       richIcon: null,
       tabIcon: null,
@@ -491,8 +505,8 @@ function selectIcons(iconInfos, preferredWidth) {
 }
 
 class IconLoader {
-  constructor(mm) {
-    this.mm = mm;
+  constructor(actor) {
+    this.actor = actor;
   }
 
   async load(iconInfo) {
@@ -512,7 +526,7 @@ class IconLoader {
       } catch (ex) {
         return;
       }
-      this.mm.sendAsyncMessage("Link:SetIcon", {
+      this.actor.sendAsyncMessage("Link:SetIcon", {
         pageURL: iconInfo.pageUri.spec,
         originalURL: iconInfo.iconUri.spec,
         canUseForTab: !iconInfo.isRichIcon,
@@ -524,7 +538,7 @@ class IconLoader {
     }
 
     // Let the main process that a tab icon is possibly coming.
-    this.mm.sendAsyncMessage("Link:LoadingIcon", {
+    this.actor.sendAsyncMessage("Link:LoadingIcon", {
       originalURL: iconInfo.iconUri.spec,
       canUseForTab: !iconInfo.isRichIcon,
     });
@@ -533,7 +547,7 @@ class IconLoader {
       this._loader = new FaviconLoad(iconInfo);
       let { dataURL, expiration, canStoreIcon } = await this._loader.load();
 
-      this.mm.sendAsyncMessage("Link:SetIcon", {
+      this.actor.sendAsyncMessage("Link:SetIcon", {
         pageURL: iconInfo.pageUri.spec,
         originalURL: iconInfo.iconUri.spec,
         canUseForTab: !iconInfo.isRichIcon,
@@ -546,7 +560,7 @@ class IconLoader {
         Cu.reportError(e);
 
         // Used mainly for tests currently.
-        this.mm.sendAsyncMessage("Link:SetFailedIcon", {
+        this.actor.sendAsyncMessage("Link:SetFailedIcon", {
           originalURL: iconInfo.iconUri.spec,
           canUseForTab: !iconInfo.isRichIcon,
         });
@@ -567,8 +581,8 @@ class IconLoader {
 }
 
 class FaviconLoader {
-  constructor(mm) {
-    this.mm = mm;
+  constructor(actor) {
+    this.actor = actor;
     this.iconInfos = [];
 
     // Icons added after onPageShow() are likely added by modifying <link> tags
@@ -579,8 +593,8 @@ class FaviconLoader {
 
     // For every page we attempt to find a rich icon and a tab icon. These
     // objects take care of the load process for each.
-    this.richIconLoader = new IconLoader(mm);
-    this.tabIconLoader = new IconLoader(mm);
+    this.richIconLoader = new IconLoader(actor);
+    this.tabIconLoader = new IconLoader(actor);
 
     this.iconTask = new DeferredTask(
       () => this.loadIcons(),
@@ -593,12 +607,12 @@ class FaviconLoader {
     // we can still attempt to load icons, which will fail since the content
     // window is no longer available. Checking if iconInfos has been cleared
     // allows us to bail out early in this case.
-    if (this.iconInfos.length == 0) {
+    if (!this.iconInfos.length) {
       return;
     }
 
     let preferredWidth =
-      PREFERRED_WIDTH * Math.ceil(this.mm.content.devicePixelRatio);
+      PREFERRED_WIDTH * Math.ceil(this.actor.contentWindow.devicePixelRatio);
     let { richIcon, tabIcon } = selectIcons(this.iconInfos, preferredWidth);
     this.iconInfos = [];
 
@@ -634,7 +648,7 @@ class FaviconLoader {
       width: -1,
       isRichIcon: false,
       type: TYPE_ICO,
-      node: this.mm.content.document,
+      node: this.actor.document,
       beforePageShow: this.beforePageShow,
     });
     this.iconTask.arm();

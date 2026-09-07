@@ -196,6 +196,13 @@ var whitelist = [
   },
   // Referenced by the webcompat system addon for localization
   { file: "resource://gre/localization/en-US/toolkit/about/aboutCompat.ftl" },
+
+  // Bug 1559554
+  { file: "chrome://browser/content/aboutlogins/aboutLoginsUtils.js" },
+
+  // This file is referenced from WebRTCParent.jsm. Once this localization
+  // file gets moved to the locales directory, this should get removed.
+  { file: "resource://app/localization/en-US/preview/popup-notifications.ftl" },
 ];
 
 if (!AppConstants.MOZ_NEW_NOTIFICATION_STORE) {

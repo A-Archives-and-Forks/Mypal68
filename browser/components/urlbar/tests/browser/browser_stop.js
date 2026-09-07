@@ -55,8 +55,7 @@ async function typeAndSubmitAndStop(url) {
 
   let docLoadPromise = BrowserTestUtils.waitForDocLoadAndStopIt(
     url,
-    gBrowser.selectedBrowser,
-    false
+    gBrowser.selectedBrowser
   );
 
   // When the load is stopped, tabbrowser calls gURLBar.setURI and then calls
