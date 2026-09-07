@@ -693,13 +693,13 @@ struct CrossOriginOpenerPolicyValidator {
       std::underlying_type_t<nsILoadInfo::CrossOriginOpenerPolicy>;
 
   static bool IsLegalValue(const IntegralType e) {
-    return AreIntegralValuesEqual(e, nsILoadInfo::OPENER_POLICY_NULL) ||
+    return AreIntegralValuesEqual(e, nsILoadInfo::OPENER_POLICY_UNSAFE_NONE) ||
            AreIntegralValuesEqual(e, nsILoadInfo::OPENER_POLICY_SAME_ORIGIN) ||
-           AreIntegralValuesEqual(e, nsILoadInfo::OPENER_POLICY_SAME_SITE) ||
            AreIntegralValuesEqual(
-               e, nsILoadInfo::OPENER_POLICY_SAME_ORIGIN_ALLOW_OUTGOING) ||
+               e, nsILoadInfo::OPENER_POLICY_SAME_ORIGIN_ALLOW_POPUPS) ||
            AreIntegralValuesEqual(
-               e, nsILoadInfo::OPENER_POLICY_SAME_SITE_ALLOW_OUTGOING);
+               e, nsILoadInfo::
+                       OPENER_POLICY_SAME_ORIGIN_EMBEDDER_POLICY_REQUIRE_CORP);
   }
 
  private:
@@ -715,30 +715,27 @@ struct ParamTraits<nsILoadInfo::CrossOriginOpenerPolicy>
     : EnumSerializer<nsILoadInfo::CrossOriginOpenerPolicy,
                      CrossOriginOpenerPolicyValidator> {};
 
-struct CrossOriginPolicyValidator {
+struct CrossOriginEmbedderPolicyValidator {
   using IntegralType =
-      std::underlying_type_t<nsILoadInfo::CrossOriginPolicy>;
+      std::underlying_type_t<nsILoadInfo::CrossOriginEmbedderPolicy>;
 
   static bool IsLegalValue(const IntegralType e) {
-    return AreIntegralValuesEqual(e, nsILoadInfo::CROSS_ORIGIN_POLICY_NULL) ||
-           AreIntegralValuesEqual(e,
-                                  nsILoadInfo::CROSS_ORIGIN_POLICY_ANONYMOUS) ||
-           AreIntegralValuesEqual(
-               e, nsILoadInfo::CROSS_ORIGIN_POLICY_USE_CREDENTIALS);
+    return AreIntegralValuesEqual(e, nsILoadInfo::EMBEDDER_POLICY_NULL) ||
+           AreIntegralValuesEqual(e, nsILoadInfo::EMBEDDER_POLICY_REQUIRE_CORP);
   }
 
  private:
   static bool AreIntegralValuesEqual(
       const IntegralType aLhs,
-      const nsILoadInfo::CrossOriginPolicy aRhs) {
+      const nsILoadInfo::CrossOriginEmbedderPolicy aRhs) {
     return aLhs == static_cast<IntegralType>(aRhs);
   }
 };
 
 template <>
-struct ParamTraits<nsILoadInfo::CrossOriginPolicy>
-    : EnumSerializer<nsILoadInfo::CrossOriginPolicy,
-                     CrossOriginPolicyValidator> {};
+struct ParamTraits<nsILoadInfo::CrossOriginEmbedderPolicy>
+    : EnumSerializer<nsILoadInfo::CrossOriginEmbedderPolicy,
+                     CrossOriginEmbedderPolicyValidator> {};
 
 template <size_t N, typename Word>
 struct ParamTraits<mozilla::BitSet<N, Word>> {

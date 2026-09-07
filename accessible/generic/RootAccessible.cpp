@@ -26,6 +26,7 @@
 #include "mozilla/dom/CustomEvent.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/ScriptSettings.h"
+#include "mozilla/dom/BrowserHost.h"
 
 #include "nsIDocShellTreeOwner.h"
 #include "mozilla/dom/Event.h"
@@ -668,12 +669,12 @@ ProxyAccessible* RootAccessible::GetPrimaryRemoteTopLevelContentDoc() const {
   mDocumentNode->GetDocShell()->GetTreeOwner(getter_AddRefs(owner));
   NS_ENSURE_TRUE(owner, nullptr);
 
-  nsCOMPtr<nsIRemoteTab> browserParent;
-  owner->GetPrimaryRemoteTab(getter_AddRefs(browserParent));
-  if (!browserParent) {
+  nsCOMPtr<nsIRemoteTab> remoteTab;
+  owner->GetPrimaryRemoteTab(getter_AddRefs(remoteTab));
+  if (!remoteTab) {
     return nullptr;
   }
 
-  auto tab = static_cast<dom::BrowserParent*>(browserParent.get());
+  auto tab = static_cast<dom::BrowserHost*>(remoteTab.get());
   return tab->GetTopLevelDocAccessible();
 }

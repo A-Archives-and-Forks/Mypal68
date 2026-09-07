@@ -11,7 +11,7 @@
 #include "nsMemory.h"
 #include "prinrval.h"
 #include "mozilla/Logging.h"
-#include "mozilla/SystemGroup.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/SpinEventLoopUntil.h"
 #include "nsThreadSyncDispatch.h"
 
@@ -160,9 +160,10 @@ void nsThreadPool::ShutdownThread(nsIThread* aThread) {
   // shutdown requires this thread have an event loop (and it may not, see bug
   // 10204784).  The simplest way to cover all cases is to asynchronously
   // shutdown aThread from the main thread.
-  SystemGroup::Dispatch(TaskCategory::Other,
-                        NewRunnableMethod("nsIThread::AsyncShutdown", aThread,
-                                          &nsIThread::AsyncShutdown));
+  SchedulerGroup::Dispatch(
+      TaskCategory::Other,
+      NewRunnableMethod("nsIThread::AsyncShutdown", aThread,
+                        &nsIThread::AsyncShutdown));
 }
 
 // This event 'runs' for the lifetime of the worker thread.  The actual

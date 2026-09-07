@@ -15,7 +15,6 @@
 #include "mozilla/PermissionManager.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_permissions.h"
-#include "mozilla/SystemGroup.h"
 
 #include "mozIStorageService.h"
 #include "mozIStorageConnection.h"
@@ -34,6 +33,7 @@
 #include "nsIPrefBranch.h"
 #include "nsIPrincipal.h"
 #include "nsIURIMutator.h"
+#include "nsIWritablePropertyBag2.h"
 #include "nsReadLine.h"
 #include "nsToolkitCompsCID.h"
 
@@ -121,7 +121,7 @@ static const nsLiteralCString kPreloadPermissions[] = {
     // interception when a user has disabled storage for a specific site.  Once
     // service worker interception moves to the parent process this should be
     // removed.  See bug 1428130.
-    "cookie"_ns, "trackingprotection"_ns, "trackingprotection-pb"_ns,
+    "cookie"_ns,
 
     USER_INTERACTION_PERM};
 
@@ -613,12 +613,13 @@ void PermissionManager::Startup() {
 // PermissionManager Implementation
 
 NS_IMPL_ISUPPORTS(PermissionManager, nsIPermissionManager, nsIObserver,
-                  nsISupportsWeakReference)
+                  nsISupportsWeakReference, nsIAsyncShutdownBlocker)
 
 PermissionManager::PermissionManager()
     : mMonitor("PermissionManager::mMonitor"),
       mState(eInitializing),
       mMemoryOnlyDB(false),
+      mBlockerAdded(false),
       mLargestID(0) {}
 
 PermissionManager::~PermissionManager() {
@@ -631,12 +632,6 @@ PermissionManager::~PermissionManager() {
     }
   }
   mPermissionKeyPromiseMap.Clear();
-
-  RemoveAllFromMemory();
-  if (gPermissionManager) {
-    MOZ_ASSERT(gPermissionManager == this);
-    gPermissionManager = nullptr;
-  }
 
   if (mThread) {
     mThread->Shutdown();
@@ -658,9 +653,7 @@ already_AddRefed<nsIPermissionManager> PermissionManager::GetXPCOMSingleton() {
   // See bug 209571.
   auto permManager = MakeRefPtr<PermissionManager>();
   if (NS_SUCCEEDED(permManager->Init())) {
-    // Note: This is cleared in the PermissionManager destructor.
     gPermissionManager = permManager.get();
-    ClearOnShutdown(&gPermissionManager);
     return permManager.forget();
   }
 
@@ -695,6 +688,10 @@ nsresult PermissionManager::Init() {
     // Stop here; we don't need the DB in the child process. Instead we will be
     // sent permissions as we need them by our parent process.
     mState = eReady;
+
+    // We use ClearOnShutdown on the content process only because on the parent
+    // process we need to block the shutdown for the final closeDB() call.
+    ClearOnShutdown(&gPermissionManager);
     return NS_OK;
   }
 
@@ -704,6 +701,27 @@ nsresult PermissionManager::Init() {
     observerService->AddObserver(this, "profile-do-change", true);
     observerService->AddObserver(this, "testonly-reload-permissions-from-disk",
                                  true);
+  }
+
+  if (XRE_IsParentProcess()) {
+    nsCOMPtr<nsIAsyncShutdownClient> asc = GetShutdownPhase();
+    if (asc) {
+      nsAutoString blockerName;
+      MOZ_ALWAYS_SUCCEEDS(GetName(blockerName));
+
+      // This method can fail during some xpcshell-tests.
+      nsresult rv =
+          asc->AddBlocker(this, NS_LITERAL_STRING_FROM_CSTRING(__FILE__),
+                          __LINE__, blockerName);
+      Unused << NS_WARN_IF(NS_FAILED(rv));
+      if (NS_SUCCEEDED(rv)) {
+        mBlockerAdded = true;
+      }
+    }
+
+    if (!mBlockerAdded) {
+      ClearOnShutdown(&gPermissionManager);
+    }
   }
 
   AddIdleDailyMaintenanceJob();
@@ -810,6 +828,16 @@ nsresult PermissionManager::TryInitDB(bool aRemoveFile,
     mState = eDBInitialized;
   });
 
+  auto data = mThreadBoundData.Access();
+
+  auto raiiFailure = MakeScopeExit([&]() {
+    if (data->mDBConn) {
+      DebugOnly<nsresult> rv = data->mDBConn->Close();
+      MOZ_ASSERT(NS_SUCCEEDED(rv));
+      data->mDBConn = nullptr;
+    }
+  });
+
   nsresult rv;
 
   if (aRemoveFile) {
@@ -839,8 +867,6 @@ nsresult PermissionManager::TryInitDB(bool aRemoveFile,
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
-
-  auto data = mThreadBoundData.Access();
 
   bool ready;
   data->mDBConn->GetConnectionReady(&ready);
@@ -1390,6 +1416,8 @@ nsresult PermissionManager::TryInitDB(bool aRemoveFile,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
+  raiiFailure.release();
+
   return NS_OK;
 }
 
@@ -1485,6 +1513,15 @@ nsresult PermissionManager::CreateTable() {
                        ")"));
 }
 
+// Returns whether the given combination of expire type and expire time are
+// expired. Note that EXPIRE_SESSION only honors expireTime if it is nonzero.
+bool PermissionManager::HasExpired(uint32_t aExpireType, int64_t aExpireTime) {
+  return (aExpireType == nsIPermissionManager::EXPIRE_TIME ||
+          (aExpireType == nsIPermissionManager::EXPIRE_SESSION &&
+           aExpireTime != 0)) &&
+         aExpireTime <= EXPIRY_NOW;
+}
+
 NS_IMETHODIMP
 PermissionManager::AddFromPrincipal(nsIPrincipal* aPrincipal,
                                     const nsACString& aType,
@@ -1498,12 +1535,8 @@ PermissionManager::AddFromPrincipal(nsIPrincipal* aPrincipal,
                      aExpireType == nsIPermissionManager::EXPIRE_POLICY,
                  NS_ERROR_INVALID_ARG);
 
-  // Skip addition if the permission is already expired. Note that
-  // EXPIRE_SESSION only honors expireTime if it is nonzero.
-  if ((aExpireType == nsIPermissionManager::EXPIRE_TIME ||
-       (aExpireType == nsIPermissionManager::EXPIRE_SESSION &&
-        aExpireTime != 0)) &&
-      aExpireTime <= EXPIRY_NOW) {
+  // Skip addition if the permission is already expired.
+  if (HasExpired(aExpireType, aExpireTime)) {
     return NS_OK;
   }
 
@@ -1737,6 +1770,8 @@ nsresult PermissionManager::AddInternal(
         break;
       }
 
+      PermissionEntry oldPermissionEntry = entry->GetPermissions()[index];
+
       // If the new expireType is EXPIRE_SESSION, then we have to keep a
       // copy of the previous permission/expireType values. This cached value
       // will be used when restoring the permissions of an app.
@@ -1760,13 +1795,29 @@ nsresult PermissionManager::AddInternal(
       entry->GetPermissions()[index].mExpireTime = aExpireTime;
       entry->GetPermissions()[index].mModificationTime = aModificationTime;
 
-      if (aDBOperation == eWriteToDB &&
-          IsPersistentExpire(aExpireType, aType)) {
-        // We care only about the id, the permission and
-        // expireType/expireTime/modificationTime here. We pass dummy values for
-        // all other parameters.
-        UpdateDB(op, id, EmptyCString(), EmptyCString(), aPermission,
-                 aExpireType, aExpireTime, aModificationTime);
+      if (aDBOperation == eWriteToDB) {
+        bool newIsPersistentExpire = IsPersistentExpire(aExpireType, aType);
+        bool oldIsPersistentExpire =
+            IsPersistentExpire(oldPermissionEntry.mExpireType, aType);
+
+        if (!newIsPersistentExpire && oldIsPersistentExpire) {
+          // Maybe we have to remove the previous permission if that was
+          // persistent.
+          UpdateDB(eOperationRemoving, id, EmptyCString(), EmptyCString(), 0,
+                   nsIPermissionManager::EXPIRE_NEVER, 0, 0);
+        } else if (newIsPersistentExpire && !oldIsPersistentExpire) {
+          // It could also be that the previous permission was session-only but
+          // this needs to be written into the DB. In this case, we have to run
+          // an Adding operation.
+          UpdateDB(eOperationAdding, id, origin, aType, aPermission,
+                   aExpireType, aExpireTime, aModificationTime);
+        } else if (newIsPersistentExpire) {
+          // This is the a simple update.  We care only about the id, the
+          // permission and expireType/expireTime/modificationTime here. We pass
+          // dummy values for all other parameters.
+          UpdateDB(op, id, EmptyCString(), EmptyCString(), aPermission,
+                   aExpireType, aExpireTime, aModificationTime);
+        }
       }
 
       if (aNotifyOperation == eNotify) {
@@ -1885,6 +1936,8 @@ PermissionManager::RemoveAllSince(int64_t aSince) {
 
 template <class T>
 nsresult PermissionManager::RemovePermissionEntries(T aCondition) {
+  EnsureReadCompleted();
+
   Vector<Tuple<nsCOMPtr<nsIPrincipal>, nsCString, nsCString>, 10> array;
   for (const PermissionHashKey& entry : mPermissionTable) {
     for (const auto& permEntry : entry.GetPermissions()) {
@@ -1958,20 +2011,19 @@ PermissionManager::RemoveByTypeSince(const nsACString& aType,
       });
 }
 
-void PermissionManager::CloseDB(bool aRebuildOnSuccess) {
+void PermissionManager::CloseDB(CloseDBNextOp aNextOp) {
   EnsureReadCompleted();
 
   mState = eClosed;
 
   nsCOMPtr<nsIInputStream> defaultsInputStream;
-  if (aRebuildOnSuccess) {
+  if (aNextOp == eRebuldOnSuccess) {
     defaultsInputStream = GetDefaultsInputStream();
   }
 
   RefPtr<PermissionManager> self = this;
   mThread->Dispatch(NS_NewRunnableFunction(
-      "PermissionManager::CloseDB",
-      [self, aRebuildOnSuccess, defaultsInputStream] {
+      "PermissionManager::CloseDB", [self, aNextOp, defaultsInputStream] {
         auto data = self->mThreadBoundData.Access();
         // Null the statements, this will finalize them.
         data->mStmtInsert = nullptr;
@@ -1982,9 +2034,15 @@ void PermissionManager::CloseDB(bool aRebuildOnSuccess) {
           MOZ_ASSERT(NS_SUCCEEDED(rv));
           data->mDBConn = nullptr;
 
-          if (aRebuildOnSuccess) {
+          if (aNextOp == eRebuldOnSuccess) {
             self->TryInitDB(true, defaultsInputStream);
           }
+        }
+
+        if (aNextOp == eShutdown) {
+          NS_DispatchToMainThread(NS_NewRunnableFunction(
+              "PermissionManager::MaybeCompleteShutdown",
+              [self] { self->MaybeCompleteShutdown(); }));
         }
       }));
 }
@@ -2039,7 +2097,7 @@ nsresult PermissionManager::RemoveAllInternal(bool aNotifyObservers) {
         if (NS_WARN_IF(NS_FAILED(rv))) {
           NS_DispatchToMainThread(NS_NewRunnableFunction(
               "PermissionManager::RemoveAllInternal-Failure",
-              [self] { self->CloseDB(true); }));
+              [self] { self->CloseDB(eRebuldOnSuccess); }));
         }
       }));
 
@@ -2205,6 +2263,13 @@ NS_IMETHODIMP PermissionManager::GetAllWithTypePrefix(
         continue;
       }
 
+      // If the permission is expired, skip it. We're not deleting it here
+      // because we're iterating over a lot of permissions.
+      // It will be removed as part of the daily maintenance later.
+      if (HasExpired(permEntry.mExpireType, permEntry.mExpireTime)) {
+        continue;
+      }
+
       if (!aPrefix.IsEmpty() &&
           !StringBeginsWith(mTypeArray[permEntry.mType], aPrefix)) {
         continue;
@@ -2237,6 +2302,7 @@ NS_IMETHODIMP
 PermissionManager::GetAllForPrincipal(
     nsIPrincipal* aPrincipal, nsTArray<RefPtr<nsIPermission>>& aResult) {
   aResult.Clear();
+  EnsureReadCompleted();
 
   MOZ_ASSERT(PermissionAvailable(aPrincipal, EmptyCString()));
 
@@ -2259,6 +2325,13 @@ PermissionManager::GetAllForPrincipal(
     for (const auto& permEntry : entry->GetPermissions()) {
       // Only return custom permissions
       if (permEntry.mPermission == nsIPermissionManager::UNKNOWN_ACTION) {
+        continue;
+      }
+
+      // If the permission is expired, skip it. We're not deleting it here
+      // because we're iterating over a lot of permissions.
+      // It will be removed as part of the daily maintenance later.
+      if (HasExpired(permEntry.mExpireType, permEntry.mExpireTime)) {
         continue;
       }
 
@@ -2305,11 +2378,13 @@ NS_IMETHODIMP PermissionManager::Observe(nsISupports* aSubject,
   ENSURE_NOT_CHILD_PROCESS;
 
   if (!nsCRT::strcmp(aTopic, "profile-before-change")) {
-    // The profile is about to change,
-    // or is going away because the application is shutting down.
-    RemoveIdleDailyMaintenanceJob();
-    RemoveAllFromMemory();
-    CloseDB(false);
+    if (!mBlockerAdded) {
+      // The profile is about to change and the shutdown blocker has not been
+      // added yet (we are probably in a xpcshell-test).
+      RemoveIdleDailyMaintenanceJob();
+      RemoveAllFromMemory();
+      CloseDB(eNone);
+    }
   } else if (!nsCRT::strcmp(aTopic, "profile-do-change")) {
     // the profile has already changed; init the db from the new location
     InitDB(false);
@@ -2322,7 +2397,7 @@ NS_IMETHODIMP PermissionManager::Observe(nsISupports* aSubject,
     // always being initialized. This is not guarded by a pref because it's not
     // dangerous to reload permissions from disk, just bad for performance.
     RemoveAllFromMemory();
-    CloseDB(false);
+    CloseDB(eNone);
     InitDB(false);
   } else if (!nsCRT::strcmp(aTopic, OBSERVER_TOPIC_IDLE_DAILY)) {
     PerformIdleDailyMaintenance();
@@ -2353,6 +2428,8 @@ PermissionManager::RemovePermissionsWithAttributes(const nsAString& aPattern) {
 
 nsresult PermissionManager::RemovePermissionsWithAttributes(
     OriginAttributesPattern& aPattern) {
+  EnsureReadCompleted();
+
   Vector<Tuple<nsCOMPtr<nsIPrincipal>, nsCString, nsCString>, 10> permissions;
   for (const PermissionHashKey& entry : mPermissionTable) {
     nsCOMPtr<nsIPrincipal> principal;
@@ -2463,11 +2540,7 @@ PermissionManager::PermissionHashKey* PermissionManager::GetPermissionHashKey(
     PermissionEntry permEntry = entry->GetPermission(aType);
 
     // if the entry is expired, remove and keep looking for others.
-    // Note that EXPIRE_SESSION only honors expireTime if it is nonzero.
-    if ((permEntry.mExpireType == nsIPermissionManager::EXPIRE_TIME ||
-         (permEntry.mExpireType == nsIPermissionManager::EXPIRE_SESSION &&
-          permEntry.mExpireTime != 0)) &&
-        permEntry.mExpireTime <= EXPIRY_NOW) {
+    if (HasExpired(permEntry.mExpireType, permEntry.mExpireTime)) {
       entry = nullptr;
       RemoveFromPrincipal(aPrincipal, mTypeArray[aType]);
     } else if (permEntry.mPermission == nsIPermissionManager::UNKNOWN_ACTION) {
@@ -2530,11 +2603,7 @@ PermissionManager::PermissionHashKey* PermissionManager::GetPermissionHashKey(
     PermissionEntry permEntry = entry->GetPermission(aType);
 
     // if the entry is expired, remove and keep looking for others.
-    // Note that EXPIRE_SESSION only honors expireTime if it is nonzero.
-    if ((permEntry.mExpireType == nsIPermissionManager::EXPIRE_TIME ||
-         (permEntry.mExpireType == nsIPermissionManager::EXPIRE_SESSION &&
-          permEntry.mExpireTime != 0)) &&
-        permEntry.mExpireTime <= EXPIRY_NOW) {
+    if (HasExpired(permEntry.mExpireType, permEntry.mExpireTime)) {
       entry = nullptr;
       // If we need to remove a permission we mint a principal.  This is a bit
       // inefficient, but hopefully this code path isn't super common.
@@ -2919,7 +2988,7 @@ void PermissionManager::SetPermissionsWithKey(
     return;
   }
 
-  RefPtr<GenericPromise::Private> promise;
+  RefPtr<GenericNonExclusivePromise::Private> promise;
   bool foundKey =
       mPermissionKeyPromiseMap.Get(aPermissionKey, getter_AddRefs(promise));
   if (promise) {
@@ -2933,8 +3002,8 @@ void PermissionManager::SetPermissionsWithKey(
     // key, but it's possible.
     return;
   }
-  mPermissionKeyPromiseMap.InsertOrUpdate(aPermissionKey,
-                                          RefPtr<GenericPromise::Private>{});
+  mPermissionKeyPromiseMap.InsertOrUpdate(
+      aPermissionKey, RefPtr<GenericNonExclusivePromise::Private>{});
 
   // Add the permissions locally to our process
   for (IPC::Permission& perm : aPerms) {
@@ -3082,7 +3151,7 @@ bool PermissionManager::PermissionAvailable(nsIPrincipal* aPrincipal,
 
     // If we have a pending promise for the permission key in question, we don't
     // have the permission available, so report a warning and return false.
-    RefPtr<GenericPromise::Private> promise;
+    RefPtr<GenericNonExclusivePromise::Private> promise;
     if (!mPermissionKeyPromiseMap.Get(permissionKey, getter_AddRefs(promise)) ||
         promise) {
       // Emit a useful diagnostic warning with the permissionKey for the process
@@ -3106,15 +3175,15 @@ void PermissionManager::WhenPermissionsAvailable(nsIPrincipal* aPrincipal,
     return;
   }
 
-  nsTArray<RefPtr<GenericPromise>> promises;
+  nsTArray<RefPtr<GenericNonExclusivePromise>> promises;
   for (auto& pair : GetAllKeysForPrincipal(aPrincipal)) {
-    RefPtr<GenericPromise::Private> promise;
+    RefPtr<GenericNonExclusivePromise::Private> promise;
     if (!mPermissionKeyPromiseMap.Get(pair.first, getter_AddRefs(promise))) {
       // In this case we have found a permission which isn't available in the
       // content process and hasn't been requested yet. We need to create a new
       // promise, and send the request to the parent (if we have not already
       // done so).
-      promise = new GenericPromise::Private(__func__);
+      promise = new GenericNonExclusivePromise::Private(__func__);
       mPermissionKeyPromiseMap.InsertOrUpdate(pair.first, RefPtr{promise});
     }
 
@@ -3131,10 +3200,10 @@ void PermissionManager::WhenPermissionsAvailable(nsIPrincipal* aPrincipal,
     return;
   }
 
-  auto* thread = SystemGroup::AbstractMainThreadFor(TaskCategory::Other);
+  auto* thread = AbstractThread::MainThread();
 
   RefPtr<nsIRunnable> runnable = aRunnable;
-  GenericPromise::All(thread, promises)
+  GenericNonExclusivePromise::All(thread, promises)
       ->Then(
           thread, __func__, [runnable]() { runnable->Run(); },
           []() {
@@ -3493,6 +3562,63 @@ nsresult PermissionManager::TestPermissionWithoutDefaultsFromPrincipal(
   return CommonTestPermission(aPrincipal, -1, aType, aPermission,
                               nsIPermissionManager::UNKNOWN_ACTION, true, false,
                               true);
+}
+
+void PermissionManager::MaybeCompleteShutdown() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  nsCOMPtr<nsIAsyncShutdownClient> asc = GetShutdownPhase();
+  MOZ_ASSERT(asc);
+
+  DebugOnly<nsresult> rv = asc->RemoveBlocker(this);
+  MOZ_ASSERT(NS_SUCCEEDED(rv));
+}
+
+// Async shutdown blocker methods
+
+NS_IMETHODIMP PermissionManager::GetName(nsAString& aName) {
+  aName = u"PermissionManager: Flushing data"_ns;
+  return NS_OK;
+}
+
+NS_IMETHODIMP PermissionManager::BlockShutdown(
+    nsIAsyncShutdownClient* aClient) {
+  RemoveIdleDailyMaintenanceJob();
+  RemoveAllFromMemory();
+  CloseDB(eShutdown);
+
+  gPermissionManager = nullptr;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+PermissionManager::GetState(nsIPropertyBag** aBagOut) {
+  nsCOMPtr<nsIWritablePropertyBag2> propertyBag =
+      do_CreateInstance("@mozilla.org/hash-property-bag;1");
+
+  nsresult rv = propertyBag->SetPropertyAsInt32(u"state"_ns, mState);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  propertyBag.forget(aBagOut);
+
+  return NS_OK;
+}
+
+nsCOMPtr<nsIAsyncShutdownClient> PermissionManager::GetShutdownPhase() const {
+  nsresult rv;
+  nsCOMPtr<nsIAsyncShutdownService> svc =
+      do_GetService("@mozilla.org/async-shutdown-service;1", &rv);
+  if (NS_FAILED(rv)) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsIAsyncShutdownClient> client;
+  rv = svc->GetProfileBeforeChange(getter_AddRefs(client));
+  MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv));
+
+  return client;
 }
 
 }  // namespace mozilla

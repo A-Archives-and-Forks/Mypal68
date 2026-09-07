@@ -318,7 +318,7 @@ class nsWindow::GeckoViewSupport final
                    jni::Object::Param aSessionAccessibility,
                    jni::Object::Param aInitData, jni::String::Param aId,
                    jni::String::Param aChromeURI, int32_t aScreenId,
-                   bool aPrivateMode);
+                   bool aPrivateMode, bool aRemote);
 
   // Close and destroy the nsWindow.
   void Close();
@@ -337,6 +337,10 @@ class nsWindow::GeckoViewSupport final
                            jni::Object::Param aSessionAccessibility);
 
   void OnReady(jni::Object::Param aQueue = nullptr);
+
+  auto OnLoadRequest(mozilla::jni::String::Param aUri, int32_t aWindowType,
+                     int32_t aFlags, mozilla::jni::String::Param aTriggeringUri,
+                     bool aHasUserGesture) const -> java::GeckoResult::LocalRef;
 };
 
 /**
@@ -1192,7 +1196,8 @@ void nsWindow::GeckoViewSupport::Open(
     jni::Object::Param aQueue, jni::Object::Param aCompositor,
     jni::Object::Param aDispatcher, jni::Object::Param aSessionAccessibility,
     jni::Object::Param aInitData, jni::String::Param aId,
-    jni::String::Param aChromeURI, int32_t aScreenId, bool aPrivateMode) {
+    jni::String::Param aChromeURI, int32_t aScreenId, bool aPrivateMode,
+    bool aRemote) {
   MOZ_ASSERT(NS_IsMainThread());
 
   AUTO_PROFILER_LABEL("nsWindow::GeckoViewSupport::Open", OTHER);
@@ -1219,6 +1224,9 @@ void nsWindow::GeckoViewSupport::Open(
   nsAutoCString chromeFlags("chrome,dialog=0,resizable,scrollbars");
   if (aPrivateMode) {
     chromeFlags += ",private";
+  }
+  if (aRemote) {
+    chromeFlags += ",remote";
   }
   nsCOMPtr<mozIDOMWindowProxy> domWindow;
   ww->OpenWindow(nullptr, url.get(), aId->ToCString().get(), chromeFlags.get(),
@@ -1344,6 +1352,7 @@ void nsWindow::GeckoViewSupport::AttachAccessibility(
 }
 
 void nsWindow::InitNatives() {
+  jni::InitConversionStatics();
   nsWindow::GeckoViewSupport::Base::Init();
   nsWindow::LayerViewSupport::Init();
   nsWindow::NPZCSupport::Init();
@@ -1564,6 +1573,38 @@ void nsWindow::SetParent(nsIWidget* aNewParent) {
 }
 
 nsIWidget* nsWindow::GetParent() { return mParent; }
+
+RefPtr<MozPromise<bool, bool, false>> nsWindow::OnLoadRequest(
+    nsIURI* aUri, int32_t aWindowType, int32_t aFlags,
+    nsIPrincipal* aTriggeringPrincipal, bool aHasUserGesture) {
+  if (!mGeckoViewSupport) {
+    return MozPromise<bool, bool, false>::CreateAndResolve(false, __func__);
+  }
+  nsAutoCString spec, triggeringSpec;
+  if (aUri) {
+    aUri->GetDisplaySpec(spec);
+  }
+
+  bool isNullPrincipal = false;
+  if (aTriggeringPrincipal) {
+    aTriggeringPrincipal->GetIsNullPrincipal(&isNullPrincipal);
+
+    if (!isNullPrincipal) {
+      nsCOMPtr<nsIURI> triggeringUri;
+      aTriggeringPrincipal->GetURI(getter_AddRefs(triggeringUri));
+      if (triggeringUri) {
+        triggeringUri->GetDisplaySpec(triggeringSpec);
+      }
+    }
+  }
+
+  auto geckoResult = mGeckoViewSupport->OnLoadRequest(
+      spec.get(), aWindowType, aFlags,
+      isNullPrincipal ? nullptr : triggeringSpec.get(), aHasUserGesture);
+  return geckoResult
+             ? MozPromise<bool, bool, false>::FromGeckoResult(geckoResult)
+             : nullptr;
+}
 
 float nsWindow::GetDPI() {
   float dpi = 160.0f;
@@ -2250,6 +2291,18 @@ void nsWindow::UpdateDynamicToolbarMaxHeight(ScreenIntCoord aHeight) {
   if (mAttachedWidgetListener) {
     mAttachedWidgetListener->DynamicToolbarMaxHeightChanged(aHeight);
   }
+}
+
+auto nsWindow::GeckoViewSupport::OnLoadRequest(
+    mozilla::jni::String::Param aUri, int32_t aWindowType, int32_t aFlags,
+    mozilla::jni::String::Param aTriggeringUri, bool aHasUserGesture) const
+    -> java::GeckoResult::LocalRef {
+  GeckoSession::Window::LocalRef window(mGeckoViewWindow);
+  if (!window) {
+    return nullptr;
+  }
+  return window->OnLoadRequest(aUri, aWindowType, aFlags, aTriggeringUri,
+                               aHasUserGesture);
 }
 
 already_AddRefed<nsIWidget> nsIWidget::CreateTopLevelWindow() {

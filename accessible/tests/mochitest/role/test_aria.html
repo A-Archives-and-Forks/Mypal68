@@ -14,7 +14,15 @@
 
   <script type="application/javascript">
 
-    function doTest() {
+    // To test initial roles on body elements, we need to use an iframe.
+    function testBodyRole(iframeId, role) {
+      let iframe = getNode(iframeId);
+      let doc = iframe.contentDocument;
+      let docAcc = getAccessible(doc);
+      testRole(docAcc, role);
+    }
+
+    async function doTest() {
       // ARIA role map.
       testRole("aria_alert", ROLE_ALERT);
       testRole("aria_alertdialog", ROLE_DIALOG);
@@ -87,7 +95,7 @@
       // role mapping. Similarly "strong foo" means there is a good foo-to-
       // platform role mapping.
 
-      testRole("articlemain", ROLE_ARTICLE);
+      testRole("articlemain", ROLE_LANDMARK);
       testRole("articleform", ROLE_FORM);
 
       // Test article exposed as article
@@ -105,17 +113,18 @@
       testRole("form", ROLE_FORM);
       testRole("application_table", ROLE_APPLICATION);
 
-      // weak landmarks
-      var weak_landmarks = ["banner", "complementary", "contentinfo",
+      // landmarks
+      let landmarks = ["banner", "complementary", "contentinfo",
           "main", "navigation", "search"];
-      for (l in weak_landmarks)
-        testRole(weak_landmarks[l], ROLE_SECTION);
+      for (l in landmarks) {
+        testRole(landmarks[l], ROLE_LANDMARK);
+      }
 
-      for (l in weak_landmarks) {
-        var id = weak_landmarks[l] + "_table";
-        testRole(id, ROLE_TABLE);
+      for (l in landmarks) {
+        let id = landmarks[l] + "_table";
+        testRole(id, ROLE_LANDMARK);
     
-        var accessibleTable = getAccessible(id, [nsIAccessibleTable], null,
+        let accessibleTable = getAccessible(id, [nsIAccessibleTable], null,
                                             DONOTFAIL_IF_NO_INTERFACE);
         ok(!!accessibleTable, "landmarked table should have nsIAccessibleTable");
     
@@ -155,12 +164,42 @@
       testRole(testDoc, ROLE_DOCUMENT);
       document.body.setAttribute("role", "application");
       testRole(testDoc, ROLE_APPLICATION);
+      document.body.setAttribute("role", "dialog");
+      testRole(testDoc, ROLE_DIALOG);
+      // Other roles aren't valid on body elements.
+      document.body.setAttribute("role", "document");
+      testRole(testDoc, ROLE_DOCUMENT);
+      document.body.setAttribute("role", "button");
+      testRole(testDoc, ROLE_DOCUMENT);
+      document.body.setAttribute("role", "main");
+      testRole(testDoc, ROLE_DOCUMENT);
 
       // Test equation image
       testRole("img_eq", ROLE_FLAT_EQUATION);
 
       // Test textual equation
       testRole("txt_eq", ROLE_FLAT_EQUATION);
+
+      // Test initial ARIA roles on the body element.
+      testBodyRole("iframe_aria_application", ROLE_APPLICATION);
+      testBodyRole("iframe_aria_dialog", ROLE_DIALOG);
+      // role="alert" is valid on the body of chrome documents.
+      let win = Services.ww.openWindow(
+        null,
+        "chrome://mochitests/content/a11y/accessible/tests/mochitest/role/chrome_body_role_alert.xhtml",
+        "_blank",
+        "chrome",
+        []
+      );
+      await new Promise(resolve => addA11yLoadEvent(resolve, win));
+      testRole(win.document, ROLE_ALERT);
+      win.close();
+      // Other roles aren't valid on body elements.
+      testBodyRole("iframe_aria_document", ROLE_DOCUMENT);
+      testBodyRole("iframe_aria_button", ROLE_DOCUMENT);
+      testBodyRole("iframe_aria_main", ROLE_DOCUMENT);
+      // role="alert" is not valid on the body of content documents.
+      testBodyRole("iframe_aria_alert", ROLE_DOCUMENT);
 
       SimpleTest.finish();
     }
@@ -359,9 +398,22 @@
     <img id="img_eq" role="math" src="foo" alt="x^2 + y^2 + z^2">
   </p>
 
-  <p>Text: 
-    <span id="txt_eq" role="math" title="x^2 + y^2 + z^2">x<sup>2</sup> + 
+  <p>Text:
+    <span id="txt_eq" role="math" title="x^2 + y^2 + z^2">x<sup>2</sup> +
       y<sup>2</sup> + z<sup>2</sup></span>
+  </p>
 
+  <iframe id="iframe_aria_application"
+    src="data:text/html,<body role='application'>"></iframe>
+  <iframe id="iframe_aria_dialog"
+    src="data:text/html,<body role='dialog'>"></iframe>
+  <iframe id="iframe_aria_document"
+    src="data:text/html,<body role='document'>"></iframe>
+  <iframe id="iframe_aria_button"
+    src="data:text/html,<body role='button'>"></iframe>
+  <iframe id="iframe_aria_main"
+    src="data:text/html,<body role='main'>"></iframe>
+  <iframe id="iframe_aria_alert"
+    src="data:text/html,<body role='alert'>"></iframe>
 </body>
 </html>

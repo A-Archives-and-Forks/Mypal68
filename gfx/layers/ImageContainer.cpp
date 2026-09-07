@@ -658,14 +658,14 @@ already_AddRefed<gfx::SourceSurface> PlanarYCbCrImage::GetAsSourceSurface() {
 }
 
 PlanarYCbCrImage::~PlanarYCbCrImage() {
-  NS_ReleaseOnMainThreadSystemGroup("PlanarYCbCrImage::mSourceSurface",
-                                    mSourceSurface.forget());
+  NS_ReleaseOnMainThread("PlanarYCbCrImage::mSourceSurface",
+                         mSourceSurface.forget());
 }
 
 NVImage::NVImage() : Image(nullptr, ImageFormat::NV_IMAGE), mBufferSize(0) {}
 
 NVImage::~NVImage() {
-  NS_ReleaseOnMainThreadSystemGroup("NVImage::mSourceSurface", mSourceSurface.forget());
+  NS_ReleaseOnMainThread("NVImage::mSourceSurface", mSourceSurface.forget());
 }
 
 IntSize NVImage::GetSize() const { return mSize; }
@@ -803,8 +803,8 @@ SourceSurfaceImage::SourceSurfaceImage(gfx::SourceSurface* aSourceSurface)
       mTextureFlags(TextureFlags::DEFAULT) {}
 
 SourceSurfaceImage::~SourceSurfaceImage() {
-  NS_ReleaseOnMainThreadSystemGroup("SourceSurfaceImage::mSourceSurface",
-                                    mSourceSurface.forget());
+  NS_ReleaseOnMainThread("SourceSurfaceImage::mSourceSurface",
+                         mSourceSurface.forget());
 }
 
 TextureClient* SourceSurfaceImage::GetTextureClient(

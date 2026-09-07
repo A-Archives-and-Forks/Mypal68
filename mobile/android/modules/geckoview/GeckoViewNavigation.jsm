@@ -217,7 +217,7 @@ class GeckoViewNavigation extends GeckoViewModule {
     }
   }
 
-  waitAndSetupWindow(aSessionId, { opener, nextRemoteTabId }) {
+  waitAndSetupWindow(aSessionId, { opener, nextRemoteTabId, forceNotRemote }) {
     if (!aSessionId) {
       return Promise.resolve(null);
     }
@@ -237,12 +237,12 @@ class GeckoViewNavigation extends GeckoViewModule {
             }
 
             if (opener) {
-              if (aSubject.browser.hasAttribute("remote")) {
-                // We cannot start in remote mode when we have an opener.
-                aSubject.browser.setAttribute("remote", "false");
-                aSubject.browser.removeAttribute("remoteType");
-              }
               aSubject.browser.presetOpenerWindow(opener);
+            }
+            if (forceNotRemote && aSubject.browser.hasAttribute("remote")) {
+              // We cannot start in remote mode when we have an opener.
+              aSubject.browser.setAttribute("remote", "false");
+              aSubject.browser.removeAttribute("remoteType");
             }
             Services.obs.removeObserver(handler, "geckoview-window-created");
             resolve(aSubject);
@@ -268,6 +268,14 @@ class GeckoViewNavigation extends GeckoViewModule {
       uri: aUri ? aUri.displaySpec : "",
     };
 
+    // If we have an opener, that means that the caller is expecting access
+    // to the nsIDOMWindow of the opened tab right away. For e10s windows,
+    // this means forcing the newly opened browser to be non-remote so that
+    // we can hand back the nsIDOMWindow. The XULBrowserWindow.shouldLoadURI
+    // will do the job of shuttling off the newly opened browser to run in
+    // the right process once it starts loading a URI.
+    const forceNotRemote = !!aOpener;
+
     let browser = undefined;
     this.eventDispatcher
       .sendRequestForResult(message)
@@ -276,6 +284,7 @@ class GeckoViewNavigation extends GeckoViewModule {
           opener:
             aFlags & Ci.nsIBrowserDOMWindow.OPEN_NO_OPENER ? null : aOpener,
           nextRemoteTabId: aNextRemoteTabId,
+          forceNotRemote,
         });
       })
       .then(
@@ -327,7 +336,7 @@ class GeckoViewNavigation extends GeckoViewModule {
       return null;
     }
 
-    return browser.contentWindow;
+    return browser.browsingContext;
   }
 
   // nsIBrowserDOMWindow.
@@ -381,6 +390,7 @@ class GeckoViewNavigation extends GeckoViewModule {
     aFlags,
     aTriggeringPrincipal,
     aCsp,
+    aReferrerInfo,
     aNextRemoteTabId
   ) {
     debug`handleOpenUri: uri=${aUri && aUri.spec}
@@ -420,9 +430,11 @@ class GeckoViewNavigation extends GeckoViewModule {
       return null;
     }
 
+    // 3) We have a new session and a browser element, load the requested URI.
     browser.loadURI(aUri.spec, {
       triggeringPrincipal: aTriggeringPrincipal,
       csp: aCsp,
+      referrerInfo: aReferrerInfo,
     });
     return browser;
   }
@@ -436,9 +448,10 @@ class GeckoViewNavigation extends GeckoViewModule {
       aFlags,
       aTriggeringPrincipal,
       aCsp,
+      null,
       null
     );
-    return browser && browser.contentWindow;
+    return browser && browser.browsingContext;
   }
 
   // nsIBrowserDOMWindow.
@@ -450,6 +463,7 @@ class GeckoViewNavigation extends GeckoViewModule {
       aFlags,
       aParams.triggeringPrincipal,
       aParams.csp,
+      aParams.referrerInfo,
       aNextRemoteTabId
     );
     return browser;

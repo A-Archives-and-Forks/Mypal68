@@ -11,8 +11,8 @@
 #include "mozilla/layers/SourceSurfaceSharedData.h"
 #include "mozilla/layers/WebRenderBridgeChild.h"
 #include "mozilla/layers/RenderRootStateManager.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticPrefs_image.h"
-#include "mozilla/SystemGroup.h"  // for SystemGroup
 
 namespace mozilla {
 namespace layers {
@@ -77,7 +77,7 @@ void SharedSurfacesChild::SharedUserData::Destroy(void* aClosure) {
   RefPtr<SharedUserData> data =
       dont_AddRef(static_cast<SharedUserData*>(aClosure));
   if (data->mShared || !data->mKeys.IsEmpty()) {
-    SystemGroup::Dispatch(TaskCategory::Other, data.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, data.forget());
   }
 }
 
@@ -272,8 +272,8 @@ void SharedSurfacesChild::Share(SourceSurfaceSharedData* aSurface) {
       RefPtr<SourceSurfaceSharedData> mSurface;
     };
 
-    SystemGroup::Dispatch(TaskCategory::Other,
-                          MakeAndAddRef<ShareRunnable>(aSurface));
+    SchedulerGroup::Dispatch(TaskCategory::Other,
+                             MakeAndAddRef<ShareRunnable>(aSurface));
     return;
   }
 
@@ -495,7 +495,7 @@ void SharedSurfacesAnimation::Destroy() {
     nsCOMPtr<nsIRunnable> task =
         NewRunnableMethod("SharedSurfacesAnimation::Destroy", this,
                           &SharedSurfacesAnimation::Destroy);
-    SystemGroup::Dispatch(TaskCategory::Other, task.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, task.forget());
     return;
   }
 

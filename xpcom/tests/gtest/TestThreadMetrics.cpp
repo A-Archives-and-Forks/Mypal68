@@ -7,7 +7,6 @@
 #include "mozilla/AbstractThread.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/DocGroup.h"
-#include "mozilla/dom/TabGroup.h"
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/TaskCategory.h"
 #include "mozilla/PerformanceCounter.h"
@@ -36,24 +35,6 @@ struct RunnableDescriptor {
   nsCOMPtr<nsIRunnable> mRunnable;
   RefPtr<DocGroup> mDocGroup;
 };
-
-class MockSchedulerGroup : public SchedulerGroup {
- public:
-  explicit MockSchedulerGroup(mozilla::dom::DocGroup* aDocGroup)
-      : mDocGroup(aDocGroup) {}
-  NS_INLINE_DECL_REFCOUNTING(MockSchedulerGroup);
-
-  MOCK_METHOD1(SetValidatingAccess, void(ValidationType aType));
-  mozilla::dom::DocGroup* DocGroup() { return mDocGroup; }
-
- protected:
-  virtual ~MockSchedulerGroup() = default;
-
- private:
-  mozilla::dom::DocGroup* mDocGroup;
-};
-
-typedef testing::NiceMock<MockSchedulerGroup> MSchedulerGroup;
 
 /* Timed runnable which simulates some execution time
  * and can run some nested runnables.
@@ -98,8 +79,7 @@ class TimedRunnable final : public Runnable {
   static nsresult DispatchWithDocgroup(nsIRunnable* aRunnable,
                                        DocGroup* aDocGroup) {
     nsCOMPtr<nsIRunnable> runnable = aRunnable;
-    runnable = new SchedulerGroup::Runnable(runnable.forget(), mSchedulerGroup,
-                                            mDocGroup);
+    runnable = new SchedulerGroup::Runnable(runnable.forget(), mDocGroup);
     return aDocGroup->Dispatch(TaskCategory::Other, runnable.forget());
   }
 
@@ -121,11 +101,10 @@ class ThreadMetrics : public ::testing::Test {
 
  protected:
   virtual void SetUp() {
-    // building the TabGroup/DocGroup structure
-    RefPtr<dom::TabGroup> tabGroup = new dom::TabGroup(false);
-    mDocGroup = tabGroup->AddDocument("key"_ns, nullptr);
-    mDocGroup2 = tabGroup->AddDocument("key2"_ns, nullptr);
-    mSchedulerGroup = new MSchedulerGroup(mDocGroup);
+    // building the DocGroup structure
+    RefPtr<dom::BrowsingContextGroup> group = new dom::BrowsingContextGroup();
+    mDocGroup = group->AddDocument("key"_ns, nullptr);
+    mDocGroup2 = group->AddDocument("key2"_ns, nullptr);
     mCounter = mDocGroup->GetPerformanceCounter();
     mCounter2 = mDocGroup2->GetPerformanceCounter();
     mThreadMgr = do_GetService("@mozilla.org/thread-manager;1");
@@ -154,7 +133,6 @@ class ThreadMetrics : public ::testing::Test {
 
   uint32_t mOther;
   bool mOldPref;
-  RefPtr<MSchedulerGroup> mSchedulerGroup;
   RefPtr<DocGroup> mDocGroup;
   RefPtr<DocGroup> mDocGroup2;
   RefPtr<PerformanceCounter> mCounter;

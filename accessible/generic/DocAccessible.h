@@ -717,6 +717,8 @@ class DocAccessible : public HyperTextAccessibleWrap,
   friend class NotificationController;
 
  private:
+  void SetRoleMapEntryForDoc(dom::Element* aElement);
+
   PresShell* mPresShell;
 
   // Exclusively owned by IPDL so don't manually delete it!

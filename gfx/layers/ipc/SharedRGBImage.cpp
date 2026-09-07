@@ -54,8 +54,8 @@ SharedRGBImage::SharedRGBImage(ImageClient* aCompositable)
 
 SharedRGBImage::~SharedRGBImage() {
   MOZ_COUNT_DTOR(SharedRGBImage);
-  NS_ReleaseOnMainThreadSystemGroup("SharedRGBImage::mSourceSurface",
-                                    mSourceSurface.forget());
+  NS_ReleaseOnMainThread("SharedRGBImage::mSourceSurface",
+                         mSourceSurface.forget());
 }
 
 bool SharedRGBImage::Allocate(gfx::IntSize aSize, gfx::SurfaceFormat aFormat) {

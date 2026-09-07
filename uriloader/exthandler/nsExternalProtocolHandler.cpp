@@ -55,6 +55,7 @@ class nsExtProtocolChannel : public nsIChannel,
   nsresult mStatus;
   nsLoadFlags mLoadFlags;
   bool mWasOpened;
+  bool mCanceled;
   // Set true (as a result of ConnectParent invoked from child process)
   // when this channel is on the parent process and is being used as
   // a redirect target channel.  It turns AsyncOpen into a no-op since
@@ -86,6 +87,7 @@ nsExtProtocolChannel::nsExtProtocolChannel(nsIURI* aURI, nsILoadInfo* aLoadInfo)
       mStatus(NS_OK),
       mLoadFlags(nsIRequest::LOAD_NORMAL),
       mWasOpened(false),
+      mCanceled(false),
       mConnectedParent(false),
       mLoadInfo(aLoadInfo) {}
 
@@ -163,7 +165,7 @@ nsresult nsExtProtocolChannel::OpenURL() {
     rv = extProtService->LoadURI(mUrl, aggCallbacks);
 
     if (NS_SUCCEEDED(rv) && mListener) {
-      Cancel(NS_ERROR_NO_CONTENT);
+      mStatus = NS_ERROR_NO_CONTENT;
 
       RefPtr<nsExtProtocolChannel> self = this;
       nsCOMPtr<nsIStreamListener> listener = mListener;
@@ -336,7 +338,15 @@ NS_IMETHODIMP nsExtProtocolChannel::GetStatus(nsresult* status) {
 }
 
 NS_IMETHODIMP nsExtProtocolChannel::Cancel(nsresult status) {
-  mStatus = status;
+  if (NS_SUCCEEDED(mStatus)) {
+    mStatus = status;
+  }
+  mCanceled = true;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsExtProtocolChannel::GetCanceled(bool* aCanceled) {
+  *aCanceled = mCanceled;
   return NS_OK;
 }
 
@@ -431,15 +441,12 @@ NS_IMETHODIMP nsExtProtocolChannel::Delete() {
 }
 
 NS_IMETHODIMP nsExtProtocolChannel::OnStartRequest(nsIRequest* aRequest) {
-  // no data is expected
-  MOZ_CRASH("No data expected from external protocol channel");
   return NS_ERROR_UNEXPECTED;
 }
 
 NS_IMETHODIMP nsExtProtocolChannel::OnStopRequest(nsIRequest* aRequest,
                                                   nsresult aStatusCode) {
-  // no data is expected
-  MOZ_CRASH("No data expected from external protocol channel");
+  MOZ_ASSERT(NS_FAILED(aStatusCode));
   return NS_ERROR_UNEXPECTED;
 }
 

@@ -15,7 +15,6 @@
 #include "mozilla/Telemetry.h"     // for Telemetry
 #include "mozilla/dom/DocGroup.h"  // for DocGroup
 #include "mozilla/dom/Document.h"
-#include "mozilla/dom/TabGroup.h"  // for TabGroup
 #include "nsCRTGlue.h"
 #include "nsError.h"
 
@@ -250,27 +249,6 @@ void imgRequestProxy::ClearValidating() {
   }
 }
 
-bool imgRequestProxy::IsOnEventTarget() const {
-  // Ensure we are in some main thread context because the scheduler group
-  // methods are only safe to call on the main thread.
-  MOZ_ASSERT(NS_IsMainThread());
-
-  if (mTabGroup) {
-    MOZ_ASSERT(mEventTarget);
-    return mTabGroup->IsSafeToRun();
-  }
-
-  if (mListener) {
-    // If we have no scheduler group but we do have a listener, then we know
-    // that the listener requires unlabelled dispatch.
-    MOZ_ASSERT(mEventTarget);
-    return mozilla::SchedulerGroup::IsSafeToRunUnlabeled();
-  }
-
-  // No listener means it is always safe, as there is nothing to do.
-  return true;
-}
-
 already_AddRefed<nsIEventTarget> imgRequestProxy::GetEventTarget() const {
   nsCOMPtr<nsIEventTarget> target(mEventTarget);
   return target.forget();
@@ -293,17 +271,6 @@ nsresult imgRequestProxy::DispatchWithTargetIfAvailable(
   return NS_DispatchToMainThread(CreateMediumHighRunnable(std::move(aEvent)));
 }
 
-void imgRequestProxy::DispatchWithTarget(already_AddRefed<nsIRunnable> aEvent) {
-  LOG_FUNC(gImgLog, "imgRequestProxy::DispatchWithTarget");
-
-  MOZ_ASSERT(mListener || mTabGroup);
-  MOZ_ASSERT(mEventTarget);
-
-  mHadDispatch = true;
-  mEventTarget->Dispatch(CreateMediumHighRunnable(std::move(aEvent)),
-                         NS_DISPATCH_NORMAL);
-}
-
 void imgRequestProxy::AddToOwner(Document* aLoadingDocument) {
   // An imgRequestProxy can be initialized with neither a listener nor a
   // document. The caller could follow up later by cloning the canonical
@@ -321,9 +288,6 @@ void imgRequestProxy::AddToOwner(Document* aLoadingDocument) {
   if (aLoadingDocument) {
     RefPtr<mozilla::dom::DocGroup> docGroup = aLoadingDocument->GetDocGroup();
     if (docGroup) {
-      mTabGroup = docGroup->GetTabGroup();
-      MOZ_ASSERT(mTabGroup);
-
       mEventTarget = docGroup->EventTargetFor(mozilla::TaskCategory::Other);
       MOZ_ASSERT(mEventTarget);
     }
@@ -1009,21 +973,6 @@ void imgRequestProxy::Notify(int32_t aType,
     return;
   }
 
-  if (!IsOnEventTarget()) {
-    RefPtr<imgRequestProxy> self(this);
-    if (aRect) {
-      const mozilla::gfx::IntRect rect = *aRect;
-      DispatchWithTarget(NS_NewRunnableFunction(
-          "imgRequestProxy::Notify",
-          [self, rect, aType]() -> void { self->Notify(aType, &rect); }));
-    } else {
-      DispatchWithTarget(NS_NewRunnableFunction(
-          "imgRequestProxy::Notify",
-          [self, aType]() -> void { self->Notify(aType, nullptr); }));
-    }
-    return;
-  }
-
   // Make sure the listener stays alive while we notify.
   nsCOMPtr<imgINotificationObserver> listener(mListener);
 
@@ -1037,13 +986,6 @@ void imgRequestProxy::OnLoadComplete(bool aLastPart) {
   // on the listener, the removal from the loadgroup, the release of the
   // listener, etc).  Don't let them do it.
   RefPtr<imgRequestProxy> self(this);
-
-  if (!IsOnEventTarget()) {
-    DispatchWithTarget(NS_NewRunnableFunction(
-        "imgRequestProxy::OnLoadComplete",
-        [self, aLastPart]() -> void { self->OnLoadComplete(aLastPart); }));
-    return;
-  }
 
   if (mListener && !mCanceled) {
     // Hold a ref to the listener while we call it, just in case.
@@ -1106,11 +1048,6 @@ void imgRequestProxy::NullOutListener() {
   } else {
     mListener = nullptr;
   }
-
-  // Note that we don't free the event target. We actually need that to ensure
-  // we get removed from the ProgressTracker properly. No harm in keeping it
-  // however.
-  mTabGroup = nullptr;
 }
 
 NS_IMETHODIMP

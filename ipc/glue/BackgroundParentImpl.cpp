@@ -43,6 +43,7 @@
 #include "mozilla/dom/quota/ActorsParent.h"
 #include "mozilla/dom/simpledb/ActorsParent.h"
 #include "mozilla/dom/RemoteWorkerParent.h"
+#include "mozilla/dom/RemoteWorkerControllerParent.h"
 #include "mozilla/dom/RemoteWorkerServiceParent.h"
 #include "mozilla/dom/SharedWorkerParent.h"
 #include "mozilla/dom/StorageIPC.h"
@@ -476,6 +477,29 @@ bool BackgroundParentImpl::DeallocPRemoteWorkerParent(
   return true;
 }
 
+dom::PRemoteWorkerControllerParent*
+BackgroundParentImpl::AllocPRemoteWorkerControllerParent(
+    const dom::RemoteWorkerData& aRemoteWorkerData) {
+  RefPtr<dom::RemoteWorkerControllerParent> actor =
+      new dom::RemoteWorkerControllerParent(aRemoteWorkerData);
+  return actor.forget().take();
+}
+
+IPCResult BackgroundParentImpl::RecvPRemoteWorkerControllerConstructor(
+    dom::PRemoteWorkerControllerParent* aActor,
+    const dom::RemoteWorkerData& aRemoteWorkerData) {
+  MOZ_ASSERT(aActor);
+
+  return IPC_OK();
+}
+
+bool BackgroundParentImpl::DeallocPRemoteWorkerControllerParent(
+    dom::PRemoteWorkerControllerParent* aActor) {
+  RefPtr<dom::RemoteWorkerControllerParent> actor =
+      dont_AddRef(static_cast<dom::RemoteWorkerControllerParent*>(aActor));
+  return true;
+}
+
 mozilla::dom::PRemoteWorkerServiceParent*
 BackgroundParentImpl::AllocPRemoteWorkerServiceParent() {
   return new mozilla::dom::RemoteWorkerServiceParent();
@@ -542,7 +566,7 @@ mozilla::ipc::IPCResult BackgroundParentImpl::RecvPFileCreatorConstructor(
     isFileRemoteType = true;
   } else {
     isFileRemoteType = parent->GetRemoteType() == FILE_REMOTE_TYPE;
-    NS_ReleaseOnMainThreadSystemGroup("ContentParent release", parent.forget());
+    NS_ReleaseOnMainThread("ContentParent release", parent.forget());
   }
 
   dom::FileCreatorParent* actor = static_cast<dom::FileCreatorParent*>(aActor);

@@ -579,7 +579,6 @@ APZCTreeManager::UpdateHitTestingTreeImpl(const ScrollNode& aRoot,
   // We do not support tree structures where the root node has siblings.
   MOZ_ASSERT(!(mRootNode && mRootNode->GetPrevSibling()));
 
-#ifdef MOZ_BUILD_WEBRENDER
   {  // scope lock and update our mApzcMap before we destroy all the unused
     // APZC instances
     MutexAutoLock lock(mMapLock);
@@ -587,6 +586,7 @@ APZCTreeManager::UpdateHitTestingTreeImpl(const ScrollNode& aRoot,
     mScrollThumbInfo.clear();
     // For non-webrender, state.mScrollThumbs will be empty so this will be a
     // no-op.
+#ifdef MOZ_BUILD_WEBRENDER
     for (HitTestingTreeNode* thumb : state.mScrollThumbs) {
       MOZ_ASSERT(thumb->IsScrollThumbNode());
       ScrollableLayerGuid targetGuid(thumb->GetLayersId(), 0,
@@ -616,8 +616,8 @@ APZCTreeManager::UpdateHitTestingTreeImpl(const ScrollNode& aRoot,
           fixedPos->GetFixedPositionAnimationId().value(),
           fixedPos->GetFixedPosSides());
     }
-  }
 #endif
+  }
 
   for (size_t i = 0; i < state.mNodesToDestroy.Length(); i++) {
     APZCTM_LOG("Destroying node at %p with APZC %p\n",

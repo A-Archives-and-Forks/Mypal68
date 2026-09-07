@@ -14,7 +14,7 @@ async function setup() {
   await SpecialPowers.pushPrefEnv({set: [["general.smoothScroll", false]]});
 }
 
-function* runTests() {
+async function* runTests() {
   var e = document.getElementById("edit");
   var doc = e.contentDocument;
   var win = e.contentWindow;
@@ -169,9 +169,9 @@ function* runTests() {
     is(testPageSelectCommand("cmd_selectPageUp", 0), 22 - lineNum, "cmd_selectPageUp");
   };
 
-  yield SpecialPowers.pushPrefEnv({set: [["layout.word_select.eat_space_to_next_word", false]]});
+  await SpecialPowers.pushPrefEnv({set: [["layout.word_select.eat_space_to_next_word", false]]});
   runSelectionTests();
-  yield SpecialPowers.pushPrefEnv({set: [["layout.word_select.eat_space_to_next_word", true]]});
+  await SpecialPowers.pushPrefEnv({set: [["layout.word_select.eat_space_to_next_word", true]]});
   runSelectionTests();
 }
 
@@ -205,7 +205,7 @@ async function testRunner() {
   let curTest = runTests();
   while (true) {
     let promise = new Promise(resolve => { win.addEventListener("scroll", () => { SimpleTest.executeSoon(resolve); }, {once: true, capture: true}); });
-    if (curTest.next().done) {
+    if ((await curTest.next()).done) {
       break;
     }
     await promise;

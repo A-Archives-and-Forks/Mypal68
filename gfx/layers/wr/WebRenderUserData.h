@@ -10,6 +10,7 @@
 #include "mozilla/layers/StackingContextHelper.h"
 #include "mozilla/webrender/WebRenderAPI.h"
 #include "mozilla/layers/AnimationInfo.h"
+#include "mozilla/dom/RemoteBrowser.h"
 #include "mozilla/UniquePtr.h"
 #include "nsIFrame.h"
 #include "nsTHashSet.h"
@@ -76,6 +77,7 @@ class WebRenderUserData {
     eFallback,
     eAnimation,
     eCanvas,
+    eRemote,
     eGroup,
     eMask,
   };
@@ -243,6 +245,22 @@ class WebRenderCanvasData : public WebRenderUserData {
 
  protected:
   UniquePtr<WebRenderCanvasRendererAsync> mCanvasRenderer;
+};
+
+class WebRenderRemoteData : public WebRenderUserData {
+ public:
+  WebRenderRemoteData(RenderRootStateManager* aManager, nsDisplayItem* aItem);
+  virtual ~WebRenderRemoteData();
+
+  UserDataType GetType() override { return UserDataType::eRemote; }
+  static UserDataType Type() { return UserDataType::eRemote; }
+
+  void SetRemoteBrowser(dom::RemoteBrowser* aBrowser) {
+    mRemoteBrowser = aBrowser;
+  }
+
+ protected:
+  RefPtr<dom::RemoteBrowser> mRemoteBrowser;
 };
 
 extern void DestroyWebRenderUserDataTable(WebRenderUserDataTable* aTable);

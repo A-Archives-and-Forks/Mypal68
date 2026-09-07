@@ -1,0 +1,13 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+# Verify MAR signatures
+# ==============================================================
+
+option('--disable-verify-mar', help='Disable verifying MAR signatures')
+
+set_define('MOZ_VERIFY_MAR_SIGNATURE',
+           depends_if('--enable-verify-mar')(lambda _: True))
+set_config('MOZ_VERIFY_MAR_SIGNATURE',
+           depends_if('--enable-verify-mar')(lambda _: True))

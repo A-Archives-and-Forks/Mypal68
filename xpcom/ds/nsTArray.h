@@ -74,6 +74,11 @@ class IndexCursorResponse;
 }  // namespace dom
 }  // namespace mozilla
 
+namespace mozilla::ipc {
+template <class T>
+class Endpoint;
+}  // namespace mozilla::ipc
+
 class JSStructuredCloneData;
 
 template <class T>
@@ -776,6 +781,7 @@ struct MOZ_NEEDS_MEMMOVABLE_TYPE nsTArray_RelocationStrategy {
 
 MOZ_DECLARE_RELOCATE_USING_MOVE_CONSTRUCTOR_FOR_TEMPLATE(JS::Heap)
 MOZ_DECLARE_RELOCATE_USING_MOVE_CONSTRUCTOR_FOR_TEMPLATE(std::function)
+MOZ_DECLARE_RELOCATE_USING_MOVE_CONSTRUCTOR_FOR_TEMPLATE(mozilla::ipc::Endpoint)
 
 MOZ_DECLARE_RELOCATE_USING_MOVE_CONSTRUCTOR(nsRegion)
 MOZ_DECLARE_RELOCATE_USING_MOVE_CONSTRUCTOR(nsIntRegion)
@@ -2685,6 +2691,16 @@ class nsTArray : public nsTArray_Impl<E, nsTArrayInfallibleAllocator> {
   MOZ_IMPLICIT nsTArray(nsTArray&& aOther) : base_type(std::move(aOther)) {}
   MOZ_IMPLICIT nsTArray(std::initializer_list<E> aIL) {
     AppendElements(aIL.begin(), aIL.size());
+  }
+
+  template <class Item>
+  nsTArray(const Item* aArray, size_type aArrayLen) {
+    AppendElements(aArray, aArrayLen);
+  }
+
+  template <class Item>
+  explicit nsTArray(mozilla::Span<Item> aSpan) {
+    AppendElements(aSpan);
   }
 
   template <class Allocator>

@@ -18,7 +18,6 @@
 #include "mozilla/ipc/MessageChannel.h"
 #include "mozilla/ipc/Transport.h"
 #include "mozilla/StaticMutex.h"
-#include "mozilla/SystemGroup.h"
 #if defined(DEBUG) || defined(FUZZING)
 #  include "mozilla/Tokenizer.h"
 #endif

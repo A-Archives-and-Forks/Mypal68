@@ -19,9 +19,6 @@ var { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
-var { TelemetryController } = ChromeUtils.import(
-  "resource://gre/modules/TelemetryController.jsm"
-);
 
 ChromeUtils.defineModuleGetter(
   this,
@@ -39,12 +36,6 @@ ChromeUtils.defineModuleGetter(
   this,
   "FileUtils",
   "resource://gre/modules/FileUtils.jsm"
-);
-
-ChromeUtils.defineModuleGetter(
-  this,
-  "UITelemetry",
-  "resource://gre/modules/UITelemetry.jsm"
 );
 
 ChromeUtils.defineModuleGetter(
@@ -595,7 +586,6 @@ var BrowserApp = {
       "Session:Navigate",
       "Session:Reload",
       "Session:Stop",
-      "Telemetry:CustomTabsPing",
     ]);
 
     // Provide compatibility for add-ons like QuitNow that send "Browser:Quit"
@@ -607,7 +597,6 @@ var BrowserApp = {
 
     Services.obs.addObserver(this, "android-get-pref");
     Services.obs.addObserver(this, "android-set-pref");
-    Services.obs.addObserver(this, "gather-telemetry");
     Services.obs.addObserver(this, "keyword-search");
     Services.obs.addObserver(this, "Vibration:Request");
 
@@ -656,32 +645,6 @@ var BrowserApp = {
     }
 
     this.hideH264AddonIfNeeded();
-
-    if (ParentalControls.parentalControlsEnabled) {
-      let isBlockListEnabled = ParentalControls.isAllowed(
-        ParentalControls.BLOCK_LIST
-      );
-      Services.prefs.setBoolPref(
-        "browser.safebrowsing.allowOverride",
-        !isBlockListEnabled
-      );
-
-      let isTelemetryEnabled = ParentalControls.isAllowed(
-        ParentalControls.TELEMETRY
-      );
-      Services.prefs.setBoolPref(
-        "toolkit.telemetry.enabled",
-        isTelemetryEnabled
-      );
-
-      let isHealthReportEnabled = ParentalControls.isAllowed(
-        ParentalControls.HEALTH_REPORT
-      );
-      SharedPreferences.forApp().setBoolPref(
-        "android.not_a_preference.healthreport.uploadEnabled",
-        isHealthReportEnabled
-      );
-    }
 
     InitLater(
       () => {
@@ -751,15 +714,6 @@ var BrowserApp = {
 
         // AsyncPrefs is needed for reader mode.
         InitLater(() => AsyncPrefs.init());
-
-        // Collect telemetry data.
-        // We do this at startup because we want to move away from "gather-telemetry" (bug 1127907)
-        InitLater(() => {
-          Telemetry.addData(
-            "FENNEC_TRACKING_PROTECTION_STATE",
-            parseInt(BrowserApp.getTrackingProtectionState())
-          );
-        });
 
         InitLater(() => LightWeightThemeStuff.init());
         InitLater(() => CastingApps.init(), window, "CastingApps");
@@ -854,14 +808,6 @@ var BrowserApp = {
       stringGetter("contextmenu.openInNewTab"),
       NativeWindow.contextmenus.linkOpenableNonPrivateContext,
       function(aTarget) {
-        UITelemetry.addEvent(
-          "action.1",
-          "contextmenu",
-          null,
-          "web_open_new_tab"
-        );
-        UITelemetry.addEvent("loadurl.1", "contextmenu", null);
-
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         ContentAreaUtils.urlSecurityCheck(
           url,
@@ -906,14 +852,6 @@ var BrowserApp = {
         stringGetter("contextmenu.openInPrivateTab"),
         NativeWindow.contextmenus.linkOpenableContext,
         function(aTarget) {
-          UITelemetry.addEvent(
-            "action.1",
-            "contextmenu",
-            null,
-            "web_open_new_tab"
-          );
-          UITelemetry.addEvent("loadurl.1", "contextmenu", null);
-
           let url = NativeWindow.contextmenus._getLinkURL(aTarget);
           ContentAreaUtils.urlSecurityCheck(
             url,
@@ -948,8 +886,6 @@ var BrowserApp = {
       stringGetter("contextmenu.copyLink"),
       NativeWindow.contextmenus.linkCopyableContext,
       function(aTarget) {
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_copy_link");
-
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         url = NativeWindow.contextmenus._stripViewSource(url);
         NativeWindow.contextmenus._copyStringToDefaultClipboard(url);
@@ -960,8 +896,6 @@ var BrowserApp = {
       stringGetter("contextmenu.copyEmailAddress"),
       NativeWindow.contextmenus.emailLinkContext,
       function(aTarget) {
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_copy_email");
-
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         let emailAddr = NativeWindow.contextmenus._stripScheme(url);
         NativeWindow.contextmenus._copyStringToDefaultClipboard(emailAddr);
@@ -972,8 +906,6 @@ var BrowserApp = {
       stringGetter("contextmenu.copyPhoneNumber"),
       NativeWindow.contextmenus.phoneNumberLinkContext,
       function(aTarget) {
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_copy_phone");
-
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         let phoneNumber = NativeWindow.contextmenus._stripScheme(url);
         NativeWindow.contextmenus._copyStringToDefaultClipboard(phoneNumber);
@@ -996,10 +928,6 @@ var BrowserApp = {
         };
       },
       icon: "drawable://ic_menu_share",
-      callback: function(aTarget) {
-        // share.1 telemetry is handled in Java via PromptList
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_share_link");
-      },
     });
 
     NativeWindow.contextmenus.add({
@@ -1019,15 +947,6 @@ var BrowserApp = {
         };
       },
       icon: "drawable://ic_menu_share",
-      callback: function(aTarget) {
-        // share.1 telemetry is handled in Java via PromptList
-        UITelemetry.addEvent(
-          "action.1",
-          "contextmenu",
-          null,
-          "web_share_email"
-        );
-      },
     });
 
     NativeWindow.contextmenus.add({
@@ -1047,15 +966,6 @@ var BrowserApp = {
         };
       },
       icon: "drawable://ic_menu_share",
-      callback: function(aTarget) {
-        // share.1 telemetry is handled in Java via PromptList
-        UITelemetry.addEvent(
-          "action.1",
-          "contextmenu",
-          null,
-          "web_share_phone"
-        );
-      },
     });
 
     NativeWindow.contextmenus.add(
@@ -1065,13 +975,6 @@ var BrowserApp = {
         NativeWindow.contextmenus.emailLinkContext
       ),
       function(aTarget) {
-        UITelemetry.addEvent(
-          "action.1",
-          "contextmenu",
-          null,
-          "web_contact_email"
-        );
-
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         WindowEventDispatcher.sendRequest({
           type: "Contact:Add",
@@ -1087,13 +990,6 @@ var BrowserApp = {
         NativeWindow.contextmenus.phoneNumberLinkContext
       ),
       function(aTarget) {
-        UITelemetry.addEvent(
-          "action.1",
-          "contextmenu",
-          null,
-          "web_contact_phone"
-        );
-
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         WindowEventDispatcher.sendRequest({
           type: "Contact:Add",
@@ -1109,9 +1005,6 @@ var BrowserApp = {
         NativeWindow.contextmenus.linkBookmarkableContext
       ),
       function(aTarget) {
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_bookmark");
-        UITelemetry.addEvent("save.1", "contextmenu", null, "bookmark");
-
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
         let title = aTarget.textContent || aTarget.title || url;
         GlobalEventDispatcher.sendRequest({
@@ -1126,7 +1019,6 @@ var BrowserApp = {
       stringGetter("contextmenu.playMedia"),
       NativeWindow.contextmenus.mediaContext("media-paused"),
       function(aTarget) {
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_play");
         aTarget.play();
       }
     );
@@ -1135,7 +1027,6 @@ var BrowserApp = {
       stringGetter("contextmenu.pauseMedia"),
       NativeWindow.contextmenus.mediaContext("media-playing"),
       function(aTarget) {
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_pause");
         aTarget.pause();
       }
     );
@@ -1144,12 +1035,6 @@ var BrowserApp = {
       stringGetter("contextmenu.showControls2"),
       NativeWindow.contextmenus.mediaContext("media-hidingcontrols"),
       function(aTarget) {
-        UITelemetry.addEvent(
-          "action.1",
-          "contextmenu",
-          null,
-          "web_controls_media"
-        );
         aTarget.setAttribute("controls", true);
       }
     );
@@ -1175,22 +1060,12 @@ var BrowserApp = {
         };
       },
       icon: "drawable://ic_menu_share",
-      callback: function(aTarget) {
-        // share.1 telemetry is handled in Java via PromptList
-        UITelemetry.addEvent(
-          "action.1",
-          "contextmenu",
-          null,
-          "web_share_media"
-        );
-      },
     });
 
     NativeWindow.contextmenus.add(
       stringGetter("contextmenu.fullScreen"),
       NativeWindow.contextmenus.videoContext("not-fullscreen"),
       function(aTarget) {
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_fullscreen");
         aTarget.requestFullscreen();
       }
     );
@@ -1199,7 +1074,6 @@ var BrowserApp = {
       stringGetter("contextmenu.mute"),
       NativeWindow.contextmenus.mediaContext("media-unmuted"),
       function(aTarget) {
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_mute");
         aTarget.muted = true;
       }
     );
@@ -1208,7 +1082,6 @@ var BrowserApp = {
       stringGetter("contextmenu.unmute"),
       NativeWindow.contextmenus.mediaContext("media-muted"),
       function(aTarget) {
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_unmute");
         aTarget.muted = false;
       }
     );
@@ -1224,8 +1097,6 @@ var BrowserApp = {
           Ci.nsIScriptSecurityManager.DISALLOW_SCRIPT
         );
 
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_view_image");
-        UITelemetry.addEvent("loadurl.1", "contextmenu", null);
         BrowserApp.selectedBrowser.loadURI(url);
       }
     );
@@ -1234,8 +1105,6 @@ var BrowserApp = {
       stringGetter("contextmenu.copyImageLocation"),
       NativeWindow.contextmenus.imageLocationCopyableContext,
       function(aTarget) {
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_copy_image");
-
         let url = aTarget.currentSrc || aTarget.src;
         url = NativeWindow.contextmenus._stripViewSource(url);
         NativeWindow.contextmenus._copyStringToDefaultClipboard(url);
@@ -1260,22 +1129,12 @@ var BrowserApp = {
       },
       icon: "drawable://ic_menu_share",
       menu: true,
-      callback: function(aTarget) {
-        UITelemetry.addEvent(
-          "action.1",
-          "contextmenu",
-          null,
-          "web_share_image"
-        );
-      },
     });
 
     NativeWindow.contextmenus.add(
       stringGetter("contextmenu.saveImage"),
       NativeWindow.contextmenus.imageSaveableContext,
       function(aTarget) {
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_save_image");
-        UITelemetry.addEvent("save.1", "contextmenu", null, "image");
         WindowEventDispatcher.sendRequest({
           type: "Mma:web_save_image",
         });
@@ -1312,13 +1171,6 @@ var BrowserApp = {
         NativeWindow.contextmenus.imageSaveableContext
       ),
       function(aTarget) {
-        UITelemetry.addEvent(
-          "action.1",
-          "contextmenu",
-          null,
-          "web_background_image"
-        );
-
         let src = aTarget.currentSrc || aTarget.src;
         GlobalEventDispatcher.sendRequest({
           type: "Image:SetAs",
@@ -1340,8 +1192,6 @@ var BrowserApp = {
       },
       NativeWindow.contextmenus.mediaSaveableContext,
       function(aTarget) {
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_save_media");
-        UITelemetry.addEvent("save.1", "contextmenu", null, "media");
         WindowEventDispatcher.sendRequest({
           type: "Mma:web_save_media",
         });
@@ -1381,7 +1231,6 @@ var BrowserApp = {
       stringGetter("contextmenu.showImage"),
       NativeWindow.contextmenus.imageBlockingPolicyContext,
       function(aTarget) {
-        UITelemetry.addEvent("action.1", "contextmenu", null, "web_show_image");
         aTarget.setAttribute("data-ctv-show", "true");
         aTarget.setAttribute("src", aTarget.getAttribute("data-ctv-src"));
 
@@ -1401,12 +1250,6 @@ var BrowserApp = {
               "imageblocking.showAllImages"
             ),
             callback: () => {
-              UITelemetry.addEvent(
-                "action.1",
-                "toast",
-                null,
-                "web_show_all_image"
-              );
               for (let i = 0; i < blockedImgs.length; ++i) {
                 blockedImgs[i].setAttribute("data-ctv-show", "true");
                 blockedImgs[i].setAttribute(
@@ -1788,7 +1631,6 @@ var BrowserApp = {
           action: {
             label: Strings.browser.GetStringFromName("undoCloseToast.action2"),
             callback: function() {
-              UITelemetry.addEvent("undo.1", "toast", null, "closetab");
               ss.undoCloseTab(window, closedTabData);
             },
           },
@@ -2096,8 +1938,6 @@ var BrowserApp = {
       Snackbars.show(msg, Snackbars.LENGTH_INDEFINITE);
     }
 
-    TelemetryStopwatch.start("FX_SANITIZE_TOTAL", refObj);
-
     for (let key in aItems) {
       if (!aItems[key]) {
         continue;
@@ -2132,7 +1972,6 @@ var BrowserApp = {
 
     Promise.all(promises)
       .then(function() {
-        TelemetryStopwatch.finish("FX_SANITIZE_TOTAL", refObj);
         GlobalEventDispatcher.sendRequest({
           type: "Sanitize:Finished",
           success: true,
@@ -2144,7 +1983,6 @@ var BrowserApp = {
         }
       })
       .catch(function(err) {
-        TelemetryStopwatch.finish("FX_SANITIZE_TOTAL", refObj);
         GlobalEventDispatcher.sendRequest({
           type: "Sanitize:Finished",
           error: err,
@@ -2373,15 +2211,6 @@ var BrowserApp = {
         break;
       }
 
-      case "Telemetry:CustomTabsPing": {
-        TelemetryController.submitExternalPing(
-          "anonymous",
-          { client: data.client },
-          { addClientId: false }
-        );
-        break;
-      }
-
       case "Session:GetHistory": {
         callback.onSuccess(this.getHistory(data));
         break;
@@ -2447,7 +2276,6 @@ var BrowserApp = {
                   "trackingprotection",
                   Services.perms.ALLOW_ACTION
                 );
-                Telemetry.addData("TRACKING_PROTECTION_EVENTS", 1);
               }
             } else {
               // Remove the current host from the 'trackingprotection' consumer
@@ -2458,7 +2286,6 @@ var BrowserApp = {
                 PrivateBrowsingUtils.removeFromTrackingAllowlist(normalizedUrl);
               } else {
                 Services.perms.removeFromPrincipal(browser.contentPrincipal, "trackingprotection");
-                Telemetry.addData("TRACKING_PROTECTION_EVENTS", 2);
               }
             }
           }
@@ -2705,10 +2532,6 @@ var BrowserApp = {
         break;
       }
 
-      case "gather-telemetry":
-        GlobalEventDispatcher.sendRequest({ type: "Telemetry:Gather" });
-        break;
-
       case "Vibration:Request":
         if (aSubject instanceof Navigator) {
           let navigator = aSubject;
@@ -2826,10 +2649,6 @@ var BrowserApp = {
   // nsIAndroidBrowserApp
   getBrowserTab: function(tabId) {
     return this.getTabForId(tabId);
-  },
-
-  getUITelemetryObserver: function() {
-    return UITelemetry;
   },
 
   // This method will return a list of history items and toIndex based on the action provided from the fromIndex to toIndex,
@@ -4121,7 +3940,7 @@ nsBrowserAccess.prototype = {
       aTriggeringPrincipal,
       aCsp
     );
-    return browser && browser.contentWindow;
+    return browser && browser.browsingContext;
   },
 
   createContentWindow: function browser_createContentWindow(
@@ -4140,7 +3959,7 @@ nsBrowserAccess.prototype = {
       aTriggeringPrincipal,
       aCsp
     );
-    return browser && browser.contentWindow;
+    return browser && browser.browsingContext;
   },
 
   openURIInFrame: function browser_openURIInFrame(
@@ -4912,7 +4731,6 @@ Tab.prototype = {
             });
           }
 
-          UITelemetry.addEvent("neterror.1", "content", null, errorExtra);
           errorType = "neterror";
         }
 
@@ -5825,19 +5643,13 @@ var ErrorPageEventHandler = {
           // First check whether it's malware, phishing or unwanted, so that we
           // can use the right strings/links
           let bucketName = "";
-          const probe = "URLCLASSIFIER_UI_EVENTS";
-          let sendTelemetry = false;
           if (errorDoc.documentURI.includes("e=malwareBlocked")) {
-            sendTelemetry = true;
             bucketName = "WARNING_MALWARE_PAGE_";
           } else if (errorDoc.documentURI.includes("e=deceptiveBlocked")) {
-            sendTelemetry = true;
             bucketName = "WARNING_PHISHING_PAGE_";
           } else if (errorDoc.documentURI.includes("e=unwantedBlocked")) {
-            sendTelemetry = true;
             bucketName = "WARNING_UNWANTED_PAGE_";
           } else if (errorDoc.documentURI.includes("e=harmfulBlocked")) {
-            sendTelemetry = true;
             bucketName = "WARNING_HARMFUL_PAGE_";
           }
           let nsISecTel = Ci.nsISecurityUITelemetry;
@@ -5847,37 +5659,11 @@ var ErrorPageEventHandler = {
           let formatter = Services.urlFormatter;
 
           if (target == errorDoc.getElementById("getMeOutButton")) {
-            if (sendTelemetry) {
-              Telemetry.addData(
-                probe,
-                nsISecTel[bucketName + "GET_ME_OUT_OF_HERE"]
-              );
-            }
             errorDoc.location = "about:home";
-          } else if (target == errorDoc.getElementById("reportButton")) {
-            // We log even if malware/phishing info URL couldn't be found:
-            // the measurement is for how many users clicked the WHY BLOCKED button
-            if (sendTelemetry) {
-              Telemetry.addData(probe, nsISecTel[bucketName + "WHY_BLOCKED"]);
-            }
-
-            // This is the "Why is this site blocked" button. We redirect
-            // to the generic page describing phishing/malware protection.
-            let url = Services.urlFormatter.formatURLPref(
-              "app.support.baseURL"
-            );
-            BrowserApp.selectedBrowser.loadURI(url + "phishing-malware");
           } else if (
             target == errorDoc.getElementById("ignoreWarningButton") &&
             Services.prefs.getBoolPref("browser.safebrowsing.allowOverride")
           ) {
-            if (sendTelemetry) {
-              Telemetry.addData(
-                probe,
-                nsISecTel[bucketName + "IGNORE_WARNING"]
-              );
-            }
-
             // Allow users to override and continue through to the site,
             let webNav = BrowserApp.selectedBrowser.docShell.QueryInterface(
               Ci.nsIWebNavigation
@@ -6168,7 +5954,6 @@ var XPInstallObserver = {
             "alertAddonsInstalledNoRestart.action2"
           ),
           callback: () => {
-            UITelemetry.addEvent("show.1", "toast", null, "addons");
             BrowserApp.selectOrAddTab("about:addons", {
               parentId: BrowserApp.selectedTab.id,
             });
@@ -6612,7 +6397,6 @@ var CharacterEncoding = {
 
   setEncoding: function setEncoding(aEncoding) {
     let browser = BrowserApp.selectedBrowser;
-    browser.docShell.gatherCharsetMenuTelemetry();
     browser.docShell.charset = aEncoding;
     browser.reload(Ci.nsIWebNavigation.LOAD_FLAGS_CHARSET_CHANGE);
   },
@@ -6704,7 +6488,7 @@ var IdentityHandler = {
       return this.IDENTITY_MODE_IDENTIFIED;
     }
 
-    let whitelist = /^about:(about|accounts|addons|buildconfig|cache|compat|config|crashes|devices|downloads|experiments|fennec|firefox|feedback|home|license|logins|logo|memory|mozilla|networking|privatebrowsing|rights|serviceworkers|support|telemetry|webrtc)($|\?)/i;
+    let whitelist = /^about:(about|accounts|addons|buildconfig|cache|compat|config|crashes|devices|downloads|experiments|fennec|firefox|feedback|home|license|logins|logo|memory|mozilla|networking|privatebrowsing|rights|serviceworkers|support|webrtc)($|\?)/i;
     if (uri.schemeIs("about") && whitelist.test(uri.spec)) {
       return this.IDENTITY_MODE_CHROMEUI;
     }
@@ -6772,7 +6556,6 @@ var IdentityHandler = {
     if (PrivateBrowsingUtils.isBrowserPrivate(browser)) {
       return;
     }
-    Telemetry.addData("TRACKING_PROTECTION_SHIELD", value);
   },
 
   /**
@@ -7340,8 +7123,6 @@ var ActivityObserver = {
     let isForeground = false;
     let tab = BrowserApp.selectedTab;
 
-    UITelemetry.addEvent("show.1", "system", null, aTopic);
-
     switch (aTopic) {
       case "application-background":
         let doc = tab ? tab.browser.contentDocument : null;
@@ -7358,13 +7139,6 @@ var ActivityObserver = {
     if (tab && tab.getActive() != isForeground) {
       tab.setActive(isForeground);
     }
-  },
-};
-
-var Telemetry = {
-  addData: function addData(aHistogramId, aValue) {
-    let histogram = Services.telemetry.getHistogramById(aHistogramId);
-    histogram.add(aValue);
   },
 };
 
@@ -7557,8 +7331,6 @@ var ExternalApps = {
       useTint: true,
 
       clickCallback: () => {
-        UITelemetry.addEvent("launch.1", "pageaction", null, "helper");
-
         let wasPlaying =
           mediaElement && !mediaElement.paused && !mediaElement.ended;
         if (wasPlaying) {

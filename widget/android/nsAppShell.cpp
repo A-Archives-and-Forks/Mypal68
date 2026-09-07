@@ -19,7 +19,7 @@
 #include "nsISpeculativeConnect.h"
 #include "nsIURIFixup.h"
 #include "nsCategoryManagerUtils.h"
-#include "nsGeoPosition.h"
+#include "mozilla/dom/GeolocationPosition.h"
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Components.h"

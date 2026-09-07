@@ -521,6 +521,11 @@ interface nsIPrincipal : nsISupports
     */
 
     [infallible] readonly attribute nsIPrincipal nextSubDomainPrincipal;
+
+    /**
+     * Returns if the principal is for an IP address.
+     */
+    [infallible] readonly attribute boolean isIpAddress;
 };
 
 /**

@@ -41,12 +41,6 @@ class InProcessChild final : public PInProcessChild {
   // |nullptr|.
   static IProtocol* ParentActorFor(IProtocol* aActor);
 
- protected:
-  mozilla::dom::PWindowGlobalChild* AllocPWindowGlobalChild(
-      const WindowGlobalInit& aInit);
-
-  bool DeallocPWindowGlobalChild(mozilla::dom::PWindowGlobalChild* aActor);
-
  private:
   // NOTE: PInProcess lifecycle management is declared as staic methods and
   // state on InProcessParent, and implemented in InProcessImpl.cpp.

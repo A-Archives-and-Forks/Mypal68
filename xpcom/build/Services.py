@@ -63,7 +63,7 @@ service('History', 'mozilla::IHistory',
 service('ThirdPartyUtil', 'mozIThirdPartyUtil',
         "@mozilla.org/thirdpartyutil;1")
 service('URIFixup', 'nsIURIFixup',
-        "@mozilla.org/docshell/urifixup;1")
+        "@mozilla.org/docshell/uri-fixup;1")
 if buildconfig.substs.get('MOZ_BITS_DOWNLOAD'):
     service('Bits', 'nsIBits',
             "@mozilla.org/bits;1")

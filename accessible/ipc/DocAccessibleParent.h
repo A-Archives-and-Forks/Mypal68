@@ -8,6 +8,7 @@
 #include "nsAccessibilityService.h"
 #include "mozilla/a11y/PDocAccessibleParent.h"
 #include "mozilla/a11y/ProxyAccessible.h"
+#include "mozilla/Tuple.h"
 #include "nsClassHashtable.h"
 #include "nsHashKeys.h"
 #include "nsISupportsImpl.h"
@@ -28,6 +29,8 @@ class DocAccessiblePlatformExtParent;
 class DocAccessibleParent : public ProxyAccessible,
                             public PDocAccessibleParent {
  public:
+  NS_INLINE_DECL_REFCOUNTING(DocAccessibleParent);
+
   DocAccessibleParent()
       : ProxyAccessible(this),
         mParentDoc(kNoParentDoc),
@@ -36,18 +39,10 @@ class DocAccessibleParent : public ProxyAccessible,
 #endif  // defined(XP_WIN)
         mTopLevel(false),
         mShutdown(false) {
-    MOZ_COUNT_CTOR_INHERITED(DocAccessibleParent, ProxyAccessible);
     sMaxDocID++;
     mActorID = sMaxDocID;
     MOZ_ASSERT(!LiveDocs().Get(mActorID));
     LiveDocs().InsertOrUpdate(mActorID, this);
-  }
-
-  ~DocAccessibleParent() {
-    LiveDocs().Remove(mActorID);
-    MOZ_COUNT_DTOR_INHERITED(DocAccessibleParent, ProxyAccessible);
-    MOZ_ASSERT(mChildDocs.Length() == 0);
-    MOZ_ASSERT(!ParentDoc());
   }
 
   void SetTopLevel() { mTopLevel = true; }
@@ -239,7 +234,20 @@ class DocAccessibleParent : public ProxyAccessible,
   DocAccessiblePlatformExtParent* GetPlatformExtension();
 #endif
 
+  /**
+   * If this is an iframe document rendered in a different process to its
+   * embedder, return the DocAccessibleParent and id for the embedder
+   * accessible. Otherwise, return null and 0.
+   */
+  Tuple<DocAccessibleParent*, uint64_t> GetRemoteEmbedder();
+
  private:
+  ~DocAccessibleParent() {
+    LiveDocs().Remove(mActorID);
+    MOZ_ASSERT(mChildDocs.Length() == 0);
+    MOZ_ASSERT(!ParentDoc());
+  }
+
   class ProxyEntry : public PLDHashEntryHdr {
    public:
     explicit ProxyEntry(const void*) : mProxy(nullptr) {}
@@ -279,6 +287,7 @@ class DocAccessibleParent : public ProxyAccessible,
 
 #  if defined(MOZ_SANDBOX)
   mscom::PreservedStreamPtr mParentProxyStream;
+  mscom::PreservedStreamPtr mDocProxyStream;
 #  endif  // defined(MOZ_SANDBOX)
 #endif    // defined(XP_WIN)
 

@@ -28,6 +28,7 @@ include protocol PHttpBackgroundChannel;
 include protocol PRemoteLazyInputStream;
 include protocol PMediaTransport;
 include protocol PRemoteWorker;
+include protocol PRemoteWorkerController;
 include protocol PRemoteWorkerService;
 include protocol PSharedWorker;
 include protocol PTemporaryIPCBlob;
@@ -99,6 +100,7 @@ sync refcounted protocol PBackground
   manages PRemoteLazyInputStream;
   manages PMediaTransport;
   manages PRemoteWorker;
+  manages PRemoteWorkerController;
   manages PRemoteWorkerService;
   manages PSharedWorker;
   manages PTemporaryIPCBlob;
@@ -224,6 +226,8 @@ parent:
   async StorageActivity(PrincipalInfo principalInfo);
 
   async PServiceWorker(IPCServiceWorkerDescriptor aDescriptor);
+
+  async PRemoteWorkerController(RemoteWorkerData aData);
 
   async PRemoteWorkerService();
 

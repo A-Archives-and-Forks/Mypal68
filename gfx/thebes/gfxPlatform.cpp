@@ -1937,6 +1937,9 @@ void gfxPlatform::InitBackendPrefs(BackendPrefsData&& aPrefsData) {
   uint32_t swBackendBits =
       BackendTypeBit(BackendType::SKIA) | BackendTypeBit(BackendType::CAIRO);
   mSoftwareBackend = GetContentBackendPref(swBackendBits);
+  if (mSoftwareBackend == BackendType::NONE) {
+    mSoftwareBackend = BackendType::SKIA;
+  }
 
   if (XRE_IsParentProcess()) {
     gfxVars::SetContentBackend(mContentBackend);

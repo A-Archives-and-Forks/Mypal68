@@ -66,4 +66,4 @@ _PR_ia64_AtomicSet:
         .endp _PR_ia64_AtomicSet#
 
 // Magic indicating no need for an executable stack
-.section .note.GNU-stack, "", @progbits ; .previous
+.section .note.GNU-stack, "", @progbits

@@ -318,10 +318,10 @@ class AsyncCloseConnection final : public Runnable {
   }
 
   ~AsyncCloseConnection() override {
-    NS_ReleaseOnMainThreadSystemGroup("AsyncCloseConnection::mConnection",
-                                      mConnection.forget());
-    NS_ReleaseOnMainThreadSystemGroup("AsyncCloseConnection::mCallbackEvent",
-                                      mCallbackEvent.forget());
+    NS_ReleaseOnMainThread("AsyncCloseConnection::mConnection",
+                           mConnection.forget());
+    NS_ReleaseOnMainThread("AsyncCloseConnection::mCallbackEvent",
+                           mCallbackEvent.forget());
   }
 
  private:

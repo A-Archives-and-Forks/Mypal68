@@ -12,12 +12,13 @@
 #include "nsThreadUtils.h"
 #include "ToastNotificationHandler.h"
 #include "WinTaskbar.h"
+#include "mozilla/Services.h"
 
 namespace mozilla {
 namespace widget {
 
-NS_IMPL_ISUPPORTS(ToastNotification, nsIAlertsService, nsIObserver,
-                  nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS(ToastNotification, nsIAlertsService, nsIAlertsDoNotDisturb,
+                  nsIObserver)
 
 ToastNotification::ToastNotification() = default;
 
@@ -41,7 +42,7 @@ nsresult ToastNotification::Init() {
   }
 
   nsCOMPtr<nsIObserverService> obsServ =
-      do_GetService("@mozilla.org/observer-service;1");
+      mozilla::services::GetObserverService();
   if (obsServ) {
     obsServ->AddObserver(this, "quit-application", true);
   }
@@ -59,7 +60,15 @@ ToastNotification::Observe(nsISupports* aSubject, const char* aTopic,
   // Got quit-application
   // The handlers destructors will do the right thing (de-register with
   // Windows).
-  mActiveHandlers.Clear();
+  for (auto iter = mActiveHandlers.Iter(); !iter.Done(); iter.Next()) {
+    RefPtr<ToastNotificationHandler> handler = iter.UserData();
+    iter.Remove();
+
+    // Break the cycle between the handler and the MSCOM notification so the
+    // handler's destructor will be called.
+    handler->UnregisterHandler();
+  }
+
   return NS_OK;
 }
 
@@ -96,54 +105,42 @@ ToastNotification::ShowPersistentNotification(const nsAString& aPersistentData,
 NS_IMETHODIMP
 ToastNotification::ShowAlert(nsIAlertNotification* aAlert,
                              nsIObserver* aAlertListener) {
-  if (NS_WARN_IF(!aAlert)) {
-    return NS_ERROR_INVALID_ARG;
-  }
+  NS_ENSURE_ARG(aAlert);
 
   nsAutoString cookie;
-  nsresult rv = aAlert->GetCookie(cookie);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  MOZ_TRY(aAlert->GetCookie(cookie));
 
   nsAutoString name;
-  rv = aAlert->GetName(name);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  MOZ_TRY(aAlert->GetName(name));
 
   nsAutoString title;
-  rv = aAlert->GetTitle(title);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  MOZ_TRY(aAlert->GetTitle(title));
 
   nsAutoString text;
-  rv = aAlert->GetText(text);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  MOZ_TRY(aAlert->GetText(text));
 
   bool textClickable;
-  rv = aAlert->GetTextClickable(&textClickable);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  MOZ_TRY(aAlert->GetTextClickable(&textClickable));
 
   nsAutoString hostPort;
-  rv = aAlert->GetSource(hostPort);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  MOZ_TRY(aAlert->GetSource(hostPort));
+
+  RefPtr<ToastNotificationHandler> oldHandler = mActiveHandlers.Get(name);
 
   RefPtr<ToastNotificationHandler> handler = new ToastNotificationHandler(
       this, aAlertListener, name, cookie, title, text, hostPort, textClickable);
   mActiveHandlers.InsertOrUpdate(name, RefPtr{handler});
 
-  rv = handler->InitAlertAsync(aAlert);
+  nsresult rv = handler->InitAlertAsync(aAlert);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     mActiveHandlers.Remove(name);
+    handler->UnregisterHandler();
     return rv;
+  }
+
+  // If there was a previous handler with the same name then unregister it.
+  if (oldHandler) {
+    oldHandler->UnregisterHandler();
   }
 
   return NS_OK;
@@ -156,6 +153,7 @@ ToastNotification::CloseAlert(const nsAString& aAlertName) {
     return NS_OK;
   }
   mActiveHandlers.Remove(aAlertName);
+  handler->UnregisterHandler();
   return NS_OK;
 }
 
@@ -177,6 +175,7 @@ void ToastNotification::RemoveHandler(const nsAString& aAlertName,
     // the hashtable .Remove() method. Wait until we have returned from there.
     RefPtr<ToastNotificationHandler> kungFuDeathGrip(aHandler);
     mActiveHandlers.Remove(aAlertName);
+    aHandler->UnregisterHandler();
   }
 }
 

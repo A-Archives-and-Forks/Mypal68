@@ -15,6 +15,10 @@
 #include <errno.h>
 #include <string.h>
 
+#if defined(XP_UNIX)
+#include <unistd.h>
+#endif
+
 #ifdef DEBUG
 #define PORT_INC_DO +100
 #else

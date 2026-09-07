@@ -601,9 +601,6 @@ class WinUtils {
                                                      PWSTR *ppszPath);
   static SHGetKnownFolderPathPtr sGetKnownFolderPath;
 
-  static const nsTArray<std::pair<nsString, nsDependentString>>&
-  GetWhitelistedPaths();
-
 #ifdef ACCESSIBILITY
   static a11y::Accessible* GetRootAccessibleForHWND(HWND aHwnd);
 #endif

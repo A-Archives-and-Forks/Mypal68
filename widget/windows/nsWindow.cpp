@@ -1531,7 +1531,7 @@ void nsWindow::Show(bool bState) {
             ::ShowWindow(mWnd, SW_SHOWMINIMIZED);
             break;
           default:
-            if (CanTakeFocus()) {
+            if (CanTakeFocus() && !mAlwaysOnTop) {
               ::ShowWindow(mWnd, SW_SHOWNORMAL);
             } else {
               ::ShowWindow(mWnd, SW_SHOWNOACTIVATE);
@@ -1545,6 +1545,7 @@ void nsWindow::Show(bool bState) {
       } else {
         DWORD flags = SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW;
         if (wasVisible) flags |= SWP_NOZORDER;
+        if (mAlwaysOnTop) flags |= SWP_NOACTIVATE;
 
         if (mWindowType == eWindowType_popup) {
           // ensure popups are the topmost of the TOPMOST
@@ -3404,6 +3405,7 @@ void* nsWindow::GetNativeData(uint32_t aDataType) {
     case NS_NATIVE_PLUGIN_PORT:
     case NS_NATIVE_WIDGET:
     case NS_NATIVE_WINDOW:
+    case NS_NATIVE_WINDOW_WEBRTC_DEVICE_ID:
       return (void*)mWnd;
     case NS_NATIVE_SHAREABLE_WINDOW:
       return (void*)WinUtils::GetTopLevelHWND(mWnd);
@@ -7139,8 +7141,8 @@ bool nsWindow::HasBogusPopupsDropShadowOnMultiMonitor() {
                                                                : TRI_FALSE;
     if (!sHasBogusPopupsDropShadowOnMultiMonitor) {
       // Otherwise check if Direct3D 9 may be used.
-      if (gfxConfig::IsEnabled(Feature::HW_COMPOSITING) &&
-          !gfxConfig::IsEnabled(Feature::OPENGL_COMPOSITING)) {
+      if (gfxConfig::IsEnabled(gfx::Feature::HW_COMPOSITING) &&
+          !gfxConfig::IsEnabled(gfx::Feature::OPENGL_COMPOSITING)) {
         nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
         if (gfxInfo) {
           int32_t status;
@@ -7149,7 +7151,7 @@ bool nsWindow::HasBogusPopupsDropShadowOnMultiMonitor() {
                   nsIGfxInfo::FEATURE_DIRECT3D_9_LAYERS, discardFailureId,
                   &status))) {
             if (status == nsIGfxInfo::FEATURE_STATUS_OK ||
-                gfxConfig::IsForcedOnByUser(Feature::HW_COMPOSITING)) {
+                gfxConfig::IsForcedOnByUser(gfx::Feature::HW_COMPOSITING)) {
               sHasBogusPopupsDropShadowOnMultiMonitor = TRI_TRUE;
             }
           }

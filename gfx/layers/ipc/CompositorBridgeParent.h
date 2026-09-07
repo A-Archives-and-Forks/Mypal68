@@ -222,14 +222,14 @@ class CompositorBridgeParentBase : public PCompositorBridgeParent,
       const LayersId& id, const uint64_t& aSerial
 #ifdef MOZ_BUILD_WEBRENDER
       ,
-      const MaybeExternalImageId& aExternalImageId
+      const wr::MaybeExternalImageId& aExternalImageId
 #endif
       ) = 0;
   virtual bool DeallocPTextureParent(PTextureParent* aActor) = 0;
 
 #ifdef MOZ_BUILD_WEBRENDER
   virtual PWebRenderBridgeParent* AllocPWebRenderBridgeParent(
-      const PipelineId& pipelineId, const LayoutDeviceIntSize& aSize) = 0;
+      const wr::PipelineId& pipelineId, const LayoutDeviceIntSize& aSize) = 0;
   virtual bool DeallocPWebRenderBridgeParent(
       PWebRenderBridgeParent* aActor) = 0;
   virtual mozilla::ipc::IPCResult RecvFlushRenderingAsync() = 0;

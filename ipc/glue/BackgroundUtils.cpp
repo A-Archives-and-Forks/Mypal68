@@ -9,6 +9,7 @@
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/ContentPrincipal.h"
 #include "mozilla/NullPrincipal.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/ipc/URIUtils.h"
 #include "mozilla/net/CookieJarSettings.h"
@@ -25,11 +26,13 @@
 #include "URIUtils.h"
 #include "mozilla/dom/nsCSPUtils.h"
 #include "mozilla/dom/nsCSPContext.h"
+#include "mozilla/dom/BrowsingContext.h"
 
 namespace mozilla {
 
 using mozilla::BasePrincipal;
 using mozilla::Maybe;
+using mozilla::dom::BrowsingContext;
 using mozilla::dom::ServiceWorkerDescriptor;
 using namespace mozilla::net;
 
@@ -529,8 +532,10 @@ nsresult LoadInfoToLoadInfoArgs(nsILoadInfo* aLoadInfo,
       loadingPrincipalInfo, triggeringPrincipalInfo, principalToInheritInfo,
       sandboxedLoadingPrincipalInfo, topLevelPrincipalInfo,
       topLevelStorageAreaPrincipalInfo, optionalResultPrincipalURI,
-      aLoadInfo->GetSecurityFlags(), aLoadInfo->InternalContentPolicyType(),
+      aLoadInfo->GetSecurityFlags(), aLoadInfo->GetSandboxFlags(),
+      aLoadInfo->InternalContentPolicyType(),
       static_cast<uint32_t>(aLoadInfo->GetTainting()),
+      aLoadInfo->GetBlockAllMixedContent(),
       aLoadInfo->GetUpgradeInsecureRequests(),
       aLoadInfo->GetBrowserUpgradeInsecureRequests(),
       aLoadInfo->GetBrowserWouldUpgradeInsecureRequests(),
@@ -558,7 +563,7 @@ nsresult LoadInfoToLoadInfoArgs(nsILoadInfo* aLoadInfo,
       cspNonce, aLoadInfo->GetSkipContentSniffing(),
       aLoadInfo->GetIsFromProcessingFrameAttributes(), cookieJarSettingsArgs,
       aLoadInfo->GetRequestBlockingReason(), maybeCspToInheritInfo,
-      aLoadInfo->GetIsMetaRefresh()));
+      aLoadInfo->GetHasStoragePermission(), aLoadInfo->GetIsMetaRefresh()));
 
   return NS_OK;
 }
@@ -566,6 +571,28 @@ nsresult LoadInfoToLoadInfoArgs(nsILoadInfo* aLoadInfo,
 nsresult LoadInfoArgsToLoadInfo(
     const Maybe<LoadInfoArgs>& aOptionalLoadInfoArgs,
     nsILoadInfo** outLoadInfo) {
+  return LoadInfoArgsToLoadInfo(aOptionalLoadInfoArgs, nullptr, outLoadInfo);
+}
+nsresult LoadInfoArgsToLoadInfo(
+    const Maybe<LoadInfoArgs>& aOptionalLoadInfoArgs,
+    nsINode* aCspToInheritLoadingContext, nsILoadInfo** outLoadInfo) {
+  RefPtr<LoadInfo> loadInfo;
+  nsresult rv =
+      LoadInfoArgsToLoadInfo(aOptionalLoadInfoArgs, aCspToInheritLoadingContext,
+                             getter_AddRefs(loadInfo));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  loadInfo.forget(outLoadInfo);
+  return NS_OK;
+}
+
+nsresult LoadInfoArgsToLoadInfo(
+    const Maybe<LoadInfoArgs>& aOptionalLoadInfoArgs, LoadInfo** outLoadInfo) {
+  return LoadInfoArgsToLoadInfo(aOptionalLoadInfoArgs, nullptr, outLoadInfo);
+}
+nsresult LoadInfoArgsToLoadInfo(
+    const Maybe<LoadInfoArgs>& aOptionalLoadInfoArgs,
+    nsINode* aCspToInheritLoadingContext, LoadInfo** outLoadInfo) {
   if (aOptionalLoadInfoArgs.isNothing()) {
     *outLoadInfo = nullptr;
     return NS_OK;
@@ -706,7 +733,18 @@ nsresult LoadInfoArgsToLoadInfo(
   Maybe<mozilla::ipc::CSPInfo> cspToInheritInfo =
       loadInfoArgs.cspToInheritInfo();
   if (cspToInheritInfo.isSome()) {
-    cspToInherit = CSPInfoToCSP(cspToInheritInfo.ref(), nullptr);
+    nsCOMPtr<Document> doc = do_QueryInterface(aCspToInheritLoadingContext);
+    cspToInherit = CSPInfoToCSP(cspToInheritInfo.ref(), doc);
+  }
+
+  // Restore the loadingContext for frames using the BrowsingContext's
+  // embedder element. Note that this only works if the embedder is
+  // same-process, so won't be fission compatible.
+  nsCOMPtr<nsINode> loadingContext;
+  RefPtr<BrowsingContext> frameBrowsingContext =
+      BrowsingContext::Get(loadInfoArgs.frameBrowsingContextID());
+  if (frameBrowsingContext) {
+    loadingContext = frameBrowsingContext->GetEmbedderElement();
   }
 
   RefPtr<mozilla::LoadInfo> loadInfo = new mozilla::LoadInfo(
@@ -714,9 +752,10 @@ nsresult LoadInfoArgsToLoadInfo(
       sandboxedLoadingPrincipal, topLevelPrincipal,
       topLevelStorageAreaPrincipal, resultPrincipalURI, cookieJarSettings,
       cspToInherit, clientInfo, reservedClientInfo, initialClientInfo,
-      controller, loadInfoArgs.securityFlags(),
+      controller, loadInfoArgs.securityFlags(), loadInfoArgs.sandboxFlags(),
       loadInfoArgs.contentPolicyType(),
       static_cast<LoadTainting>(loadInfoArgs.tainting()),
+      loadInfoArgs.blockAllMixedContent(),
       loadInfoArgs.upgradeInsecureRequests(),
       loadInfoArgs.browserUpgradeInsecureRequests(),
       loadInfoArgs.browserWouldUpgradeInsecureRequests(),
@@ -740,8 +779,8 @@ nsresult LoadInfoArgsToLoadInfo(
       loadInfoArgs.documentHasLoaded(),
       loadInfoArgs.allowListFutureDocumentsCreatedFromThisRedirectChain(),
       loadInfoArgs.cspNonce(), loadInfoArgs.skipContentSniffing(),
-      loadInfoArgs.requestBlockingReason(),
-      loadInfoArgs.isMetaRefresh());
+      loadInfoArgs.hasStoragePermission(), loadInfoArgs.requestBlockingReason(),
+      loadInfoArgs.isMetaRefresh(), loadingContext);
 
   if (loadInfoArgs.isFromProcessingFrameAttributes()) {
     loadInfo->SetIsFromProcessingFrameAttributes();
@@ -782,7 +821,7 @@ void LoadInfoToParentLoadInfoForwarder(
       aLoadInfo->GetDocumentHasLoaded(),
       aLoadInfo->GetAllowListFutureDocumentsCreatedFromThisRedirectChain(),
       cookieJarSettingsArgs, aLoadInfo->GetRequestBlockingReason(),
-      aLoadInfo->GetIsMetaRefresh());
+      aLoadInfo->GetHasStoragePermission(), aLoadInfo->GetIsMetaRefresh());
 }
 
 nsresult MergeParentLoadInfoForwarder(
@@ -833,6 +872,10 @@ nsresult MergeParentLoadInfoForwarder(
           ->Merge(cookieJarSettingsArgs.ref());
     }
   }
+
+  rv =
+      aLoadInfo->SetHasStoragePermission(aForwarderArgs.hasStoragePermission());
+  NS_ENSURE_SUCCESS(rv, rv);
 
   rv = aLoadInfo->SetIsMetaRefresh(aForwarderArgs.isMetaRefresh());
   NS_ENSURE_SUCCESS(rv, rv);

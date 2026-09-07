@@ -88,7 +88,6 @@ class WebRenderTextureHost : public TextureHost {
 
  protected:
   RefPtr<TextureHost> mWrappedTextureHost;
-  wr::ExternalImageId mExternalImageId;
 };
 
 }  // namespace layers

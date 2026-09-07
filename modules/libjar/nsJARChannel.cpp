@@ -164,6 +164,7 @@ nsJARInputThunk::IsNonBlocking(bool* nonBlocking) {
 
 nsJARChannel::nsJARChannel()
     : mOpened(false),
+      mCanceled(false),
       mContentLength(-1),
       mLoadFlags(LOAD_NORMAL),
       mStatus(NS_OK),
@@ -182,16 +183,11 @@ nsJARChannel::~nsJARChannel() {
   }
 
   // Proxy release the following members to main thread.
-  NS_ReleaseOnMainThreadSystemGroup("nsJARChannel::mLoadInfo",
-                                    mLoadInfo.forget());
-  NS_ReleaseOnMainThreadSystemGroup("nsJARChannel::mCallbacks",
-                                    mCallbacks.forget());
-  NS_ReleaseOnMainThreadSystemGroup("nsJARChannel::mProgressSink",
-                                    mProgressSink.forget());
-  NS_ReleaseOnMainThreadSystemGroup("nsJARChannel::mLoadGroup",
-                                    mLoadGroup.forget());
-  NS_ReleaseOnMainThreadSystemGroup("nsJARChannel::mListener",
-                                    mListener.forget());
+  NS_ReleaseOnMainThread("nsJARChannel::mLoadInfo", mLoadInfo.forget());
+  NS_ReleaseOnMainThread("nsJARChannel::mCallbacks", mCallbacks.forget());
+  NS_ReleaseOnMainThread("nsJARChannel::mProgressSink", mProgressSink.forget());
+  NS_ReleaseOnMainThread("nsJARChannel::mLoadGroup", mLoadGroup.forget());
+  NS_ReleaseOnMainThread("nsJARChannel::mListener", mListener.forget());
 }
 
 NS_IMPL_ISUPPORTS_INHERITED(nsJARChannel, nsHashPropertyBag, nsIRequest,
@@ -557,6 +553,7 @@ nsJARChannel::GetStatus(nsresult* status) {
 
 NS_IMETHODIMP
 nsJARChannel::Cancel(nsresult status) {
+  mCanceled = true;
   mStatus = status;
   if (mPump) {
     return mPump->Cancel(status);
@@ -566,6 +563,12 @@ nsJARChannel::Cancel(nsresult status) {
     mPendingEvent.isCanceled = true;
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsJARChannel::GetCanceled(bool* aCanceled) {
+  *aCanceled = mCanceled;
   return NS_OK;
 }
 

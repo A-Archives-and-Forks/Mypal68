@@ -304,7 +304,7 @@ class WeakPtr {
 #ifdef MOZILLA_INTERNAL_API
   ~WeakPtr() {
     if (Destruct == detail::WeakPtrDestructorBehavior::ProxyToMainThread) {
-      NS_ReleaseOnMainThreadSystemGroup("WeakPtr::mRef", mRef.forget());
+      NS_ReleaseOnMainThread("WeakPtr::mRef", mRef.forget());
     } else {
       MOZ_WEAKPTR_ASSERT_THREAD_SAFETY_DELEGATED(mRef);
     }

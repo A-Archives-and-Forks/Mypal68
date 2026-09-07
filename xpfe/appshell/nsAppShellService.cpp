@@ -31,7 +31,9 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
 #include "mozilla/StartupTimeline.h"
+#include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/intl/LocaleService.h"
+#include "mozilla/dom/BrowsingContext.h"
 
 #include "nsEmbedCID.h"
 #include "nsIWebBrowser.h"
@@ -39,6 +41,8 @@
 #include "gfxPlatform.h"
 
 #include "nsWebBrowser.h"
+#include "nsDocShell.h"
+#include "nsDocShellLoadState.h"
 
 #ifdef MOZ_INSTRUMENT_EVENT_LOOP
 #  include "EventTracer.h"
@@ -124,9 +128,8 @@ nsAppShellService::CreateHiddenWindow() {
   NS_ENSURE_SUCCESS(rv, rv);
 
   RefPtr<AppWindow> newWindow;
-  rv =
-      JustCreateTopWindow(nullptr, url, chromeMask, initialWidth, initialHeight,
-                          true, nullptr, nullptr, getter_AddRefs(newWindow));
+  rv = JustCreateTopWindow(nullptr, url, chromeMask, initialWidth,
+                           initialHeight, true, getter_AddRefs(newWindow));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIDocShell> docShell;
@@ -155,20 +158,18 @@ nsAppShellService::DestroyHiddenWindow() {
  * Create a new top level window and display the given URL within it...
  */
 NS_IMETHODIMP
-nsAppShellService::CreateTopLevelWindow(
-    nsIAppWindow* aParent, nsIURI* aUrl, uint32_t aChromeMask,
-    int32_t aInitialWidth, int32_t aInitialHeight, nsIRemoteTab* aOpeningTab,
-    mozIDOMWindowProxy* aOpenerWindow, nsIAppWindow** aResult)
-
-{
+nsAppShellService::CreateTopLevelWindow(nsIAppWindow* aParent, nsIURI* aUrl,
+                                        uint32_t aChromeMask,
+                                        int32_t aInitialWidth,
+                                        int32_t aInitialHeight,
+                                        nsIAppWindow** aResult) {
   nsresult rv;
 
   StartupTimeline::RecordOnce(StartupTimeline::CREATE_TOP_LEVEL_WINDOW);
 
   RefPtr<AppWindow> newWindow;
   rv = JustCreateTopWindow(aParent, aUrl, aChromeMask, aInitialWidth,
-                           aInitialHeight, false, aOpeningTab, aOpenerWindow,
-                           getter_AddRefs(newWindow));
+                           aInitialHeight, false, getter_AddRefs(newWindow));
   newWindow.forget(aResult);
 
   if (NS_SUCCEEDED(rv)) {
@@ -315,11 +316,25 @@ class BrowserDestroyer final : public Runnable {
         mBrowser(aBrowser),
         mContainer(aContainer) {}
 
+  static nsresult Destroy(nsIWebBrowser* aBrowser) {
+    RefPtr<BrowsingContext> bc;
+    if (nsCOMPtr<nsIDocShell> docShell = do_GetInterface(aBrowser)) {
+      bc = docShell->GetBrowsingContext();
+    }
+
+    nsCOMPtr<nsIBaseWindow> window(do_QueryInterface(aBrowser));
+    nsresult rv = window->Destroy();
+    MOZ_ASSERT(bc);
+    if (bc) {
+      bc->Detach();
+    }
+    return rv;
+  }
+
   NS_IMETHOD
   Run() override {
     // Explicitly destroy the browser, in case this isn't the last reference.
-    nsCOMPtr<nsIBaseWindow> window = do_QueryInterface(mBrowser);
-    return window->Destroy();
+    return Destroy(mBrowser);
   }
 
  protected:
@@ -348,8 +363,8 @@ class WindowlessBrowser final : public nsIWindowlessBrowser,
   NS_FORWARD_SAFE_NSIWEBNAVIGATION(mWebNavigation)
   NS_FORWARD_SAFE_NSIINTERFACEREQUESTOR(mInterfaceRequestor)
 
- protected:
-  virtual ~WindowlessBrowser() {
+ private:
+  ~WindowlessBrowser() {
     if (mClosed) {
       return;
     }
@@ -360,11 +375,10 @@ class WindowlessBrowser final : public nsIWindowlessBrowser,
     // when it's safe to run scripts. If this was triggered by GC, it may
     // not always be safe to run scripts, in which cases we need to delay
     // destruction until it is.
-    nsCOMPtr<nsIRunnable> runnable = new BrowserDestroyer(mBrowser, mContainer);
-    nsContentUtils::AddScriptRunner(runnable);
+    auto runnable = MakeRefPtr<BrowserDestroyer>(mBrowser, mContainer);
+    nsContentUtils::AddScriptRunner(runnable.forget());
   }
 
- private:
   nsCOMPtr<nsIWebBrowser> mBrowser;
   nsCOMPtr<nsIWebNavigation> mWebNavigation;
   nsCOMPtr<nsIInterfaceRequestor> mInterfaceRequestor;
@@ -387,9 +401,7 @@ WindowlessBrowser::Close() {
 
   mWebNavigation = nullptr;
   mInterfaceRequestor = nullptr;
-
-  nsCOMPtr<nsIBaseWindow> window = do_QueryInterface(mBrowser);
-  return window->Destroy();
+  return BrowserDestroyer::Destroy(mBrowser);
 }
 
 NS_IMETHODIMP
@@ -433,17 +445,17 @@ nsAppShellService::CreateWindowlessBrowser(bool aIsChrome,
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Create a BrowsingContext for our windowless browser.
-  RefPtr<BrowsingContext> browsingContext =
-      BrowsingContext::Create(nullptr, nullptr, EmptyString(),
-                              aIsChrome ? BrowsingContext::Type::Chrome
-                                        : BrowsingContext::Type::Content);
+  RefPtr<BrowsingContext> browsingContext = BrowsingContext::CreateWindowless(
+      nullptr, nullptr, EmptyString(),
+      aIsChrome ? BrowsingContext::Type::Chrome
+                : BrowsingContext::Type::Content);
 
   /* Next, we create an instance of nsWebBrowser. Instances of this class have
    * an associated doc shell, which is what we're interested in.
    */
-  nsCOMPtr<nsIWebBrowser> browser =
-      nsWebBrowser::Create(stub, widget, OriginAttributes(), browsingContext,
-                           true /* disable history */);
+  nsCOMPtr<nsIWebBrowser> browser = nsWebBrowser::Create(
+      stub, widget, OriginAttributes(), browsingContext,
+      nullptr /* initialWindowChild */, true /* disable history */);
 
   if (NS_WARN_IF(!browser)) {
     NS_ERROR("Couldn't create instance of nsWebBrowser!");
@@ -534,7 +546,6 @@ static bool CheckForFullscreenWindow() {
 nsresult nsAppShellService::JustCreateTopWindow(
     nsIAppWindow* aParent, nsIURI* aUrl, uint32_t aChromeMask,
     int32_t aInitialWidth, int32_t aInitialHeight, bool aIsHiddenWindow,
-    nsIRemoteTab* aOpeningTab, mozIDOMWindowProxy* aOpenerWindow,
     AppWindow** aResult) {
   *aResult = nullptr;
   NS_ENSURE_STATE(!mXPCOMWillShutDown);
@@ -656,25 +667,20 @@ nsresult nsAppShellService::JustCreateTopWindow(
 
   widgetInitData.mRTL = LocaleService::GetInstance()->IsAppLocaleRTL();
 
-  nsresult rv = window->Initialize(
-      parent, center ? aParent : nullptr, aUrl, aInitialWidth, aInitialHeight,
-      aIsHiddenWindow, aOpeningTab, aOpenerWindow, widgetInitData);
+  nsresult rv =
+      window->Initialize(parent, center ? aParent : nullptr, aInitialWidth,
+                         aInitialHeight, aIsHiddenWindow, widgetInitData);
 
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Enforce the Private Browsing autoStart pref first.
   bool isPrivateBrowsingWindow =
       Preferences::GetBool("browser.privatebrowsing.autostart");
-  bool isUsingRemoteTabs = mozilla::BrowserTabsRemoteAutostart();
 
   if (aChromeMask & nsIWebBrowserChrome::CHROME_PRIVATE_WINDOW) {
     // Caller requested a private window
     isPrivateBrowsingWindow = true;
   }
-  if (aChromeMask & nsIWebBrowserChrome::CHROME_REMOTE_WINDOW) {
-    isUsingRemoteTabs = true;
-  }
-
   nsCOMPtr<mozIDOMWindowProxy> domWin = do_GetInterface(aParent);
   nsCOMPtr<nsIWebNavigation> webNav = do_GetInterface(domWin);
   nsCOMPtr<nsILoadContext> parentContext = do_QueryInterface(webNav);
@@ -686,17 +692,48 @@ nsresult nsAppShellService::JustCreateTopWindow(
     isPrivateBrowsingWindow = parentContext->UsePrivateBrowsing();
   }
 
-  if (parentContext) {
-    isUsingRemoteTabs = parentContext->UseRemoteTabs();
-  }
+  if (nsDocShell* docShell = nsDocShell::Cast(window->GetDocShell())) {
+    MOZ_ASSERT(docShell->ItemType() == nsIDocShellTreeItem::typeChrome);
 
-  nsCOMPtr<mozIDOMWindowProxy> newDomWin =
-      do_GetInterface(NS_ISUPPORTS_CAST(nsIBaseWindow*, window));
-  nsCOMPtr<nsIWebNavigation> newWebNav = do_GetInterface(newDomWin);
-  nsCOMPtr<nsILoadContext> thisContext = do_GetInterface(newWebNav);
-  if (thisContext) {
-    thisContext->SetPrivateBrowsing(isPrivateBrowsingWindow);
-    thisContext->SetRemoteTabs(isUsingRemoteTabs);
+    docShell->SetPrivateBrowsing(isPrivateBrowsingWindow);
+    docShell->SetRemoteTabs(aChromeMask &
+                            nsIWebBrowserChrome::CHROME_REMOTE_WINDOW);
+    docShell->SetRemoteSubframes(aChromeMask &
+                                 nsIWebBrowserChrome::CHROME_FISSION_WINDOW);
+
+    // Eagerly create an about:blank content viewer with the right principal
+    // here, rather than letting it happening in the upcoming call to
+    // SetInitialPrincipalToSubject. This avoids creating the about:blank
+    // document and then blowing it away with a second one, which can cause
+    // problems for the top-level chrome window case. See bug 789773. Note that
+    // we don't accept expanded principals here, similar to
+    // SetInitialPrincipalToSubject.
+    if (nsContentUtils::IsInitialized()) {  // Sometimes this happens really
+                                            // early. See bug 793370.
+      nsCOMPtr<nsIPrincipal> principal =
+          nsContentUtils::SubjectPrincipalOrSystemIfNativeCaller();
+      if (nsContentUtils::IsExpandedPrincipal(principal)) {
+        principal = nullptr;
+      }
+      // Use the subject (or system) principal as the storage principal too
+      // until the new window finishes navigating and gets a real storage
+      // principal.
+      rv = docShell->CreateAboutBlankContentViewer(principal, principal,
+                                                   /* aCsp = */ nullptr);
+      NS_ENSURE_SUCCESS(rv, rv);
+      RefPtr<Document> doc = docShell->GetDocument();
+      NS_ENSURE_TRUE(!!doc, NS_ERROR_FAILURE);
+      doc->SetIsInitialDocument(true);
+    }
+
+    // Begin loading the URL provided.
+    if (aUrl) {
+      RefPtr<nsDocShellLoadState> loadState = new nsDocShellLoadState(aUrl);
+      loadState->SetTriggeringPrincipal(nsContentUtils::GetSystemPrincipal());
+      loadState->SetFirstParty(true);
+      rv = docShell->LoadURI(loadState, /* aSetNavigating */ true);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
   }
 
   window.forget(aResult);

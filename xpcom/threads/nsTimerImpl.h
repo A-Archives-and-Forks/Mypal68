@@ -13,6 +13,7 @@
 
 #include "mozilla/Attributes.h"
 #include "base/lock.h"
+#include "mozilla/Logging.h"  //MY
 #include "mozilla/StaticMutex.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Variant.h"

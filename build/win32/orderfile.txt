@@ -3436,7 +3436,6 @@ NS_NewWindowsRegKey
 ?GetContentCharset@nsBaseChannel@@UAG?AW4nsresult@@AAV?$nsTSubstring@D@@@Z
 ??_GnsDataChannel@@UAEPAXI@Z
 ??1nsBaseChannel@@MAE@XZ
-??$NS_ReleaseOnMainThreadSystemGroup@VnsILoadInfo@@@@YAXPBDU?$already_AddRefed@VnsILoadInfo@@@@_N@Z
 ?ProxyReleaseISupports@?$ProxyReleaseChooser@$00@detail@@SAXPBDPAVnsIEventTarget@@PAVnsISupports@@_N@Z
 ??$ProxyRelease@VnsISupports@@@detail@@YAXPBDPAVnsIEventTarget@@U?$already_AddRefed@VnsISupports@@@@_N@Z
 ??_GnsSimpleURI@net@mozilla@@MAEPAXI@Z
@@ -5812,7 +5811,7 @@ _snwprintf
 ?GetScriptableParent@nsGlobalWindowOuter@@UAEPAVnsPIDOMWindowOuter@@XZ
 ?GetIsMozBrowser@nsDocShell@@UAG?AW4nsresult@@PA_N@Z
 ?GetParent@nsGlobalWindowOuter@@UAE?AU?$already_AddRefed@VnsPIDOMWindowOuter@@@@XZ
-?GetSameTypeParentIgnoreBrowserBoundaries@nsDocShell@@UAG?AW4nsresult@@PAPAVnsIDocShell@@@Z
+?GetSameTypeInProcessParentIgnoreBrowserBoundaries@nsDocShell@@UAG?AW4nsresult@@PAPAVnsIDocShell@@@Z
 ?GetChromeEventHandler@nsDocShell@@UAG?AW4nsresult@@PAPAVEventTarget@dom@mozilla@@@Z
 ?NS_NewWindowRoot@@YA?AU?$already_AddRefed@VEventTarget@dom@mozilla@@@@PAVnsPIDOMWindowOuter@@@Z
 ??0nsWindowRoot@@QAE@PAVnsPIDOMWindowOuter@@@Z

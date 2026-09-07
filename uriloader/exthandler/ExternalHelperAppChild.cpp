@@ -9,6 +9,7 @@
 #include "nsIInputStream.h"
 #include "nsIRequest.h"
 #include "nsIResumableChannel.h"
+#include "nsIPropertyBag2.h"
 #include "nsNetUtil.h"
 
 namespace mozilla {
@@ -61,20 +62,9 @@ ExternalHelperAppChild::OnStartRequest(nsIRequest* request) {
   nsresult rv = mHandler->OnStartRequest(request);
   NS_ENSURE_SUCCESS(rv, NS_ERROR_UNEXPECTED);
 
-  // Calling OnStartRequest could cause mHandler to close the window it was
-  // loaded for. In that case, the BrowserParent in the parent context might
-  // then point to the wrong window. Re-send the window context along with
-  // either DivertToParent or SendOnStartRequest just in case.
-  nsCOMPtr<nsPIDOMWindowOuter> window =
-      do_GetInterface(mHandler->GetDialogParent());
-  NS_ENSURE_TRUE(window, NS_ERROR_NOT_AVAILABLE);
-
-  BrowserChild* browserChild = mozilla::dom::BrowserChild::GetFrom(window);
-  NS_ENSURE_TRUE(browserChild, NS_ERROR_NOT_AVAILABLE);
-
   nsCOMPtr<nsIDivertableChannel> divertable = do_QueryInterface(request);
   if (divertable) {
-    return DivertToParent(divertable, request, browserChild);
+    return DivertToParent(divertable, request);
   }
 
   nsCString entityID;
@@ -82,7 +72,7 @@ ExternalHelperAppChild::OnStartRequest(nsIRequest* request) {
   if (resumable) {
     resumable->GetEntityID(entityID);
   }
-  SendOnStartRequest(entityID, browserChild);
+  SendOnStartRequest(entityID);
   return NS_OK;
 }
 
@@ -99,8 +89,7 @@ ExternalHelperAppChild::OnStopRequest(nsIRequest* request, nsresult status) {
 }
 
 nsresult ExternalHelperAppChild::DivertToParent(
-    nsIDivertableChannel* divertable, nsIRequest* request,
-    BrowserChild* browserChild) {
+    nsIDivertableChannel* divertable, nsIRequest* request) {
   // nsIDivertable must know about content conversions before being diverted.
   MOZ_ASSERT(mHandler);
   mHandler->MaybeApplyDecodingForExtension(request);
@@ -112,7 +101,7 @@ nsresult ExternalHelperAppChild::DivertToParent(
   }
   MOZ_ASSERT(diverter);
 
-  if (SendDivertToParentUsing(diverter, browserChild)) {
+  if (SendDivertToParentUsing(diverter)) {
     mHandler->DidDivertRequest(request);
     mHandler = nullptr;
     return NS_OK;

@@ -683,9 +683,7 @@ function getSnapshot(rect) {
     });
   }
 
-  return getSnapshot.chromeHelper
-    .sendSyncMessage("snapshot", JSON.stringify(rect))
-    .toString();
+  return getSnapshot.chromeHelper.sendQuery("snapshot", JSON.stringify(rect));
 }
 
 // Takes the document's query string and parses it, assuming the query string

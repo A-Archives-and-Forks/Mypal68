@@ -5,9 +5,8 @@
 #include "mozilla/layers/FocusTarget.h"
 #include "mozilla/dom/BrowserBridgeChild.h"  // for BrowserBridgeChild
 #include "mozilla/dom/EventTarget.h"         // for EventTarget
-#include "mozilla/dom/BrowserParent.h"       // for BrowserParent
+#include "mozilla/dom/RemoteBrowser.h"       // For RemoteBrowser
 #include "mozilla/EventDispatcher.h"         // for EventDispatcher
-#include "mozilla/layout/RemoteLayerTreeOwner.h"  // For RemoteLayerTreeOwner
 #include "mozilla/PresShell.h"               // For PresShell
 #include "mozilla/StaticPrefs_apz.h"
 #include "nsIContentInlines.h"  // for nsINode::IsEditable()
@@ -147,17 +146,16 @@ FocusTarget::FocusTarget(PresShell* aRootPresShell,
   }
 
   // Check if the key event target is a remote browser
-  if (BrowserParent* browserParent = BrowserParent::GetFrom(keyEventTarget)) {
-    RemoteLayerTreeOwner* rf = browserParent->GetRenderFrame();
+  if (RemoteBrowser* remoteBrowser = RemoteBrowser::GetFrom(keyEventTarget)) {
+    LayersId layersId = remoteBrowser->GetLayersId();
 
     // The globally focused element for scrolling is in a remote layer tree
-    if (rf) {
+    if (layersId.IsValid()) {
       FT_LOG("Creating reflayer target with seq=%" PRIu64 ", kl=%d, lt=%" PRIu64
              "\n",
-             aFocusSequenceNumber, mFocusHasKeyEventListeners,
-             rf->GetLayersId().mId);
+             aFocusSequenceNumber, mFocusHasKeyEventListeners, layersId.mId);
 
-      mData = AsVariant<LayersId>(rf->GetLayersId());
+      mData = AsVariant<LayersId>(std::move(layersId));
       return;
     }
 
@@ -165,17 +163,6 @@ FocusTarget::FocusTarget(PresShell* aRootPresShell,
            ", kl=%d (remote browser missing layers id)\n",
            aFocusSequenceNumber, mFocusHasKeyEventListeners);
 
-    return;
-  }
-
-  // Check if the key event target is a remote browser
-  if (BrowserBridgeChild* bbc = BrowserBridgeChild::GetFrom(keyEventTarget)) {
-    FT_LOG("Creating oopif reflayer target with seq=%" PRIu64
-           ", kl=%d, lt=%" PRIu64 "\n",
-           aFocusSequenceNumber, mFocusHasKeyEventListeners,
-           bbc->GetLayersId());
-
-    mData = AsVariant<LayersId>(bbc->GetLayersId());
     return;
   }
 

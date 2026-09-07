@@ -2005,10 +2005,6 @@ PointerCapabilities WinUtils::GetAllPointerCapabilities() {
   return result;
 }
 
-typedef DWORD(WINAPI* GetFinalPathNameByHandlePtr)(HANDLE hFile,
-                                                   LPTSTR lpszFilePath,
-                                                   DWORD cchFilePath,
-                                                   DWORD dwFlags);
 /* static */
 bool WinUtils::ResolveJunctionPointsAndSymLinks(std::wstring& aPath) {
   LOG_D("ResolveJunctionPointsAndSymLinks: Resolving path: %S", aPath.c_str());
@@ -2175,56 +2171,6 @@ bool WinUtils::UnexpandEnvVars(nsAString& aPath) {
     MOZ_ASSERT(aPath.Length() <= MAX_PATH);
   }
   return true;
-}
-
-/**
- * This function provides an array of (system path, substitution) pairs that are
- * considered to be acceptable with respect to privacy, for the purposes of
- * submitting within telemetry or crash reports.
- *
- * The substitution string's void flag may be set. If it is, no subsitution is
- * necessary. Otherwise, the consumer should replace the system path with the
- * substitution.
- *
- * @see PreparePathForTelemetry for an example of its usage.
- */
-/* static */
-const nsTArray<std::pair<nsString, nsDependentString>>&
-WinUtils::GetWhitelistedPaths() {
-  // We know the maximum number of items this array will hold, so avoid a heap
-  // allocation by using AutoTArray<T,N>
-  static const size_t kMaxWhitelistedItems = 2;
-  static StaticAutoPtr<
-      AutoTArray<std::pair<nsString, nsDependentString>, kMaxWhitelistedItems>>
-      sWhitelist;
-  if (sWhitelist) {
-    return *sWhitelist;
-  }
-  sWhitelist = new AutoTArray<std::pair<nsString, nsDependentString>,
-                              kMaxWhitelistedItems>();
-  sWhitelist->AppendElement(std::make_pair(
-      nsString(NS_LITERAL_STRING("%ProgramFiles%")), nsDependentString()));
-  // When no substitution is required, set the void flag
-  sWhitelist->LastElement().second.SetIsVoid(true);
-  wchar_t tmpPath[MAX_PATH + 1] = {0};
-  if (GetTempPath(MAX_PATH, tmpPath)) {
-    // GetTempPath's result always ends with a backslash, which we don't want
-    uint32_t tmpPathLen = wcslen(tmpPath);
-    if (tmpPathLen) {
-      tmpPath[tmpPathLen - 1] = 0;
-    }
-    nsAutoString cleanTmpPath(tmpPath);
-    if (UnexpandEnvVars(cleanTmpPath)) {
-      sWhitelist->AppendElement(
-          std::make_pair(nsString(cleanTmpPath), nsDependentString(L"%TEMP%")));
-    }
-  }
-  ClearOnShutdown(&sWhitelist);
-
-  // If we add more items to the whitelist, ensure we still don't invoke an
-  // unnecessary heap allocation.
-  MOZ_ASSERT(sWhitelist->Length() <= kMaxWhitelistedItems);
-  return *sWhitelist;
 }
 
 /**

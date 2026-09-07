@@ -18,6 +18,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Encoding.h"
 //#include "mozilla/EncodingDetector.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/JapaneseDetector.h"
 #include "mozilla/Likely.h"
 #include "mozilla/Maybe.h"
@@ -26,7 +27,6 @@
 #include "mozilla/Services.h"
 #include "mozilla/StaticPrefs_html5.h"
 #include "mozilla/StaticPrefs_intl.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/TaskCategory.h"
 #include "mozilla/Tuple.h"
 #include "mozilla/UniquePtrExtensions.h"
@@ -1166,8 +1166,8 @@ nsresult nsHtml5StreamParser::OnStartRequest(nsIRequest* aRequest) {
       // the request.
       nsCOMPtr<nsIRunnable> runnable =
           new MaybeRunCollector(mExecutor->GetDocument()->GetDocShell());
-      mozilla::SystemGroup::Dispatch(mozilla::TaskCategory::GarbageCollection,
-                                     runnable.forget());
+      mozilla::SchedulerGroup::Dispatch(
+          mozilla::TaskCategory::GarbageCollection, runnable.forget());
     }
   }
 

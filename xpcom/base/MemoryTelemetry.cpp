@@ -11,7 +11,6 @@
 #include "mozilla/Services.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/SimpleEnumerator.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/dom/ContentParent.h"
@@ -315,8 +314,7 @@ NS_IMPL_ISUPPORTS(MemoryTelemetry::TotalMemoryGatherer, nsITimerCallback)
  * results.
  */
 void MemoryTelemetry::TotalMemoryGatherer::Begin(nsIEventTarget* aThreadPool) {
-  nsCOMPtr<nsISerialEventTarget> target =
-      SystemGroup::EventTargetFor(TaskCategory::Other);
+  nsCOMPtr<nsISerialEventTarget> target = GetMainThreadSerialEventTarget();
 
   nsTArray<ContentParent*> parents;
   ContentParent::GetAll(parents);

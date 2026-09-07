@@ -3300,34 +3300,19 @@ int _MD_unix_get_nonblocking_connect_error(int osfd)
 ** in a pre-emptive threaded environment, we need to use a lock.
 */
 
-void PR_XLock(void)
+void _PR_XLock(void)
 {
     PR_EnterMonitor(_pr_Xfe_mon);
 }
 
-void PR_XUnlock(void)
+void _PR_XUnlock(void)
 {
     PR_ExitMonitor(_pr_Xfe_mon);
 }
 
-PRBool PR_XIsLocked(void)
+PRBool _PR_XIsLocked(void)
 {
     return (PR_InMonitor(_pr_Xfe_mon)) ? PR_TRUE : PR_FALSE;
-}
-
-void PR_XWait(int ms)
-{
-    PR_Wait(_pr_Xfe_mon, PR_MillisecondsToInterval(ms));
-}
-
-void PR_XNotify(void)
-{
-    PR_Notify(_pr_Xfe_mon);
-}
-
-void PR_XNotifyAll(void)
-{
-    PR_NotifyAll(_pr_Xfe_mon);
 }
 
 #if defined(HAVE_FCNTL_FILE_LOCKING)
@@ -3480,7 +3465,8 @@ PRStatus _MD_getsysinfo(PRSysInfo cmd, char *name, PRUint32 namelen)
 {
     struct utsname info;
 
-    PR_ASSERT((cmd == PR_SI_SYSNAME) || (cmd == PR_SI_RELEASE));
+    PR_ASSERT((cmd == PR_SI_SYSNAME) || (cmd == PR_SI_RELEASE) ||
+              (cmd == PR_SI_RELEASE_BUILD));
 
     if (uname(&info) == -1) {
         _PR_MD_MAP_DEFAULT_ERROR(errno);
@@ -3491,6 +3477,9 @@ PRStatus _MD_getsysinfo(PRSysInfo cmd, char *name, PRUint32 namelen)
     }
     else if (PR_SI_RELEASE == cmd) {
         (void)PR_snprintf(name, namelen, info.release);
+    }
+    else if (PR_SI_RELEASE_BUILD == cmd) {
+        (void)PR_snprintf(name, namelen, info.version);
     }
     else {
         return PR_FAILURE;

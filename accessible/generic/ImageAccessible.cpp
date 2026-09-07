@@ -12,6 +12,7 @@
 #include "imgIContainer.h"
 #include "imgIRequest.h"
 #include "nsGenericHTMLElement.h"
+#include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/Document.h"
 #include "nsIImageLoadingContent.h"
 #include "nsIPersistentProperties2.h"
@@ -124,7 +125,7 @@ bool ImageAccessible::DoAction(uint8_t aIndex) const {
   nsCOMPtr<nsPIDOMWindowOuter> piWindow = document->GetWindow();
   if (!piWindow) return false;
 
-  nsCOMPtr<nsPIDOMWindowOuter> tmp;
+  RefPtr<mozilla::dom::BrowsingContext> tmp;
   return NS_SUCCEEDED(piWindow->Open(spec, EmptyString(), EmptyString(),
                                      /* aLoadInfo = */ nullptr,
                                      /* aForceNoOpener = */ false,

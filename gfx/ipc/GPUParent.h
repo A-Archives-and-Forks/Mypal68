@@ -79,6 +79,11 @@ class GPUParent final : public PGPUParent {
       const bool& minimizeMemoryUsage,
       const Maybe<ipc::FileDescriptor>& DMDFile);
 
+#if defined(MOZ_SANDBOX) && defined(MOZ_DEBUG) && defined(ENABLE_TESTS)
+  mozilla::ipc::IPCResult RecvInitSandboxTesting(
+      Endpoint<PSandboxTestingChild>&& aEndpoint);
+#endif
+
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
  private:

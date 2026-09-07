@@ -4,3 +4,6 @@
 
 DIRS += ['msaa', 'ia2', 'sdn', 'uia']
 
+EXPORTS.mozilla.a11y += [
+    'ProxyWrappers.h',
+]

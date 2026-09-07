@@ -19,6 +19,10 @@
 #  include "nsTArray.h"
 #  include "nsThreadUtils.h"
 
+#  ifdef MOZ_WIDGET_ANDROID
+#    include "mozilla/jni/GeckoResultUtils.h"
+#  endif
+
 #  if MOZ_DIAGNOSTIC_ASSERT_ENABLED
 #    define PROMISE_DEBUG
 #  endif
@@ -36,6 +40,10 @@
 #  endif
 
 namespace mozilla {
+
+namespace dom {
+class Promise;
+}
 
 extern LazyLogModule gMozPromiseLog;
 
@@ -279,6 +287,9 @@ class MozPromise : public MozPromiseBase {
   typedef MozPromise<nsTArray<ResolveValueType>, RejectValueType, IsExclusive>
       AllPromiseType;
 
+  typedef MozPromise<nsTArray<ResolveOrRejectValue>, bool, IsExclusive>
+      AllSettledPromiseType;
+
  private:
   class AllPromiseHolder : public MozPromiseRefcountable {
    public:
@@ -328,6 +339,50 @@ class MozPromise : public MozPromiseBase {
     size_t mOutstandingPromises;
   };
 
+  // Trying to pass ResolveOrRejectValue by value fails static analysis checks,
+  // so we need to use either a const& or an rvalue reference, depending on
+  // whether IsExclusive is true or not.
+  typedef std::conditional_t<IsExclusive, ResolveOrRejectValue&&,
+                             const ResolveOrRejectValue&>
+      ResolveOrRejectValueParam;
+
+  class AllSettledPromiseHolder : public MozPromiseRefcountable {
+   public:
+    explicit AllSettledPromiseHolder(size_t aDependentPromises)
+        : mPromise(new typename AllSettledPromiseType::Private(__func__)),
+          mOutstandingPromises(aDependentPromises) {
+      MOZ_ASSERT(aDependentPromises > 0);
+      mValues.SetLength(aDependentPromises);
+    }
+
+    void Settle(size_t aIndex, ResolveOrRejectValueParam aValue) {
+      if (!mPromise) {
+        // Already rejected.
+        return;
+      }
+
+      mValues[aIndex].emplace(MaybeMove(aValue));
+      if (--mOutstandingPromises == 0) {
+        nsTArray<ResolveOrRejectValue> values;
+        values.SetCapacity(mValues.Length());
+        for (auto&& value : mValues) {
+          values.AppendElement(std::move(value.ref()));
+        }
+
+        mPromise->Resolve(std::move(values), __func__);
+        mPromise = nullptr;
+        mValues.Clear();
+      }
+    }
+
+    AllSettledPromiseType* Promise() { return mPromise; }
+
+   private:
+    nsTArray<Maybe<ResolveOrRejectValue>> mValues;
+    RefPtr<typename AllSettledPromiseType::Private> mPromise;
+    size_t mOutstandingPromises;
+  };
+
  public:
   [[nodiscard]] static RefPtr<AllPromiseType> All(
       nsISerialEventTarget* aProcessingTarget,
@@ -348,6 +403,26 @@ class MozPromise : public MozPromiseBase {
           [holder](RejectValueType aRejectValue) -> void {
             holder->Reject(std::move(aRejectValue));
           });
+    }
+    return promise;
+  }
+
+  [[nodiscard]] static RefPtr<AllSettledPromiseType> AllSettled(
+      nsISerialEventTarget* aProcessingTarget,
+      nsTArray<RefPtr<MozPromise>>& aPromises) {
+    if (aPromises.Length() == 0) {
+      return AllSettledPromiseType::CreateAndResolve(
+          nsTArray<ResolveOrRejectValue>(), __func__);
+    }
+
+    RefPtr<AllSettledPromiseHolder> holder =
+        new AllSettledPromiseHolder(aPromises.Length());
+    RefPtr<AllSettledPromiseType> promise = holder->Promise();
+    for (size_t i = 0; i < aPromises.Length(); ++i) {
+      aPromises[i]->Then(aProcessingTarget, __func__,
+                         [holder, i](ResolveOrRejectValueParam aValue) -> void {
+                           holder->Settle(i, MaybeMove(aValue));
+                         });
     }
     return promise;
   }
@@ -973,6 +1048,27 @@ class MozPromise : public MozPromiseBase {
       mChainedPromises.AppendElement(chainedPromise);
     }
   }
+
+#  ifdef MOZ_WIDGET_ANDROID
+  // Creates a C++ MozPromise from its Java counterpart, GeckoResult.
+  static RefPtr<MozPromise> FromGeckoResult(
+      java::GeckoResult::Param aGeckoResult) {
+    using jni::GeckoResultCallback;
+    RefPtr<Private> p = new Private("GeckoResult Glue", false);
+    auto resolve = GeckoResultCallback::CreateAndAttach<ResolveValueType>(
+        [p](ResolveValueType aArg) { p->Resolve(aArg, __func__); });
+    auto reject = GeckoResultCallback::CreateAndAttach<RejectValueType>(
+        [p](RejectValueType aArg) { p->Reject(aArg, __func__); });
+    aGeckoResult->NativeThen(resolve, reject);
+    return p;
+  }
+#  endif
+
+  // Creates a C++ MozPromise from its JS counterpart, dom::Promise.
+  // FromDomPromise currently only supports primitive types (int8/16/32, float,
+  // double) And the reject value type must be a nsresult.
+  // To use, please include MozPromiseInlines.h
+  static RefPtr<MozPromise> FromDomPromise(dom::Promise* aDOMPromise);
 
   // Note we expose the function AssertIsDead() instead of IsDead() since
   // checking IsDead() is a data race in the situation where the request is not

@@ -19,6 +19,10 @@ include protocol PVsyncBridge;
 include protocol PUiCompositorController;
 include protocol PRemoteDecoderManager;
 
+#if defined(MOZ_SANDBOX) && defined(MOZ_DEBUG) && defined(ENABLE_TESTS)
+include protocol PSandboxTesting;
+#endif
+
 include "mozilla/layers/LayersMessageUtils.h";
 
 using base::ProcessId from "base/process.h";
@@ -103,6 +107,10 @@ parent:
                             FileDescriptor? DMDFile);
 #ifdef MOZ_VR
   async ShutdownVR();
+#endif
+
+#if defined(MOZ_SANDBOX) && defined(MOZ_DEBUG) && defined(ENABLE_TESTS)
+  async InitSandboxTesting(Endpoint<PSandboxTestingChild> aEndpoint);
 #endif
 
 child:

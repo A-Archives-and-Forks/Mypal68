@@ -7,6 +7,7 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/dom/BlobURL.h"
+#include "mozilla/net/SubstitutingURL.h"
 #include "nsComponentManagerUtils.h"
 #include "nsDebug.h"
 #include "nsID.h"
@@ -66,7 +67,11 @@ already_AddRefed<nsIURI> DeserializeURI(const URIParams& aParams) {
       break;
 
     case URIParams::TStandardURLParams:
-      mutator = do_CreateInstance(kStandardURLMutatorCID);
+      if (aParams.get_StandardURLParams().isSubstituting()) {
+        mutator = new net::SubstitutingURL::Mutator();
+      } else {
+        mutator = do_CreateInstance(kStandardURLMutatorCID);
+      }
       break;
 
     case URIParams::TJARURIParams:

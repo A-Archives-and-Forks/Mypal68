@@ -12,6 +12,8 @@
 
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/BrowserChild.h"
+#include "mozilla/dom/CanonicalBrowsingContext.h"
+#include "mozilla/dom/WindowGlobalParent.h"
 #include "nsXULAppAPI.h"
 
 #include "nsExternalHelperAppService.h"
@@ -47,8 +49,6 @@
 // used to access our datastore of user-configured helper applications
 #include "nsIHandlerService.h"
 #include "nsIMIMEInfo.h"
-#include "nsIRefreshURI.h"  // XXX needed to redirect according to Refresh: URI
-#include "nsIDocumentLoader.h"  // XXX needed to get orig. channel and assoc. refresh uri
 #include "nsIHelperAppLauncherDialog.h"
 #include "nsIContentDispatchChooser.h"
 #include "nsNetUtil.h"
@@ -101,6 +101,7 @@
 
 using namespace mozilla;
 using namespace mozilla::ipc;
+using namespace mozilla::dom;
 
 // Download Folder location constants
 #define NS_PREF_DOWNLOAD_DIR "browser.download.dir"
@@ -579,12 +580,9 @@ nsExternalHelperAppService::~nsExternalHelperAppService() {}
 
 nsresult nsExternalHelperAppService::DoContentContentProcessHelper(
     const nsACString& aMimeContentType, nsIRequest* aRequest,
-    nsIInterfaceRequestor* aContentContext, bool aForceSave,
+    BrowsingContext* aContentContext, bool aForceSave,
     nsIInterfaceRequestor* aWindowContext,
     nsIStreamListener** aStreamListener) {
-  nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(aContentContext);
-  NS_ENSURE_STATE(window);
-
   // We need to get a hold of a ContentChild so that we can begin forwarding
   // this data to the parent.  In the HTTP case, this is unfortunate, since
   // we're actually passing data from parent->child->parent wastefully, but
@@ -624,6 +622,14 @@ nsresult nsExternalHelperAppService::DoContentContentProcessHelper(
   Maybe<mozilla::net::LoadInfoArgs> loadInfoArgs;
   MOZ_ALWAYS_SUCCEEDS(LoadInfoToLoadInfoArgs(loadInfo, &loadInfoArgs));
 
+  nsCOMPtr<nsIPropertyBag2> props(do_QueryInterface(aRequest));
+  // Determine whether a new window was opened specifically for this request
+  bool shouldCloseWindow = false;
+  if (props) {
+    props->GetPropertyAsBool(NS_LITERAL_STRING("docshell.newWindowTarget"),
+                             &shouldCloseWindow);
+  }
+
   // Now we build a protocol for forwarding our data to the parent.  The
   // protocol will act as a listener on the child-side and create a "real"
   // helperAppService listener on the parent-side, via another call to
@@ -632,7 +638,7 @@ nsresult nsExternalHelperAppService::DoContentContentProcessHelper(
   MOZ_ALWAYS_TRUE(child->SendPExternalHelperAppConstructor(
       childListener, uri, loadInfoArgs, nsCString(aMimeContentType), disp,
       contentDisposition, fileName, aForceSave, contentLength, wasFileChannel,
-      referrer, mozilla::dom::BrowserChild::GetFrom(window)));
+      referrer, aContentContext, shouldCloseWindow));
 
   NS_ADDREF(*aStreamListener = childListener);
 
@@ -649,16 +655,12 @@ nsresult nsExternalHelperAppService::DoContentContentProcessHelper(
   return NS_OK;
 }
 
-NS_IMETHODIMP nsExternalHelperAppService::DoContent(
+NS_IMETHODIMP nsExternalHelperAppService::CreateListener(
     const nsACString& aMimeContentType, nsIRequest* aRequest,
-    nsIInterfaceRequestor* aContentContext, bool aForceSave,
+    BrowsingContext* aContentContext, bool aForceSave,
     nsIInterfaceRequestor* aWindowContext,
-    nsIStreamListener** aStreamListener) {
-  if (XRE_IsContentProcess()) {
-    return DoContentContentProcessHelper(aMimeContentType, aRequest,
-                                         aContentContext, aForceSave,
-                                         aWindowContext, aStreamListener);
-  }
+    nsExternalAppHandler** aStreamListener) {
+  MOZ_ASSERT(!XRE_IsContentProcess());
 
   nsAutoString fileName;
   nsAutoCString fileExtension;
@@ -677,13 +679,7 @@ NS_IMETHODIMP nsExternalHelperAppService::DoContent(
 
     // Check if we have a POST request, in which case we don't want to use
     // the url's extension
-    bool allowURLExt = true;
-    nsCOMPtr<nsIHttpChannel> httpChan = do_QueryInterface(channel);
-    if (httpChan) {
-      nsAutoCString requestMethod;
-      Unused << httpChan->GetRequestMethod(requestMethod);
-      allowURLExt = !requestMethod.EqualsLiteral("POST");
-    }
+    bool allowURLExt = !net::ChannelIsPost(channel);
 
     // Check if we had a query string - we don't want to check the URL
     // extension if a query is present in the URI
@@ -785,6 +781,38 @@ NS_IMETHODIMP nsExternalHelperAppService::DoContent(
 
   NS_ADDREF(*aStreamListener = handler);
   return NS_OK;
+}
+
+NS_IMETHODIMP nsExternalHelperAppService::DoContent(
+    const nsACString& aMimeContentType, nsIRequest* aRequest,
+    nsIInterfaceRequestor* aContentContext, bool aForceSave,
+    nsIInterfaceRequestor* aWindowContext,
+    nsIStreamListener** aStreamListener) {
+  // Scripted interface requestors cannot return an instance of the
+  // (non-scriptable) nsPIDOMWindowOuter or nsPIDOMWindowInner interfaces, so
+  // get to the window via `nsIDOMWindow`.  Unfortunately, at that point we
+  // don't know whether the thing we got is an inner or outer window, so have to
+  // work with either one.
+  RefPtr<BrowsingContext> bc;
+  nsCOMPtr<nsIDOMWindow> domWindow = do_GetInterface(aContentContext);
+  if (nsCOMPtr<nsPIDOMWindowOuter> outerWindow = do_QueryInterface(domWindow)) {
+    bc = outerWindow->GetBrowsingContext();
+  } else if (nsCOMPtr<nsPIDOMWindowInner> innerWindow =
+                 do_QueryInterface(domWindow)) {
+    bc = innerWindow->GetBrowsingContext();
+  }
+
+  if (XRE_IsContentProcess()) {
+    return DoContentContentProcessHelper(aMimeContentType, aRequest, bc,
+                                         aForceSave, aWindowContext,
+                                         aStreamListener);
+  }
+
+  RefPtr<nsExternalAppHandler> handler;
+  nsresult rv = CreateListener(aMimeContentType, aRequest, bc, aForceSave,
+                               aWindowContext, getter_AddRefs(handler));
+  handler.forget(aStreamListener);
+  return rv;
 }
 
 NS_IMETHODIMP nsExternalHelperAppService::ApplyDecodingForExtension(
@@ -1125,18 +1153,18 @@ NS_INTERFACE_MAP_END
 
 nsExternalAppHandler::nsExternalAppHandler(
     nsIMIMEInfo* aMIMEInfo, const nsACString& aTempFileExtension,
-    nsIInterfaceRequestor* aContentContext,
-    nsIInterfaceRequestor* aWindowContext,
+    BrowsingContext* aBrowsingContext, nsIInterfaceRequestor* aWindowContext,
     nsExternalHelperAppService* aExtProtSvc,
     const nsAString& aSuggestedFilename, uint32_t aReason, bool aForceSave)
     : mMimeInfo(aMIMEInfo),
-      mContentContext(aContentContext),
+      mBrowsingContext(aBrowsingContext),
       mWindowContext(aWindowContext),
       mSuggestedFileName(aSuggestedFilename),
       mForceSave(aForceSave),
       mCanceled(false),
       mStopRequestIssued(false),
       mIsFileChannel(false),
+      mShouldCloseWindow(false),
       mReason(aReason),
       mTempFileIsExecutable(false),
       mTimeDownloadStarted(0),
@@ -1263,25 +1291,6 @@ void nsExternalAppHandler::RetargetLoadNotifications(nsIRequest* request) {
   // load group and doc loader for us to use...
   nsCOMPtr<nsIChannel> aChannel = do_QueryInterface(request);
   if (!aChannel) return;
-
-  // we need to store off the original (pre redirect!) channel that initiated
-  // the load. We do this so later on, we can pass any refresh urls associated
-  // with the original channel back to the window context which started the
-  // whole process. More comments about that are listed below.... HACK ALERT:
-  // it's pretty bogus that we are getting the document channel from the doc
-  // loader. ideally we should be able to just use mChannel (the channel we are
-  // extracting content from) or the default load channel associated with the
-  // original load group. Unfortunately because a redirect may have occurred,
-  // the doc loader is the only one with a ptr to the original channel which is
-  // what we really want....
-
-  // Note that we need to do this before removing aChannel from the loadgroup,
-  // since that would mess with the original channel on the loader.
-  nsCOMPtr<nsIDocumentLoader> origContextLoader =
-      do_GetInterface(mContentContext);
-  if (origContextLoader) {
-    origContextLoader->GetDocumentChannel(getter_AddRefs(mOriginalChannel));
-  }
 
   bool isPrivate = NS_UsePrivateBrowsing(aChannel);
 
@@ -1489,6 +1498,22 @@ void nsExternalAppHandler::MaybeApplyDecodingForExtension(
   encChannel->SetApplyConversion(applyConversion);
 }
 
+already_AddRefed<nsIInterfaceRequestor>
+nsExternalAppHandler::GetDialogParent() {
+  nsCOMPtr<nsIInterfaceRequestor> dialogParent = mWindowContext;
+
+  if (!dialogParent && mBrowsingContext) {
+    dialogParent = do_QueryInterface(mBrowsingContext->GetDOMWindow());
+  }
+  if (!dialogParent && mBrowsingContext && XRE_IsParentProcess()) {
+    RefPtr<Element> element = mBrowsingContext->Top()->GetEmbedderElement();
+    if (element) {
+      dialogParent = do_QueryInterface(element->OwnerDoc()->GetWindow());
+    }
+  }
+  return dialogParent.forget();
+}
+
 NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
   MOZ_ASSERT(request, "OnStartRequest without request?");
 
@@ -1518,15 +1543,19 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
     aChannel->GetContentLength(&mContentLength);
   }
 
-  mMaybeCloseWindowHelper = new MaybeCloseWindowHelper(mContentContext);
+  if (mBrowsingContext) {
+    mMaybeCloseWindowHelper = new MaybeCloseWindowHelper(mBrowsingContext);
+    mMaybeCloseWindowHelper->SetShouldCloseWindow(mShouldCloseWindow);
 
-  nsCOMPtr<nsIPropertyBag2> props(do_QueryInterface(request, &rv));
-  // Determine whether a new window was opened specifically for this request
-  if (props) {
-    bool tmp = false;
-    props->GetPropertyAsBool(NS_LITERAL_STRING("docshell.newWindowTarget"),
-                             &tmp);
-    mMaybeCloseWindowHelper->SetShouldCloseWindow(tmp);
+    nsCOMPtr<nsIPropertyBag2> props(do_QueryInterface(request, &rv));
+    // Determine whether a new window was opened specifically for this request
+    if (props) {
+      bool tmp = false;
+      if (NS_SUCCEEDED(props->GetPropertyAsBool(
+              NS_LITERAL_STRING("docshell.newWindowTarget"), &tmp))) {
+        mMaybeCloseWindowHelper->SetShouldCloseWindow(tmp);
+      }
+    }
   }
 
   // Now get the URI
@@ -1538,22 +1567,13 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
   // window's docloader...
   RetargetLoadNotifications(request);
 
-  // Check to see if there is a refresh header on the original channel.
-  if (mOriginalChannel) {
-    nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(mOriginalChannel));
-    if (httpChannel) {
-      nsAutoCString refreshHeader;
-      Unused << httpChannel->GetResponseHeader(NS_LITERAL_CSTRING("refresh"),
-                                               refreshHeader);
-      if (!refreshHeader.IsEmpty()) {
-        mMaybeCloseWindowHelper->SetShouldCloseWindow(false);
-      }
-    }
+  // Close the underlying DOMWindow if it was opened specifically for the
+  // download. We don't run this in the content process, since we have
+  // an instance running in the parent as well, which will handle this
+  // if needed.
+  if (!XRE_IsContentProcess() && mMaybeCloseWindowHelper) {
+    mBrowsingContext = mMaybeCloseWindowHelper->MaybeCloseWindow();
   }
-
-  // Close the underlying DOMWindow if there is no refresh header
-  // and it was opened specifically for the download
-  mContentContext = mMaybeCloseWindowHelper->MaybeCloseWindow();
 
   // In an IPC setting, we're allowing the child process, here, to make
   // decisions about decoding the channel (e.g. decompression).  It will
@@ -1669,7 +1689,8 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
 
     // this will create a reference cycle (the dialog holds a reference to us as
     // nsIHelperAppLauncher), which will be broken in Cancel or CreateTransfer.
-    rv = mDialog->Show(this, GetDialogParent(), mReason);
+    nsCOMPtr<nsIInterfaceRequestor> dialogParent = GetDialogParent();
+    rv = mDialog->Show(this, dialogParent, mReason);
 
     // what do we do if the dialog failed? I guess we should call Cancel and
     // abort the load....
@@ -1820,25 +1841,24 @@ void nsExternalAppHandler::SendStatusChange(ErrorType type, nsresult rv,
                                     rv, msgText.get());
         } else if (XRE_IsParentProcess()) {
           // We don't have a listener.  Simply show the alert ourselves.
+          nsCOMPtr<nsIInterfaceRequestor> dialogParent = GetDialogParent();
           nsresult qiRv;
-          nsCOMPtr<nsIPrompt> prompter(
-              do_GetInterface(GetDialogParent(), &qiRv));
+          nsCOMPtr<nsIPrompt> prompter(do_GetInterface(dialogParent, &qiRv));
           nsAutoString title;
           bundle->FormatStringFromName("title", strings, title);
 
           MOZ_LOG(
               nsExternalHelperAppService::mLog, LogLevel::Debug,
-              ("mContentContext=0x%p, prompter=0x%p, qi rv=0x%08" PRIX32
+              ("mBrowsingContext=0x%p, prompter=0x%p, qi rv=0x%08" PRIX32
                ", title='%s', msg='%s'",
-               mContentContext.get(), prompter.get(),
+               mBrowsingContext.get(), prompter.get(),
                static_cast<uint32_t>(qiRv), NS_ConvertUTF16toUTF8(title).get(),
                NS_ConvertUTF16toUTF8(msgText).get()));
 
           // If we didn't have a prompter we will try and get a window
           // instead, get it's docshell and use it to alert the user.
           if (!prompter) {
-            nsCOMPtr<nsPIDOMWindowOuter> window(
-                do_GetInterface(GetDialogParent()));
+            nsCOMPtr<nsPIDOMWindowOuter> window(do_GetInterface(dialogParent));
             if (!window || !window->GetDocShell()) {
               return;
             }
@@ -1846,7 +1866,7 @@ void nsExternalAppHandler::SendStatusChange(ErrorType type, nsresult rv,
             prompter = do_GetInterface(window->GetDocShell(), &qiRv);
 
             MOZ_LOG(nsExternalHelperAppService::mLog, LogLevel::Debug,
-                    ("No prompter from mContentContext, using DocShell, "
+                    ("No prompter from mBrowsingContext, using DocShell, "
                      "window=0x%p, docShell=0x%p, "
                      "prompter=0x%p, qi rv=0x%08" PRIX32,
                      window.get(), window->GetDocShell(), prompter.get(),
@@ -2183,10 +2203,10 @@ void nsExternalAppHandler::RequestSaveDestination(
   // See Bug 249143
   RefPtr<nsExternalAppHandler> kungFuDeathGrip(this);
   nsCOMPtr<nsIHelperAppLauncherDialog> dlg(mDialog);
+  nsCOMPtr<nsIInterfaceRequestor> dialogParent = GetDialogParent();
 
-  rv =
-      dlg->PromptForSaveToFileAsync(this, GetDialogParent(), aDefaultFile.get(),
-                                    aFileExtension.get(), mForceSave);
+  rv = dlg->PromptForSaveToFileAsync(this, dialogParent, aDefaultFile.get(),
+                                     aFileExtension.get(), mForceSave);
   if (NS_FAILED(rv)) {
     Cancel(NS_BINDING_ABORTED);
   }
@@ -2264,13 +2284,6 @@ nsresult nsExternalAppHandler::ContinueSave(nsIFile* aNewFileLocation) {
     return rv;
   }
 
-  // now that the user has chosen the file location to save to, it's okay to
-  // fire the refresh tag if there is one. We don't want to do this before the
-  // save as dialog goes away because this dialog is modal and we do bad things
-  // if you try to load a web page in the underlying window while a modal dialog
-  // is still up.
-  ProcessAnyRefreshTags();
-
   return NS_OK;
 }
 
@@ -2280,10 +2293,6 @@ nsresult nsExternalAppHandler::ContinueSave(nsIFile* aNewFileLocation) {
 NS_IMETHODIMP nsExternalAppHandler::LaunchWithApplication(
     nsIFile* aApplication, bool aRememberThisPreference) {
   if (mCanceled) return NS_OK;
-
-  // user has chosen to launch using an application, fire any refresh tags
-  // now...
-  ProcessAnyRefreshTags();
 
   if (mMimeInfo && aApplication) {
     PlatformLocalHandlerApp_t* handlerApp =
@@ -2393,25 +2402,6 @@ NS_IMETHODIMP nsExternalAppHandler::Cancel(nsresult aReason) {
   mDialogProgressListener = nullptr;
 
   return NS_OK;
-}
-
-void nsExternalAppHandler::ProcessAnyRefreshTags() {
-  // one last thing, try to see if the original window context supports a
-  // refresh interface... Sometimes, when you download content that requires an
-  // external handler, there is a refresh header associated with the download.
-  // This refresh header points to a page the content provider wants the user to
-  // see after they download the content. How do we pass this refresh
-  // information back to the caller? For now, try to get the refresh URI
-  // interface. If the window context where the request originated came from
-  // supports this then we can force it to process the refresh information (if
-  // there is any) from this channel.
-  if (mContentContext && mOriginalChannel) {
-    nsCOMPtr<nsIRefreshURI> refreshHandler(do_GetInterface(mContentContext));
-    if (refreshHandler) {
-      refreshHandler->SetupRefreshURI(mOriginalChannel);
-    }
-    mOriginalChannel = nullptr;
-  }
 }
 
 bool nsExternalAppHandler::GetNeverAskFlagFromPref(const char* prefName,

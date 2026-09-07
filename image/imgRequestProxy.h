@@ -33,10 +33,6 @@ class imgStatusNotifyRunnable;
 class ProxyBehaviour;
 
 namespace mozilla {
-namespace dom {
-class TabGroup;
-}
-
 namespace image {
 class Image;
 class ProgressTracker;
@@ -113,7 +109,6 @@ class imgRequestProxy : public mozilla::PreloaderBase,
   void MarkValidating();
   void ClearValidating();
 
-  bool IsOnEventTarget() const;
   already_AddRefed<nsIEventTarget> GetEventTarget() const override;
 
   // Removes all animation consumers that were created with
@@ -205,7 +200,6 @@ class imgRequestProxy : public mozilla::PreloaderBase,
   void RemoveFromOwner(nsresult aStatus);
 
   nsresult DispatchWithTargetIfAvailable(already_AddRefed<nsIRunnable> aEvent);
-  void DispatchWithTarget(already_AddRefed<nsIRunnable> aEvent);
 
   // The URI of our request.
   nsCOMPtr<nsIURI> mURI;
@@ -219,7 +213,6 @@ class imgRequestProxy : public mozilla::PreloaderBase,
       "they are destroyed") mListener;
 
   nsCOMPtr<nsILoadGroup> mLoadGroup;
-  RefPtr<mozilla::dom::TabGroup> mTabGroup;
   nsCOMPtr<nsIEventTarget> mEventTarget;
 
   nsLoadFlags mLoadFlags;

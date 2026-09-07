@@ -178,18 +178,6 @@ pref("security.pki.mitm_canary_issuer.enabled", true);
 // security.pki.mitm_canary_issuer.enabled, the root is not trusted.
 pref("security.pki.mitm_detected", false);
 
-// Intermediate CA Preloading settings
-#if defined(RELEASE_OR_BETA) || defined(MOZ_WIDGET_ANDROID)
-  pref("security.remote_settings.intermediates.enabled", false);
-#else
-  pref("security.remote_settings.intermediates.enabled", true);
-#endif
-pref("security.remote_settings.intermediates.bucket", "security-state");
-pref("security.remote_settings.intermediates.collection", "intermediates");
-pref("security.remote_settings.intermediates.checked", 0);
-pref("security.remote_settings.intermediates.downloads_per_poll", 100);
-pref("security.remote_settings.intermediates.signer", "onecrl.content-signature.mozilla.org");
-
 pref("general.useragent.compatMode.firefox", true);
 
 pref("general.config.obscure_value", 13); // for MCD .cfg files
@@ -247,8 +235,9 @@ pref("dom.workers.maxPerDomain", 512);
 // The amount of time (milliseconds) service workers keep running after each event.
 pref("dom.serviceWorkers.idle_timeout", 30000);
 
-// The amount of time (milliseconds) service workers can be kept running using waitUntil promises.
-pref("dom.serviceWorkers.idle_extended_timeout", 300000);
+// The amount of time (milliseconds) service workers can be kept running using waitUntil promises
+// or executing "long-running" JS after the "idle_timeout" period has expired.
+pref("dom.serviceWorkers.idle_extended_timeout", 30000);
 
 // The amount of time (milliseconds) an update request is delayed when triggered
 // by a service worker that doesn't control any clients.
@@ -916,6 +905,7 @@ pref("editor.resizing.preserve_ratio",       true);
 pref("editor.positioning.offset",            0);
 
 // Scripts & Windows prefs
+pref("dom.beforeunload_timeout_ms",         1000);
 pref("dom.disable_window_flip",             false);
 pref("dom.disable_window_move_resize",      false);
 
@@ -931,7 +921,6 @@ pref("dom.disable_window_open_feature.status",      true);
 
 pref("dom.allow_scripts_to_close_windows",          false);
 
-pref("dom.popup_maximum",                           20);
 pref("dom.popup_allowed_events", "change click dblclick auxclick mouseup pointerup notificationclick reset submit touchend contextmenu");
 
 pref("dom.serviceWorkers.disable_open_click_delay", 1000);
@@ -2421,6 +2410,9 @@ pref("dom.ipc.processCount.extension", 1);
 // Privileged content only supports a single content process.
 pref("dom.ipc.processCount.privileged", 1);
 
+// Isolated content processes are always one-per-origin.
+pref("dom.ipc.processCount.webIsolated", 1);
+
 // Keep a single privileged content process alive for performance reasons.
 // e.g. we do not want to throw content processes out every time we navigate
 // away from about:newtab.
@@ -2451,12 +2443,18 @@ pref("browser.tabs.remote.autostart", false);
 // of file:// URIs.
 pref("browser.tabs.remote.separateFileUriProcess", true);
 
+// Pref to control whether we put all data: uri's in the default
+// web process when running with fission.
+pref("browser.tabs.remote.dataUriInDefaultWebProcess", false);
+
 // Pref that enables top level web content pages that are opened from file://
 // URI pages to run in the file content process.
 // This has been added in case breaking any window references between these
 // sorts of pages, which we have to do when we run them in the normal web
 // content process, causes compatibility issues.
-pref("browser.tabs.remote.allowLinkedWebInFileUriProcess", true);
+//
+// This is going away and for now is disabled.
+pref("browser.tabs.remote.allowLinkedWebInFileUriProcess", false);
 
 // This pref will cause assertions when a remoteType triggers a process switch
 // to a new remoteType it should not be able to trigger.
@@ -2464,10 +2462,6 @@ pref("browser.tabs.remote.enforceRemoteTypeRestrictions", false);
 
 // Pref to control whether we use separate privileged content processes.
 pref("browser.tabs.remote.separatePrivilegedContentProcess", false);
-
-// When this pref is enabled top level loads with a mismatched
-// Cross-Origin-Opener-Policy header will be loaded in a separate process.
-pref("browser.tabs.remote.useCrossOriginOpenerPolicy", false);
 
 // Default font types and sizes by locale
 pref("font.default.ar", "sans-serif");
@@ -3644,6 +3638,7 @@ pref("signon.storeWhenAutocompleteOff",     true);
 pref("signon.debug",                        false);
 pref("signon.recipes.path",                 "chrome://passwordmgr/content/recipes.json");
 pref("signon.schemeUpgrades",               false);
+pref("signon.includeOtherSubdomainsInLookup", false);
 // This temporarily prevents the master password to reprompt for autocomplete.
 pref("signon.masterPasswordReprompt.timeout_ms", 900000); // 15 Minutes
 pref("signon.showAutoCompleteFooter", false);
@@ -4254,9 +4249,7 @@ pref("dom.clients.openwindow_favors_same_process", true);
 // loops with faulty converters involved.
 pref("general.document_open_conversion_depth_limit", 20);
 
-// Turn off fission frameloader swapping while regressions are being fixed.
-// Should be turned back on to resolve bug 1551993.
-pref("fission.rebuild_frameloaders_on_remoteness_change", false);
+pref("fission.rebuild_frameloaders_on_remoteness_change", true);
 
 // Support for legacy customizations that rely on checking the
 // user profile directory for these stylesheets:

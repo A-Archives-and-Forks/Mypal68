@@ -8,7 +8,6 @@
 #include "gfxPlatform.h"
 #include "nsRefreshDriver.h"
 #include "mozilla/dom/BrowserChild.h"
-#include "mozilla/dom/TabGroup.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/Hal.h"
 #include "mozilla/IMEStateManager.h"
@@ -19,6 +18,7 @@
 #endif
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/TextComposition.h"
 #include "mozilla/TextEventDispatcher.h"
@@ -268,7 +268,7 @@ void PuppetWidget::Invalidate(const LayoutDeviceIntRect& aRect) {
   if (mBrowserChild && !aRect.IsEmpty() && !mWidgetPaintTask.IsPending()) {
     mWidgetPaintTask = new WidgetPaintTask(this);
     nsCOMPtr<nsIRunnable> event(mWidgetPaintTask.get());
-    mBrowserChild->TabGroup()->Dispatch(TaskCategory::Other, event.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, event.forget());
   }
 }
 
@@ -784,7 +784,7 @@ nsresult PuppetWidget::NotifyIMEOfFocusChange(
   RefPtr<PuppetWidget> self = this;
   mBrowserChild->SendNotifyIMEFocus(mContentCache, aIMENotification)
       ->Then(
-          mBrowserChild->TabGroup()->EventTargetFor(TaskCategory::UI), __func__,
+          GetMainThreadSerialEventTarget(), __func__,
           [self](IMENotificationRequests&& aRequests) {
             self->mIMENotificationRequestsOfParent = aRequests;
             if (TextEventDispatcher* dispatcher =

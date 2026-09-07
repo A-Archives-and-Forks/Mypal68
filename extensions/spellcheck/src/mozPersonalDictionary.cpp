@@ -60,9 +60,8 @@ class mozPersonalDictionaryLoader final : public mozilla::Runnable {
     mDict->SyncLoad();
 
     // Release the dictionary on the main thread
-    NS_ReleaseOnMainThreadSystemGroup(
-        "mozPersonalDictionaryLoader::mDict",
-        mDict.forget().downcast<mozIPersonalDictionary>());
+    NS_ReleaseOnMainThread("mozPersonalDictionaryLoader::mDict",
+                           mDict.forget().downcast<mozIPersonalDictionary>());
 
     return NS_OK;
   }
@@ -132,9 +131,8 @@ class mozPersonalDictionarySave final : public mozilla::Runnable {
     }
 
     // Release the dictionary on the main thread.
-    NS_ReleaseOnMainThreadSystemGroup(
-        "mozPersonalDictionarySave::mDict",
-        mDict.forget().downcast<mozIPersonalDictionary>());
+    NS_ReleaseOnMainThread("mozPersonalDictionarySave::mDict",
+                           mDict.forget().downcast<mozIPersonalDictionary>());
 
     return NS_OK;
   }

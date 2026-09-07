@@ -33,6 +33,7 @@
 #include "mozilla/dom/indexedDB/ThreadLocal.h"
 #include "mozilla/dom/quota/PQuotaChild.h"
 #include "mozilla/dom/RemoteWorkerChild.h"
+#include "mozilla/dom/RemoteWorkerControllerChild.h"
 #include "mozilla/dom/RemoteWorkerServiceChild.h"
 #include "mozilla/dom/ServiceWorkerChild.h"
 #include "mozilla/dom/SharedWorkerChild.h"
@@ -47,7 +48,6 @@
 #include "mozilla/dom/ServiceWorkerContainerChild.h"
 #include "mozilla/dom/ServiceWorkerManagerChild.h"
 #include "mozilla/dom/BrowserChild.h"
-#include "mozilla/dom/TabGroup.h"
 #include "mozilla/ipc/IPCStreamAlloc.h"
 #include "mozilla/ipc/PBackgroundTestChild.h"
 #include "mozilla/ipc/PChildToParentStreamChild.h"
@@ -302,7 +302,7 @@ bool BackgroundChildImpl::DeallocPBackgroundStorageChild(
 
 dom::PRemoteWorkerChild* BackgroundChildImpl::AllocPRemoteWorkerChild(
     const RemoteWorkerData& aData) {
-  RefPtr<dom::RemoteWorkerChild> agent = new dom::RemoteWorkerChild();
+  RefPtr<dom::RemoteWorkerChild> agent = new dom::RemoteWorkerChild(aData);
   return agent.forget().take();
 }
 
@@ -317,6 +317,23 @@ bool BackgroundChildImpl::DeallocPRemoteWorkerChild(
     dom::PRemoteWorkerChild* aActor) {
   RefPtr<dom::RemoteWorkerChild> actor =
       dont_AddRef(static_cast<dom::RemoteWorkerChild*>(aActor));
+  return true;
+}
+
+dom::PRemoteWorkerControllerChild*
+BackgroundChildImpl::AllocPRemoteWorkerControllerChild(
+    const dom::RemoteWorkerData& aRemoteWorkerData) {
+  MOZ_CRASH(
+      "PRemoteWorkerControllerChild actors must be manually constructed!");
+  return nullptr;
+}
+
+bool BackgroundChildImpl::DeallocPRemoteWorkerControllerChild(
+    dom::PRemoteWorkerControllerChild* aActor) {
+  MOZ_ASSERT(aActor);
+
+  RefPtr<dom::RemoteWorkerControllerChild> actor =
+      dont_AddRef(static_cast<dom::RemoteWorkerControllerChild*>(aActor));
   return true;
 }
 

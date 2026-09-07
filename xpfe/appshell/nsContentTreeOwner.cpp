@@ -11,6 +11,7 @@
 #include "nsIDOMChromeWindow.h"
 #include "nsIBrowserDOMWindow.h"
 #include "nsIEmbeddingSiteWindow.h"
+#include "nsIOpenWindowInfo.h"
 #include "nsIPrompt.h"
 #include "nsIAuthPrompt.h"
 #include "nsIWindowMediator.h"
@@ -22,11 +23,11 @@
 #include "nsIMIMEInfo.h"
 #include "nsIWidget.h"
 #include "nsWindowWatcher.h"
-#include "mozilla/BrowserElementParent.h"
 #include "mozilla/Components.h"
 #include "mozilla/NullPrincipal.h"
 #include "nsDocShell.h"
 #include "nsDocShellLoadState.h"
+#include "nsQueryActor.h"
 
 #include "nsIOService.h"
 #include "nsIScriptObjectPrincipal.h"
@@ -65,6 +66,28 @@ class nsSiteWindow : public nsIEmbeddingSiteWindow {
   virtual ~nsSiteWindow();
   nsContentTreeOwner* mAggregator;
 };
+
+already_AddRefed<nsIWebBrowserChrome3>
+nsContentTreeOwner::GetWebBrowserChrome() {
+  if (!mAppWindow) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsIDocShell> docShell;
+  mAppWindow->GetDocShell(getter_AddRefs(docShell));
+
+  if (!docShell) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsPIDOMWindowOuter> outer(docShell->GetWindow());
+  if (nsCOMPtr<nsIWebBrowserChrome3> chrome =
+          do_QueryActor("WebBrowserChrome", outer)) {
+    return chrome.forget();
+  }
+
+  return nullptr;
+}
 
 //*****************************************************************************
 //***    nsContentTreeOwner: Object Management
@@ -144,6 +167,13 @@ NS_IMETHODIMP nsContentTreeOwner::GetInterface(const nsIID& aIID,
   if (aIID.Equals(NS_GET_IID(nsIAppWindow))) {
     NS_ENSURE_STATE(mAppWindow);
     return mAppWindow->QueryInterface(aIID, aSink);
+  }
+
+  if (aIID.Equals(NS_GET_IID(nsIWebBrowserChrome3))) {
+    if (nsCOMPtr<nsIWebBrowserChrome3> chrome = GetWebBrowserChrome()) {
+      chrome.forget(aSink);
+      return NS_OK;
+    }
   }
 
   return QueryInterface(aIID, aSink);
@@ -573,14 +603,14 @@ NS_IMETHODIMP nsContentTreeOwner::SetTitle(const nsAString& aTitle) {
 //*****************************************************************************
 NS_IMETHODIMP
 nsContentTreeOwner::ProvideWindow(
-    mozIDOMWindowProxy* aParent, uint32_t aChromeFlags, bool aCalledFromJS,
-    bool aWidthSpecified, nsIURI* aURI, const nsAString& aName,
-    const nsACString& aFeatures, bool aForceNoOpener, bool aForceNoReferrer,
-    nsDocShellLoadState* aLoadState, bool* aWindowIsNew,
-    mozIDOMWindowProxy** aReturn) {
-  NS_ENSURE_ARG_POINTER(aParent);
+    nsIOpenWindowInfo* aOpenWindowInfo, uint32_t aChromeFlags,
+    bool aCalledFromJS, bool aWidthSpecified, nsIURI* aURI,
+    const nsAString& aName, const nsACString& aFeatures, bool aForceNoOpener,
+    bool aForceNoReferrer, nsDocShellLoadState* aLoadState, bool* aWindowIsNew,
+    BrowsingContext** aReturn) {
+  NS_ENSURE_ARG_POINTER(aOpenWindowInfo);
 
-  auto* parentWin = nsPIDOMWindowOuter::From(aParent);
+  RefPtr<dom::BrowsingContext> parent = aOpenWindowInfo->GetParent();
 
   *aReturn = nullptr;
 
@@ -589,16 +619,16 @@ nsContentTreeOwner::ProvideWindow(
     return NS_OK;
   }
 
+  nsCOMPtr<nsIDocShell> docshell = parent->GetDocShell();
 #ifdef DEBUG
-  nsCOMPtr<nsIWebNavigation> parentNav = do_GetInterface(aParent);
-  nsCOMPtr<nsIDocShellTreeOwner> parentOwner = do_GetInterface(parentNav);
+  nsCOMPtr<nsIDocShellTreeOwner> parentOwner = do_GetInterface(docshell);
   NS_ASSERTION(
       SameCOMIdentity(parentOwner, static_cast<nsIDocShellTreeOwner*>(this)),
       "Parent from wrong docshell tree?");
 #endif
 
   int32_t openLocation = nsWindowWatcher::GetWindowOpenLocation(
-      parentWin, aChromeFlags, aCalledFromJS, aWidthSpecified);
+      parent->GetDOMWindow(), aChromeFlags, aCalledFromJS, aWidthSpecified);
 
   if (openLocation != nsIBrowserDOMWindow::OPEN_NEWTAB &&
       openLocation != nsIBrowserDOMWindow::OPEN_CURRENTWINDOW) {
@@ -642,8 +672,9 @@ nsContentTreeOwner::ProvideWindow(
     // ourselves.
     RefPtr<NullPrincipal> nullPrincipal =
         NullPrincipal::CreateWithoutOriginAttributes();
-    return browserDOMWin->CreateContentWindow(
-        aURI, aParent, openLocation, flags, nullPrincipal, nullptr, aReturn);
+    return browserDOMWin->CreateContentWindow(aURI, aOpenWindowInfo,
+                                              openLocation, flags,
+                                              nullPrincipal, nullptr, aReturn);
   }
 }
 

@@ -19,6 +19,7 @@ class Selection;
 namespace a11y {
 
 class DocAccessible;
+class EventQueue;
 
 // Constants used to point whether the event is from user input.
 enum EIsFromUserInput {

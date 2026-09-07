@@ -501,6 +501,7 @@ nsWindow::nsWindow() {
 
   mHasAlphaVisual = false;
   mIsPIPWindow = false;
+  mAlwaysOnTop = false;
 
   mWindowScaleFactorChanged = true;
   mWindowScaleFactor = 1;
@@ -2199,12 +2200,15 @@ void* nsWindow::GetNativeData(uint32_t aDataType) {
     case NS_NATIVE_SHELLWIDGET:
       return GetToplevelWidget();
 
+    case NS_NATIVE_WINDOW_WEBRTC_DEVICE_ID:
     case NS_NATIVE_SHAREABLE_WINDOW:
       if (mIsX11Display) {
         return (void*)GDK_WINDOW_XID(gdk_window_get_toplevel(mGdkWindow));
       }
       NS_WARNING(
-          "nsWindow::GetNativeData(): NS_NATIVE_SHAREABLE_WINDOW is not "
+          "nsWindow::GetNativeData(): "
+          "NS_NATIVE_SHAREABLE_WINDOW / NS_NATIVE_WINDOW_WEBRTC_DEVICE_ID is "
+          "not "
           "handled on Wayland!");
       return nullptr;
     case NS_RAW_NATIVE_IME_CONTEXT: {
@@ -4056,6 +4060,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
     }
   }
 
+  mAlwaysOnTop = aInitData && aInitData->mAlwaysOnTop;
   mIsPIPWindow = aInitData && aInitData->mPIPWindow;
 
   // ok, create our windows
@@ -4276,7 +4281,7 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
         g_object_unref(group);
       }
 
-      if (aInitData->mAlwaysOnTop) {
+      if (mAlwaysOnTop) {
         gtk_window_set_keep_above(GTK_WINDOW(mShell), TRUE);
       }
 
@@ -4333,11 +4338,21 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
       gtk_widget_set_has_window(container, mDrawToContainer);
 
       gtk_container_add(GTK_CONTAINER(mShell), container);
+
+      // alwaysontop windows are generally used for peripheral indicators,
+      // so we don't focus them by default.
+      if (mAlwaysOnTop) {
+        gtk_window_set_focus_on_map(GTK_WINDOW(mShell), FALSE);
+      }
+
       gtk_widget_realize(container);
 
       // make sure this is the focus widget in the container
       gtk_widget_show(container);
-      gtk_widget_grab_focus(container);
+
+      if (!mAlwaysOnTop) {
+        gtk_widget_grab_focus(container);
+      }
 
       // the drawing window
       mGdkWindow = gtk_widget_get_window(eventWidget);

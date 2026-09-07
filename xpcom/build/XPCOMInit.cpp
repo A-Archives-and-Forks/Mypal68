@@ -70,7 +70,6 @@
 #include "mozilla/Services.h"
 #include "mozilla/Omnijar.h"
 #include "mozilla/ScriptPreloader.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/BackgroundHangMonitor.h"
 
@@ -342,9 +341,6 @@ NS_InitXPCOM(nsIServiceManager** aResult, nsIFile* aBinDirectory,
   }
   AUTO_PROFILER_INIT2;
 
-  // Init the mozilla::SystemGroup for dispatching main thread runnables.
-  mozilla::SystemGroup::InitStatic();
-
   // Set up the timer globals/timer thread
   rv = nsTimerImpl::Startup();
   if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -525,9 +521,6 @@ NS_InitMinimalXPCOM() {
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
-
-  // Init the mozilla::SystemGroup for dispatching main thread runnables.
-  mozilla::SystemGroup::InitStatic();
 
   // Set up the timer globals/timer thread.
   rv = nsTimerImpl::Startup();
@@ -806,9 +799,6 @@ nsresult ShutdownXPCOM(nsIServiceManager* aServMgr) {
   nsCategoryManager::Destroy();
 
   nsLanguageAtomService::Shutdown();
-
-  // Shut down SystemGroup for main thread dispatching.
-  SystemGroup::Shutdown();
 
   GkRust_Shutdown();
 

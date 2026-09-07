@@ -247,6 +247,16 @@ OfflineCacheUpdateParent::SetRemoteTabs(bool aUseRemoteTabs) {
 }
 
 NS_IMETHODIMP
+OfflineCacheUpdateParent::GetUseRemoteSubframes(bool* aUseRemoteSubframes) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+OfflineCacheUpdateParent::SetRemoteSubframes(bool aUseRemoteSubframes) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
 OfflineCacheUpdateParent::GetScriptableOriginAttributes(
     JSContext* aCx, JS::MutableHandleValue aAttrs) {
   NS_ENSURE_TRUE(mLoadingPrincipal, NS_ERROR_UNEXPECTED);

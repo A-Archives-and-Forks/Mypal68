@@ -54,8 +54,13 @@ class MOZ_STACK_CLASS EnsureMTA final {
     ForceDispatch,
   };
 
+  /**
+   * Synchronously run |aClosure| on a thread living in the COM multithreaded
+   * apartment. If the current thread lives inside the COM MTA, then it runs
+   * |aClosure| immediately unless |aOpt| == Option::ForceDispatch.
+   */
   template <typename FuncT>
-  explicit EnsureMTA(const FuncT& aClosure, Option aOpt = Option::Default) {
+  explicit EnsureMTA(FuncT&& aClosure, Option aOpt = Option::Default) {
     if (aOpt != Option::ForceDispatch && IsCurrentThreadMTA()) {
       // We're already on the MTA, we can run aClosure directly
       aClosure();
@@ -86,7 +91,8 @@ class MOZ_STACK_CLASS EnsureMTA final {
     };
 
     nsresult rv = thread->Dispatch(
-        NS_NewRunnableFunction("EnsureMTA", eventSetter), NS_DISPATCH_NORMAL);
+        NS_NewRunnableFunction("EnsureMTA", std::move(eventSetter)),
+        NS_DISPATCH_NORMAL);
     MOZ_ASSERT(NS_SUCCEEDED(rv));
     if (NS_FAILED(rv)) {
       return;
@@ -107,7 +113,7 @@ class MOZ_STACK_CLASS EnsureMTA final {
   // AsyncOperation from becoming some kind of free-for-all mechanism for
   // asynchronously executing work on a background thread.
   template <typename FuncT>
-  static void AsyncOperation(const FuncT& aClosure) {
+  static void AsyncOperation(FuncT&& aClosure) {
     if (IsCurrentThreadMTA()) {
       aClosure();
       return;
@@ -120,7 +126,8 @@ class MOZ_STACK_CLASS EnsureMTA final {
     }
 
     DebugOnly<nsresult> rv = thread->Dispatch(
-        NS_NewRunnableFunction("mscom::EnsureMTA::AsyncOperation", aClosure),
+        NS_NewRunnableFunction("mscom::EnsureMTA::AsyncOperation",
+                               std::move(aClosure)),
         NS_DISPATCH_NORMAL);
     MOZ_ASSERT(NS_SUCCEEDED(rv));
   }

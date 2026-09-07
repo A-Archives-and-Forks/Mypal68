@@ -10,6 +10,7 @@
 #include "mozilla/MemoryReporting.h"
 #include "base/lock.h"
 #include "nsCOMPtr.h"
+#include "nsIThreadInternal.h"
 #include "nsTObserverArray.h"
 
 class nsIEventTarget;

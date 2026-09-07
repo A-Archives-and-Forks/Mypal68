@@ -175,5 +175,7 @@ IProtocol* InProcessChild::ParentActorFor(IProtocol* aActor) {
   return GetOtherInProcessActor(aActor);
 }
 
+NS_IMPL_ISUPPORTS(InProcessParent, nsIObserver)
+
 }  // namespace ipc
 }  // namespace mozilla

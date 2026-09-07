@@ -5,8 +5,8 @@
 #include "mozilla/mscom/EnsureMTA.h"
 
 #include "mozilla/ClearOnShutdown.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticLocalPtr.h"
-#include "mozilla/SystemGroup.h"
 #include "nsThreadUtils.h"
 
 #include "private/pprthred.h"
@@ -59,24 +59,24 @@ namespace mscom {
 nsCOMPtr<nsIThread> EnsureMTA::GetMTAThread() {
   static StaticLocalAutoPtr<BackgroundMTAData> sMTAData(
       []() -> BackgroundMTAData* {
-    BackgroundMTAData* bgData = new BackgroundMTAData();
+        BackgroundMTAData* bgData = new BackgroundMTAData();
 
-    auto setClearOnShutdown = [ptr = &sMTAData]() -> void {
-      ClearOnShutdown(ptr, ShutdownPhase::ShutdownThreads);
-    };
+        auto setClearOnShutdown = [ptr = &sMTAData]() -> void {
+          ClearOnShutdown(ptr, ShutdownPhase::ShutdownThreads);
+        };
 
-    if (NS_IsMainThread()) {
-      setClearOnShutdown();
-      return bgData;
-    }
+        if (NS_IsMainThread()) {
+          setClearOnShutdown();
+          return bgData;
+        }
 
-    SystemGroup::Dispatch(
-        TaskCategory::Other,
-        NS_NewRunnableFunction("mscom::EnsureMTA::GetMTAThread",
-                               setClearOnShutdown));
+        SchedulerGroup::Dispatch(
+            TaskCategory::Other,
+            NS_NewRunnableFunction("mscom::EnsureMTA::GetMTAThread",
+                                   std::move(setClearOnShutdown)));
 
-    return bgData;
-  }());
+        return bgData;
+      }());
 
   MOZ_ASSERT(sMTAData);
 

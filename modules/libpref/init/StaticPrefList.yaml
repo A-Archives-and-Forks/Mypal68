@@ -944,17 +944,6 @@
   value: @IS_NOT_MOZILLA_OFFICIAL@
   mirror: always
 
-# Fix up common scheme typos?
-- name: browser.fixup.typo.scheme
-  type: bool
-  value: true
-  mirror: always
-
-- name: browser.fixup.dns_first_for_single_words
-  type: bool
-  value: false
-  mirror: always
-
 # The max url length we'll store in history.
 #
 # The default value is mostly a guess based on various facts:
@@ -1026,6 +1015,16 @@
   value: 2048
   mirror: always
 
+# If set, use DocumentChannel with nsDocShell in place of HttpChannel.
+- name: browser.tabs.documentchannel
+  type: bool
+#if !defined(ANDROID)
+  value: @IS_NIGHTLY_BUILD@
+#else
+  value: false  # See bug 1589982.
+#endif
+  mirror: always
+
 - name: browser.tabs.remote.desktopbehavior
   type: bool
   value: false
@@ -1037,8 +1036,15 @@
   mirror: always
 
 # When this pref is enabled document loads with a mismatched
-# Cross-Origin header will fail to load
-- name: browser.tabs.remote.useCrossOriginPolicy
+# Cross-Origin-Embedder-Policy header will fail to load
+- name: browser.tabs.remote.useCrossOriginEmbedderPolicy
+  type: bool
+  value: false
+  mirror: always
+
+# When this pref is enabled top level loads with a mismatched
+# Cross-Origin-Opener-Policy header will be loaded in a separate process.
+- name: browser.tabs.remote.useCrossOriginOpenerPolicy
   type: bool
   value: false
   mirror: always
@@ -1284,6 +1290,22 @@
   value: false
   mirror: always
 
+- name: devtools.toolbox.force-chrome-prefs
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
+#---------------------------------------------------------------------------
+# Prefs starting with "docshell."
+#---------------------------------------------------------------------------
+
+# Used to indicate whether session history listeners should be notified
+# about content viewer eviction. Used only for testing.
+- name: docshell.shistory.testing.bfevict
+  type: bool
+  value: false
+  mirror: always
+
 #---------------------------------------------------------------------------
 # Prefs starting with "dom."
 #---------------------------------------------------------------------------
@@ -1372,6 +1394,13 @@
 - name: dom.block_multiple_popups
   type: bool
   value: true
+  mirror: always
+
+# The maximum number of popup that is allowed to be opened. Set to -1 for no
+# limit.
+- name: dom.popup_maximum
+  type: int32_t
+  value: 20
   mirror: always
 
 # Whether window.location.reload() and window.history.go(0) should be blocked
@@ -1963,7 +1992,7 @@
 # Is support for import maps (<script type="importmap">) enabled for content?
 - name: dom.importMaps.enabled
   type: bool
-  value: false
+  value: true
   mirror: always
 
 # Whether we disable triggering mutation events for changes to style
@@ -2319,7 +2348,7 @@
 # HTMLIFrameElement objects.
 - name: dom.security.featurePolicy.enabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # This pref enables Sec-Fetch-* logic and causes corresponding
@@ -2331,6 +2360,11 @@
 
 # This pref enables the featurePolicy header support.
 - name: dom.security.featurePolicy.header.enabled
+  type: bool
+  value: false
+  mirror: always
+
+- name: dom.security.featurePolicy.experimental.enabled
   type: bool
   value: false
   mirror: always
@@ -2369,10 +2403,9 @@
 
 # If true. then the service worker interception and the ServiceWorkerManager
 # will live in the parent process.  This only takes effect on browser start.
-# Note, this is not currently safe to use for normal browsing yet.
 - name: dom.serviceWorkers.parent_intercept
   type: bool
-  value: false
+  value: true
   mirror: never
 
 - name: dom.serviceWorkers.testing.enabled
@@ -2659,6 +2692,12 @@
 - name: dom.vibrator.max_vibrate_list_len
   type: uint32_t
   value: 128
+  mirror: always
+
+# Time limit, in milliseconds, for user gesture transient activation.
+- name: dom.user_activation.transient.timeout
+  type: uint32_t
+  value: 5000
   mirror: always
 
 # Is support for Window.visualViewport enabled?
@@ -3029,6 +3068,11 @@
   value: true
   mirror: always
 
+- name: dom.window.history.async
+  type: bool
+  value: true
+  mirror: always
+
 # Enable the "noreferrer" feature argument for window.open()
 - name: dom.window.open.noreferrer.enabled
   type: bool
@@ -3219,6 +3263,32 @@
 #---------------------------------------------------------------------------
 
 - name: findbar.modalHighlight
+  type: bool
+  value: false
+  mirror: always
+
+#---------------------------------------------------------------------------
+# Prefs starting with "fission."
+#---------------------------------------------------------------------------
+
+# Whether to enable Fission.
+# Overridden in all.js on RELEASE_OR_BETA in order to add the locked attribute.
+- name: fission.autostart
+  type: bool
+  value: false
+  mirror: always
+
+# This pref has no effect within fission windows, it only controls the
+# behaviour within non-fission windows. If true, preserve browsing contexts
+# between process swaps.
+- name: fission.preserve_browsing_contexts
+  type: bool
+  value: true
+  mirror: always
+
+# Store the session history in the parent process, and access it over IPC
+# from the child processes.
+- name: fission.sessionHistoryInParent
   type: bool
   value: false
   mirror: always
@@ -4523,7 +4593,13 @@
   # Experimental support for Array Grouping in JavaScript.
 -   name: javascript.options.experimental.array_grouping
     type: bool
-    value: true
+    value: false
+    mirror: always
+
+  # Experimental support for String.prototype.{is,to}WellFormed in JavaScript.
+-   name: javascript.options.experimental.well_formed_unicode_strings
+    type: bool
+    value: false
     mirror: always
 #endif  // NIGHTLY_BUILD
 
@@ -4561,6 +4637,12 @@
 
   # Experimental support for change-array-by-copy methods
 - name: javascript.options.experimental.enable_change_array_by_copy
+  type: bool
+  value: true
+  mirror: always
+
+# Experimental support Array.fromAsync
+- name: javascript.options.experimental.enable_array_from_async
   type: bool
   value: false
   mirror: always
@@ -4773,15 +4855,6 @@
 # privacy.resistFingerprinting is true, this pref is ignored and fdlibm is used
 # anyway.
 - name: javascript.options.use_fdlibm_for_sin_cos_tan
-  type: bool
-  value: false
-  mirror: always
-
-#---------------------------------------------------------------------------
-# Prefs starting with "keyword."
-#---------------------------------------------------------------------------
-
-- name: keyword.enabled
   type: bool
   value: false
   mirror: always
@@ -5193,7 +5266,7 @@
 
 - name: layers.omtp.paint-workers
   type: int32_t
-  value: 1
+  value: -1
   mirror: once
 
 - name: layers.omtp.release-capture-on-main-thread
@@ -7850,9 +7923,9 @@
   value: 1
   mirror: always
 
-- name: permissions.delegation.enable
+- name: permissions.delegation.enabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 - name: permissions.isolateBy.userContext
@@ -8283,6 +8356,13 @@
 # URL-Bar will not be blocked when flipping this pref.
 - name: security.data_uri.block_toplevel_data_uri_navigations
   type: bool
+  value: true
+  mirror: always
+
+# Allowed by default so it doesn't affect Thunderbird/SeaMonkey, but
+# not allowed for Firefox Desktop in firefox.js
+- name: security.allow_parent_unrestricted_js_loads
+  type: RelaxedAtomicBool
   value: true
   mirror: always
 

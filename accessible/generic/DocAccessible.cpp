@@ -142,6 +142,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(DocAccessible, Accessible)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mAccessibleCache)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mAnchorJumpElm)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mInvalidationList)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_REFERENCE
   tmp->mARIAOwnsHash.Clear();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
@@ -1716,7 +1717,7 @@ bool DocAccessible::UpdateAccessibleOnAttrChange(dom::Element* aElement,
     // It is common for js libraries to set the role on the body element after
     // the document has loaded. In this case we just update the role map entry.
     if (mContent == aElement) {
-      SetRoleMapEntry(aria::GetRoleMap(aElement));
+      SetRoleMapEntryForDoc(aElement);
       if (mIPCDoc) {
         mIPCDoc->SendRoleChangedEvent(Role());
       }
@@ -1769,7 +1770,7 @@ void DocAccessible::UpdateRootElIfNeeded() {
   }
   if (rootEl != mContent) {
     mContent = rootEl;
-    SetRoleMapEntry(aria::GetRoleMap(rootEl));
+    SetRoleMapEntryForDoc(rootEl);
     if (mIPCDoc) {
       mIPCDoc->SendRoleChangedEvent(Role());
     }
@@ -2544,6 +2545,21 @@ void DocAccessible::ARIAActiveDescendantIDMaybeMoved(dom::Element* aElm) {
   // tree yet. Therefore, schedule this async to ensure the tree is up to date.
   mNotificationController->ScheduleNotification<DocAccessible, Accessible>(
       this, &DocAccessible::ARIAActiveDescendantChanged, acc);
+}
+
+void DocAccessible::SetRoleMapEntryForDoc(dom::Element* aElement) {
+  const nsRoleMapEntry* entry = aria::GetRoleMap(aElement);
+  if (!entry || entry->role == roles::APPLICATION ||
+      entry->role == roles::DIALOG ||
+      // Role alert isn't valid on the body element according to the ARIA spec,
+      // but it's useful for our UI; e.g. the WebRTC sharing indicator.
+      (entry->role == roles::ALERT &&
+       !nsCoreUtils::IsContentDocument(mDocumentNode))) {
+    SetRoleMapEntry(entry);
+    return;
+  }
+  // No other ARIA roles are valid on body elements.
+  SetRoleMapEntry(nullptr);
 }
 
 Accessible* DocAccessible::GetAccessible(nsINode* aNode) const {

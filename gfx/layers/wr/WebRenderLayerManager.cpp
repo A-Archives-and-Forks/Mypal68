@@ -11,7 +11,6 @@
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/dom/BrowserChild.h"
-#include "mozilla/dom/TabGroup.h"
 #include "mozilla/gfx/DrawEventRecorder.h"
 #include "mozilla/layers/CompositorBridgeChild.h"
 #include "mozilla/layers/StackingContextHelper.h"
@@ -387,7 +386,7 @@ void WebRenderLayerManager::EndTransactionWithoutLayer(
         LayoutDeviceRect(LayoutDevicePoint(), LayoutDeviceSize(size));
     dlData.mScrollData.emplace(std::move(mScrollData));
 
-    WrBridge()->EndTransaction(dlData, mLatestTransactionId,
+    WrBridge()->EndTransaction(std::move(dlData), mLatestTransactionId,
                                containsSVGGroup,
                                mTransactionIdAllocator->GetVsyncId(),
                                mTransactionIdAllocator->GetVsyncStart(),
@@ -566,15 +565,6 @@ void WebRenderLayerManager::WrUpdated() {
       browserChild->SchedulePaint();
     }
   }
-}
-
-dom::TabGroup* WebRenderLayerManager::GetTabGroup() {
-  if (mWidget) {
-    if (dom::BrowserChild* browserChild = mWidget->GetOwningBrowserChild()) {
-      return browserChild->TabGroup();
-    }
-  }
-  return nullptr;
 }
 
 void WebRenderLayerManager::UpdateTextureFactoryIdentifier(

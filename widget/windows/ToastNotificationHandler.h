@@ -7,7 +7,7 @@
 
 #include <windows.ui.notifications.h>
 #include <windows.data.xml.dom.h>
-//#include <wrl.h>
+#include <wrl.h>
 #include "nsCOMPtr.h"
 #include "nsIAlertsService.h"
 #include "nsICancelable.h"
@@ -38,11 +38,14 @@ class ToastNotificationHandler final
         mTitle(aTitle),
         mMsg(aMsg),
         mHostPort(aHostPort),
-        mClickable(aClickable) {}
+        mClickable(aClickable),
+        mSentFinished(!aAlertListener) {}
 
   nsresult InitAlertAsync(nsIAlertNotification* aAlert);
 
   void OnWriteBitmapFinished(nsresult rv);
+
+  void UnregisterHandler();
 
  protected:
   virtual ~ToastNotificationHandler();
@@ -57,10 +60,8 @@ class ToastNotificationHandler final
       IToastFailedEventArgs;
   typedef ABI::Windows::UI::Notifications::ToastTemplateType ToastTemplateType;
 
-  /*Microsoft::WRL::ComPtr<IToastNotification> mNotification;
-  Microsoft::WRL::ComPtr<IToastNotifier> mNotifier;*/
-  RefPtr<IToastNotification> mNotification;
-  RefPtr<IToastNotifier> mNotifier;
+  Microsoft::WRL::ComPtr<IToastNotification> mNotification;
+  Microsoft::WRL::ComPtr<IToastNotifier> mNotifier;
 
   RefPtr<ToastNotification> mBackend;
 
@@ -80,18 +81,17 @@ class ToastNotificationHandler final
   nsString mMsg;
   nsString mHostPort;
   bool mClickable;
+  bool mSentFinished;
 
   nsresult TryShowAlert();
   bool ShowAlert();
   nsresult AsyncSaveImage(imgIRequest* aRequest);
   nsresult OnWriteBitmapSuccess();
+  void SendFinished();
 
   bool CreateWindowsNotificationFromXml(IXmlDocument* aToastXml);
-  /*Microsoft::WRL::ComPtr<IXmlDocument> InitializeXmlForTemplate(
-      ToastTemplateType templateType);*/
-  RefPtr<IXmlDocument> InitializeXmlForTemplate(
+  Microsoft::WRL::ComPtr<IXmlDocument> InitializeXmlForTemplate(
       ToastTemplateType templateType);
-
 
   HRESULT OnActivate(IToastNotification* notification,
                      IInspectable* inspectable);

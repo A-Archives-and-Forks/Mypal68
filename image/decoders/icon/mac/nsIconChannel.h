@@ -45,6 +45,7 @@ class nsIconChannel final : public nsIChannel, public nsIStreamListener {
 
   nsCOMPtr<nsIInputStreamPump> mPump;
   nsCOMPtr<nsIStreamListener> mListener;
+  bool mCanceled = false;
 
   [[nodiscard]] nsresult MakeInputStream(nsIInputStream** _retval,
                                          bool nonBlocking);
