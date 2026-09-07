@@ -23,6 +23,7 @@
 #include "mozilla/dom/ServiceWorker.h"
 #include "mozilla/dom/ServiceWorkerContainer.h"
 #include "mozilla/dom/ServiceWorkerManager.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StorageAccess.h"
 #include "nsIContentSecurityPolicy.h"
 #include "nsContentUtils.h"
@@ -226,8 +227,8 @@ void ClientSource::WorkerExecutionReady(WorkerPrivate* aWorkerPrivate) {
 nsresult ClientSource::WindowExecutionReady(nsPIDOMWindowInner* aInnerWindow) {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_DIAGNOSTIC_ASSERT(aInnerWindow);
-  MOZ_DIAGNOSTIC_ASSERT(aInnerWindow->IsCurrentInnerWindow());
-  MOZ_DIAGNOSTIC_ASSERT(aInnerWindow->HasActiveDocument());
+  MOZ_ASSERT(aInnerWindow->IsCurrentInnerWindow());
+  MOZ_ASSERT(aInnerWindow->HasActiveDocument());
 
   if (IsShutdown()) {
     return NS_OK;
@@ -624,7 +625,8 @@ RefPtr<ClientOpPromise> ClientSource::Claim(const ClientClaimArgs& aArgs) {
   if (NS_IsMainThread()) {
     r->Run();
   } else {
-    MOZ_ALWAYS_SUCCEEDS(SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
+    MOZ_ALWAYS_SUCCEEDS(
+        SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
   }
 
   RefPtr<ClientOpPromise::Private> outerPromise =

@@ -13,6 +13,7 @@ class nsIURI;
 namespace mozilla {
 
 class CopyableErrorResult;
+class ErrorResult;
 
 namespace dom {
 

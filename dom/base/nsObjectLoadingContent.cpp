@@ -520,8 +520,7 @@ void nsObjectLoadingContent::SetupFrameLoader(int32_t aJSPluginId) {
   NS_ASSERTION(thisContent, "must be a content");
 
   mFrameLoader =
-      nsFrameLoader::Create(thisContent->AsElement(),
-                            /* aOpener = */ nullptr, mNetworkCreated);
+      nsFrameLoader::Create(thisContent->AsElement(), mNetworkCreated);
   MOZ_ASSERT(mFrameLoader, "nsFrameLoader::Create failed");
 }
 
@@ -2259,7 +2258,6 @@ nsresult nsObjectLoadingContent::OpenChannel() {
   RefPtr<ObjectInterfaceRequestorShim> shim =
       new ObjectInterfaceRequestorShim(this);
 
-  bool isSandBoxed = doc->GetSandboxFlags() & SANDBOXED_ORIGIN;
   bool inherit = nsContentUtils::ChannelShouldInheritPrincipal(
       thisContent->NodePrincipal(), mURI,
       true,    // aInheritForAboutBlank
@@ -2271,9 +2269,6 @@ nsresult nsObjectLoadingContent::OpenChannel() {
   if (inherit && !mURI->SchemeIs("data")) {
     securityFlags |= nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL;
   }
-  if (isSandBoxed) {
-    securityFlags |= nsILoadInfo::SEC_SANDBOXED;
-  }
 
   nsContentPolicyType contentPolicyType = GetContentPolicyType();
 
@@ -2284,7 +2279,9 @@ nsresult nsObjectLoadingContent::OpenChannel() {
                      shim,     // aCallbacks
                      nsIChannel::LOAD_CALL_CONTENT_SNIFFERS |
                          nsIChannel::LOAD_BYPASS_SERVICE_WORKER |
-                         nsIRequest::LOAD_HTML_OBJECT_DATA);
+                         nsIRequest::LOAD_HTML_OBJECT_DATA,
+                     nullptr,  // aIoService
+                     doc->GetSandboxFlags());
   NS_ENSURE_SUCCESS(rv, rv);
   if (inherit) {
     nsCOMPtr<nsILoadInfo> loadinfo = chan->LoadInfo();
@@ -2544,8 +2541,8 @@ void nsObjectLoadingContent::CreateStaticClone(
   if (mFrameLoader) {
     nsCOMPtr<nsIContent> content =
         do_QueryInterface(static_cast<nsIImageLoadingContent*>(aDest));
-    nsFrameLoader* fl =
-        nsFrameLoader::Create(content->AsElement(), nullptr, false);
+    RefPtr<nsFrameLoader> fl =
+        nsFrameLoader::Create(content->AsElement(), false);
     if (fl) {
       aDest->mFrameLoader = fl;
       mFrameLoader->CreateStaticClone(fl);

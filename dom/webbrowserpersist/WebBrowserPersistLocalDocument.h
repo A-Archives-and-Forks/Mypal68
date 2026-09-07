@@ -41,7 +41,6 @@ class WebBrowserPersistLocalDocument final
   void DecideContentType(nsACString& aContentType);
   nsresult GetDocEncoder(const nsACString& aContentType, uint32_t aEncoderFlags,
                          nsIDocumentEncoder** aEncoder);
-  already_AddRefed<nsISHEntry> GetHistory();
 
   virtual ~WebBrowserPersistLocalDocument();
 };

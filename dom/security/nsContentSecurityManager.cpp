@@ -647,7 +647,6 @@ static void LogSecurityFlags(nsSecurityFlags securityFlags) {
       {nsILoadInfo::SEC_COOKIES_SAME_ORIGIN, "SEC_COOKIES_SAME_ORIGIN"},
       {nsILoadInfo::SEC_COOKIES_OMIT, "SEC_COOKIES_OMIT"},
       {nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL, "SEC_FORCE_INHERIT_PRINCIPAL"},
-      {nsILoadInfo::SEC_SANDBOXED, "SEC_SANDBOXED"},
       {nsILoadInfo::SEC_ABOUT_BLANK_INHERITS, "SEC_ABOUT_BLANK_INHERITS"},
       {nsILoadInfo::SEC_ALLOW_CHROME, "SEC_ALLOW_CHROME"},
       {nsILoadInfo::SEC_DISALLOW_SCRIPT, "SEC_DISALLOW_SCRIPT"},
@@ -942,6 +941,15 @@ NS_IMETHODIMP
 nsContentSecurityManager::AsyncOnChannelRedirect(
     nsIChannel* aOldChannel, nsIChannel* aNewChannel, uint32_t aRedirFlags,
     nsIAsyncVerifyRedirectCallback* aCb) {
+  // Since we compare the principal from the loadInfo to the URI's
+  // princicpal, it's possible that the checks fail when doing an internal
+  // redirect. We can just return early instead, since we should never
+  // need to block an internal redirect.
+  if (aRedirFlags & nsIChannelEventSink::REDIRECT_INTERNAL) {
+    aCb->OnRedirectVerifyCallback(NS_OK);
+    return NS_OK;
+  }
+
   nsCOMPtr<nsILoadInfo> loadInfo = aOldChannel->LoadInfo();
   nsresult rv = CheckChannel(aNewChannel);
   if (NS_SUCCEEDED(rv)) {

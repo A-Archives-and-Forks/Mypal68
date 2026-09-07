@@ -10,7 +10,6 @@
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/IDBFactoryBinding.h"
@@ -320,10 +319,6 @@ void IDBFactory::UpdateActiveTransactionCount(int32_t aDelta) {
   MOZ_DIAGNOSTIC_ASSERT(aDelta > 0 || (mActiveTransactionCount + aDelta) <
                                           mActiveTransactionCount);
   mActiveTransactionCount += aDelta;
-  nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(mGlobal);
-  if (window) {
-    window->UpdateActiveIndexedDBTransactionCount(aDelta);
-  }
 }
 
 void IDBFactory::UpdateActiveDatabaseCount(int32_t aDelta) {

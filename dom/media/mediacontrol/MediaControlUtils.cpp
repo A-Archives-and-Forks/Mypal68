@@ -11,11 +11,11 @@ mozilla::LazyLogModule gMediaControlLog("MediaControl");
 namespace mozilla::dom {
 
 BrowsingContext* GetAliveTopBrowsingContext(BrowsingContext* aBC) {
-  if (!aBC) {
+  if (!aBC || aBC->IsDiscarded()) {
     return nullptr;
   }
   aBC = aBC->Top();
-  if (!aBC) {
+  if (!aBC || aBC->IsDiscarded()) {
     return nullptr;
   }
   return aBC;

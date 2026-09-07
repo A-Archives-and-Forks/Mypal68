@@ -14,11 +14,13 @@
 
 #include "mozilla/Base64.h"
 #include "mozilla/CycleCollectedJSRuntime.h"
+#include "mozilla/IntentionalCrash.h"
 #include "mozilla/PerformanceMetricsCollector.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ProcInfo.h"
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/TimeStamp.h"
+#include "mozilla/dom/ContentChild.h"  //1633379-
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/IdleDeadline.h"
 #include "mozilla/dom/JSWindowActorService.h"
@@ -822,7 +824,7 @@ already_AddRefed<Promise> ChromeUtils::RequestProcInfo(GlobalObject& aGlobal,
                       // Converting the Content Type into a ProcType
                       nsAutoCString processType;
                       processType.Assign(contentParent->GetRemoteType());
-                      if (processType == DEFAULT_REMOTE_TYPE) {
+                      if (IsWebRemoteType(processType)) {
                         type = mozilla::ProcType::Web;
                       } else if (processType == FILE_REMOTE_TYPE) {
                         type = mozilla::ProcType::File;
@@ -1183,6 +1185,23 @@ bool ChromeUtils::IsClassifierBlockingErrorCode(GlobalObject& aGlobal,
                                                 uint32_t aError) {
   return net::UrlClassifierFeatureFactory::IsClassifierBlockingErrorCode(
       static_cast<nsresult>(aError));
+}
+
+#ifdef ENABLE_TESTS
+/* static */
+void ChromeUtils::PrivateNoteIntentionalCrash(const GlobalObject& aGlobal,
+                                              ErrorResult& aError) {
+  if (XRE_IsContentProcess()) {
+    NoteIntentionalCrash("tab");
+    return;
+  }
+  aError.Throw(NS_ERROR_NOT_IMPLEMENTED);
+}
+#endif
+
+/* static */
+nsIContentChild* ChromeUtils::GetContentChild(const GlobalObject&) {
+  return ContentChild::GetSingleton();
 }
 
 }  // namespace mozilla::dom

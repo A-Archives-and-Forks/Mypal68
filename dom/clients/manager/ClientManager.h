@@ -6,6 +6,7 @@
 
 #include "mozilla/dom/ClientOpPromise.h"
 #include "mozilla/dom/ClientThing.h"
+#include "mozilla/dom/PClientManagerChild.h"
 
 class nsIPrincipal;
 
@@ -50,6 +51,9 @@ class ClientManager final : public ClientThing<ClientManagerChild> {
       ClientType aType, nsISerialEventTarget* aEventTarget,
       const mozilla::ipc::PrincipalInfo& aPrincipal);
 
+  UniquePtr<ClientSource> CreateSourceInternal(
+      const ClientInfo& aClientInfo, nsISerialEventTarget* aEventTarget);
+
   already_AddRefed<ClientHandle> CreateHandleInternal(
       const ClientInfo& aClientInfo, nsISerialEventTarget* aSerialEventTarget);
 
@@ -68,7 +72,29 @@ class ClientManager final : public ClientThing<ClientManagerChild> {
   // Private methods called by ClientSource
   mozilla::dom::WorkerPrivate* GetWorkerPrivate() const;
 
+  // Don't use - use {Expect,Forget}FutureSource instead.
+  static bool ExpectOrForgetFutureSource(
+      const ClientInfo& aClientInfo,
+      bool (PClientManagerChild::*aMethod)(const IPCClientInfo&));
+
  public:
+  // Asynchronously declare that a ClientSource will possibly be constructed
+  // from an equivalent ClientInfo in the future. This must be called before any
+  // any ClientHandles are created with the ClientInfo to avoid race conditions
+  // when ClientHandles query the ClientManagerService.
+  //
+  // This method exists so that the ClientManagerService can determine if a
+  // particular ClientSource can be expected to exist in the future or has
+  // already existed and been destroyed.
+  //
+  // If it's later known that the expected ClientSource will not be
+  // constructed, ForgetFutureSource must be called.
+  static bool ExpectFutureSource(const ClientInfo& aClientInfo);
+
+  // May also be called even when the "future" source has become a "real"
+  // source, in which case this is a no-op.
+  static bool ForgetFutureSource(const ClientInfo& aClientInfo);
+
   // Initialize the ClientManager at process start.  This
   // does book-keeping like creating a TLS identifier, etc.
   // This should only be called by process startup code.
@@ -81,6 +107,17 @@ class ClientManager final : public ClientThing<ClientManagerChild> {
   static UniquePtr<ClientSource> CreateSource(
       ClientType aType, nsISerialEventTarget* aEventTarget,
       const mozilla::ipc::PrincipalInfo& aPrincipal);
+
+  // Construct a new ClientSource from an existing ClientInfo (and id) rather
+  // than allocating a new id.
+  static UniquePtr<ClientSource> CreateSourceFromInfo(
+      const ClientInfo& aClientInfo, nsISerialEventTarget* aSerialEventTarget);
+
+  // Allocate a new ClientInfo and id without creating a ClientSource. Used
+  // when we have a redirect that isn't exposed to the process that owns
+  // the global/ClientSource.
+  static Maybe<ClientInfo> CreateInfo(ClientType aType,
+                                      nsIPrincipal* aPrincipal);
 
   static already_AddRefed<ClientHandle> CreateHandle(
       const ClientInfo& aClientInfo, nsISerialEventTarget* aSerialEventTarget);

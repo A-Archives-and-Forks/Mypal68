@@ -10,6 +10,7 @@
 #include "mozilla/dom/ChromeUtilsBinding.h"
 #include "mozilla/dom/Exceptions.h"
 #include "nsDOMNavigationTiming.h"  // for DOMHighResTimeStamp
+#include "nsIContentChild.h"
 
 namespace mozilla {
 
@@ -207,6 +208,13 @@ class ChromeUtils {
 
   static bool IsClassifierBlockingErrorCode(GlobalObject& aGlobal,
                                             uint32_t aError);
+
+#ifdef ENABLE_TESTS
+  static void PrivateNoteIntentionalCrash(const GlobalObject& aGlobal,
+                                          ErrorResult& aError);
+#endif
+
+  static nsIContentChild* GetContentChild(const GlobalObject&);
 };
 
 }  // namespace dom

@@ -10,6 +10,8 @@
 namespace mozilla {
 namespace dom {
 
+class KeyValuePair;
+
 class SessionStorageCache final {
  public:
   NS_INLINE_DECL_REFCOUNTING(SessionStorageCache)
@@ -41,6 +43,10 @@ class SessionStorageCache final {
   void Clear(DataSetType aDataSetType, bool aByUserInteraction = true);
 
   already_AddRefed<SessionStorageCache> Clone() const;
+
+  nsTArray<KeyValuePair> SerializeData(DataSetType aDataSetType);
+  void DeserializeData(DataSetType aDataSetType,
+                       const nsTArray<KeyValuePair>& aData);
 
  private:
   ~SessionStorageCache() = default;

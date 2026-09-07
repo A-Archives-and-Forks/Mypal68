@@ -24,6 +24,10 @@
 #include "mozilla/dom/Blob.h"
 #include "mozilla/dom/BlobBinding.h"
 #include "mozilla/dom/BlobImpl.h"
+#include "mozilla/dom/BrowsingContext.h"
+#include "mozilla/dom/BrowsingContextBinding.h"
+#include "mozilla/dom/ClonedErrorHolder.h"
+#include "mozilla/dom/ClonedErrorHolderBinding.h"
 #include "mozilla/dom/DirectoryBinding.h"
 #include "mozilla/dom/DOMJSClass.h"
 #include "mozilla/dom/DOMTypes.h"
@@ -988,6 +992,14 @@ JSObject* StructuredCloneHolder::CustomReadHandler(
     return ReadInputStream(aCx, aIndex, this);
   }
 
+  if (aTag == SCTAG_DOM_BROWSING_CONTEXT) {
+    return BrowsingContext::ReadStructuredClone(aCx, aReader, this);
+  }
+
+  if (aTag == SCTAG_DOM_CLONED_ERROR_OBJECT) {
+    return ClonedErrorHolder::ReadStructuredClone(aCx, aReader, this);
+  }
+
   return ReadFullySerializableObjects(aCx, aReader, aTag);
 }
 
@@ -1054,6 +1066,22 @@ bool StructuredCloneHolder::CustomWriteHandler(
   {
     StructuredCloneBlob* holder = nullptr;
     if (NS_SUCCEEDED(UNWRAP_OBJECT(StructuredCloneHolder, &obj, holder))) {
+      return holder->WriteStructuredClone(aCx, aWriter, this);
+    }
+  }
+
+  // See if this is a BrowsingContext object.
+  {
+    BrowsingContext* holder = nullptr;
+    if (NS_SUCCEEDED(UNWRAP_OBJECT(BrowsingContext, &obj, holder))) {
+      return holder->WriteStructuredClone(aCx, aWriter, this);
+    }
+  }
+
+  // See if this is a ClonedErrorHolder object.
+  {
+    ClonedErrorHolder* holder = nullptr;
+    if (NS_SUCCEEDED(UNWRAP_OBJECT(ClonedErrorHolder, &obj, holder))) {
       return holder->WriteStructuredClone(aCx, aWriter, this);
     }
   }

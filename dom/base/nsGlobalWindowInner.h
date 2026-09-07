@@ -47,6 +47,7 @@
 #include "nsWrapperCacheInlines.h"
 #include "mozilla/dom/EventTarget.h"
 #include "mozilla/dom/WindowBinding.h"
+#include "mozilla/dom/WindowProxyHolder.h"
 #include "Units.h"
 #include "nsComponentManagerUtils.h"
 #include "nsSize.h"
@@ -72,7 +73,6 @@ class nsITimeoutHandler;
 class nsIWebBrowserChrome;
 class mozIDOMWindowProxy;
 
-class nsDOMWindowList;
 class nsScreen;
 class nsHistory;
 class nsGlobalWindowObserver;
@@ -122,7 +122,6 @@ class RequestOrUSVString;
 class SharedWorker;
 class Selection;
 class SpeechSynthesis;
-class TabGroup;
 class Timeout;
 class U2F;
 class VisualViewport;
@@ -237,7 +236,8 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   }
 
   static already_AddRefed<nsGlobalWindowInner> Create(
-      nsGlobalWindowOuter* aOuter, bool aIsChrome);
+      nsGlobalWindowOuter* aOuter, bool aIsChrome,
+      mozilla::dom::WindowGlobalChild* aActor);
 
   // nsISupports
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
@@ -393,7 +393,8 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   NS_DECL_NSIINTERFACEREQUESTOR
 
   // WebIDL interface.
-  already_AddRefed<nsPIDOMWindowOuter> IndexedGetter(uint32_t aIndex);
+  mozilla::dom::Nullable<mozilla::dom::WindowProxyHolder> IndexedGetter(
+      uint32_t aIndex);
 
   static bool IsPrivilegedChromeWindow(JSContext*, JSObject* aObj);
 
@@ -592,8 +593,8 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   static JSObject* CreateNamedPropertiesObject(JSContext* aCx,
                                                JS::Handle<JSObject*> aProto);
 
-  mozilla::dom::BrowsingContext* Window();
-  mozilla::dom::BrowsingContext* Self() { return Window(); }
+  mozilla::dom::WindowProxyHolder Window();
+  mozilla::dom::WindowProxyHolder Self() { return Window(); }
   Document* GetDocument() { return GetDoc(); }
   void GetName(nsAString& aName, mozilla::ErrorResult& aError);
   void SetName(const nsAString& aName, mozilla::ErrorResult& aError);
@@ -617,19 +618,20 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   void Focus(mozilla::ErrorResult& aError);
   nsresult Focus() override;
   void Blur(mozilla::ErrorResult& aError);
-  nsDOMWindowList* GetFrames() final;
-  mozilla::dom::BrowsingContext* GetFrames(mozilla::ErrorResult& aError);
+  mozilla::dom::WindowProxyHolder GetFrames(mozilla::ErrorResult& aError);
   uint32_t Length();
   mozilla::dom::Nullable<mozilla::dom::WindowProxyHolder> GetTop(
       mozilla::ErrorResult& aError);
 
  protected:
-  explicit nsGlobalWindowInner(nsGlobalWindowOuter* aOuterWindow);
+  explicit nsGlobalWindowInner(nsGlobalWindowOuter* aOuterWindow,
+                               mozilla::dom::WindowGlobalChild* aActor);
   // Initializes the mWasOffline member variable
   void InitWasOffline();
 
  public:
-  nsPIDOMWindowOuter* GetOpenerWindow(mozilla::ErrorResult& aError);
+  mozilla::dom::Nullable<mozilla::dom::WindowProxyHolder> GetOpenerWindow(
+      mozilla::ErrorResult& aError);
   void GetOpener(JSContext* aCx, JS::MutableHandle<JS::Value> aRetval,
                  mozilla::ErrorResult& aError);
   void SetOpener(JSContext* aCx, JS::Handle<JS::Value> aOpener,
@@ -640,7 +642,6 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   nsPIDOMWindowOuter* GetInProcessScriptableParent() override;
   mozilla::dom::Element* GetFrameElement(nsIPrincipal& aSubjectPrincipal,
                                          mozilla::ErrorResult& aError);
-  mozilla::dom::Element* GetFrameElement() override;
   mozilla::dom::Nullable<mozilla::dom::WindowProxyHolder> Open(
       const nsAString& aUrl, const nsAString& aName, const nsAString& aOptions,
       mozilla::ErrorResult& aError);
@@ -952,8 +953,6 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 
   nsIDOMWindowUtils* GetWindowUtils(mozilla::ErrorResult& aRv);
 
-  bool HasOpenerForInitialContentBrowser();
-
   void UpdateTopInnerWindow();
 
   virtual bool IsInSyncOperation() override;
@@ -1199,12 +1198,6 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   friend class nsPIDOMWindowInner;
   friend class nsPIDOMWindowOuter;
 
-  mozilla::dom::TabGroup* TabGroupInner();
-
-  // Like TabGroupInner, but it is more tolerant of being called at peculiar
-  // times, and it can return null.
-  mozilla::dom::TabGroup* MaybeTabGroupInner();
-
   bool IsBackgroundInternal() const;
 
   // NOTE: Chrome Only
@@ -1232,9 +1225,8 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   // Returns whether we need to keep observing the refresh driver or not.
   bool MaybeCallDocumentFlushedResolvers(bool aUntilExhaustion);
 
-  // Return true if we need to notify browsing context to reset its user gesture
-  // activation flag.
-  bool ShouldResetBrowsingContextUserGestureActivation();
+  // Try to fire the "load" event on our content embedder if we're an iframe.
+  void FireFrameLoadEvent(bool aIsTrusted);
 
  public:
   // Dispatch a runnable related to the global.
@@ -1264,7 +1256,6 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   void RemoveIdleCallback(mozilla::dom::IdleRequest* aRequest);
 
   void SetActiveLoadingState(bool aIsLoading) override;
-  void AddDeprioritizedLoadRunner(nsIRunnable* aRunner) override;
 
   // Hint to the JS engine whether we are currently loading.
   void HintIsLoading(bool aIsLoading);
@@ -1319,10 +1310,18 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 #ifdef MOZ_VR
   bool mHasVRDisplayActivateEvents : 1;
 #endif
+
+  // True if this was the currently-active inner window for a BrowsingContext at
+  // the time it was discarded.
+  bool mWasCurrentInnerWindow : 1;
+  void SetWasCurrentInnerWindow() { mWasCurrentInnerWindow = true; }
+  bool WasCurrentInnerWindow() const override { return mWasCurrentInnerWindow; }
+
 #ifdef MOZ_GAMEPAD
+  bool mHasSeenGamepadInput : 1;
+
   nsCheapSet<nsUint32HashKey> mGamepadIndexSet;
   nsRefPtrHashtable<nsUint32HashKey, mozilla::dom::Gamepad> mGamepads;
-  bool mHasSeenGamepadInput;
 #endif
 
   RefPtr<nsScreen> mScreen;
@@ -1446,29 +1445,6 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
       mDocumentFlushedResolvers;
 
   nsTArray<nsWeakPtr> mDataDocumentsForMemoryReporting;
-
-  class DeprioritizedLoadRunner
-      : public mozilla::Runnable,
-        public mozilla::LinkedListElement<DeprioritizedLoadRunner> {
-   public:
-    explicit DeprioritizedLoadRunner(nsIRunnable* aInner)
-        : Runnable("DeprioritizedLoadRunner"), mInner(aInner) {}
-
-    NS_IMETHOD Run() override {
-      if (mInner) {
-        ;
-        RefPtr<nsIRunnable> inner = std::move(mInner);
-        inner->Run();
-      }
-
-      return NS_OK;
-    }
-
-   private:
-    RefPtr<nsIRunnable> mInner;
-  };
-
-  mozilla::LinkedList<DeprioritizedLoadRunner> mDeprioritizedLoadRunner;
 
   static InnerWindowByIdTable* sInnerWindowsById;
 

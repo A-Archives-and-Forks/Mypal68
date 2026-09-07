@@ -5,6 +5,7 @@
 #include "TimeoutHandler.h"
 
 #include "mozilla/Assertions.h"
+#include "mozilla/HoldDropJSObjects.h"
 #include "nsJSUtils.h"
 
 namespace mozilla::dom {

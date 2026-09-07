@@ -3,17 +3,17 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 interface nsISupports;
+interface nsIContentChild;
+interface nsIContentParent;
 
 interface mixin JSWindowActor {
   [Throws]
   undefined sendAsyncMessage(DOMString messageName,
-                        optional any obj,
-                        optional any transfers);
+                             optional any obj);
 
   [NewObject]
   Promise<any> sendQuery(DOMString messageName,
-                         optional any obj,
-                         optional any transfers);
+                         optional any obj);
 };
 
 [ChromeOnly, Exposed=Window]
@@ -77,11 +77,11 @@ callback interface MozObserverCallback {
 };
 
 /**
- * WebIDL callback interface calling the `willDestroy` and `didDestroy`
- * method on JSWindowActors.
+ * WebIDL callback interface calling the `willDestroy`, `didDestroy`, and
+ * `actorCreated` methods on JSWindowActors.
  */
 [MOZ_CAN_RUN_SCRIPT_BOUNDARY]
-callback MozActorDestroyCallback = undefined();
+callback MozJSWindowActorCallback = undefined();
 
 /**
  * The willDestroy method, if present, will be called at the last opportunity
@@ -89,14 +89,17 @@ callback MozActorDestroyCallback = undefined();
  * up and send final messages.
  * The didDestroy method, if present, will be called after the actor is no
  * longer able to receive any more messages.
+ * The actorCreated method, if present, will be called immediately after the
+ * actor has been created and initialized.
  *
  * NOTE: Messages may be received between willDestroy and didDestroy, but they
  * may not be sent.
  */
 [GenerateInit]
-dictionary MozActorDestroyCallbacks {
-  [ChromeOnly] MozActorDestroyCallback willDestroy;
-  [ChromeOnly] MozActorDestroyCallback didDestroy;
+dictionary MozJSWindowActorCallbacks {
+  [ChromeOnly] MozJSWindowActorCallback willDestroy;
+  [ChromeOnly] MozJSWindowActorCallback didDestroy;
+  [ChromeOnly] MozJSWindowActorCallback actorCreated;
 };
 
 /**
@@ -126,15 +129,24 @@ dictionary WindowActorOptions {
   sequence<DOMString> matches;
 
   /**
-   * Optional list of regular expressions for remoteTypes which are
-   * allowed to instantiate this actor. If not passed, all content
-   * processes are allowed to instantiate the actor.
+   * An array of remote type which restricts the actor is allowed to instantiate
+   * in specific process type. If this is defined, the prefix of process type
+   * matches the remote type by prefix match is allowed to instantiate, ex: if
+   * Fission is enabled, the prefix of process type will be `webIsolated`, it
+   * can prefix match remote type either `web` or `webIsolated`. If not passed,
+   * all content processes are allowed to instantiate the actor.
    */
   sequence<UTF8String> remoteTypes;
 
+  /**
+   * An array of MessageManagerGroup values which restrict which type
+   * of browser elements the actor is allowed to be loaded within.
+   */
+  sequence<DOMString> messageManagerGroups;
+
   /** This fields are used for configuring individual sides of the actor. */
-  WindowActorSidedOptions parent = {};
-  WindowActorChildOptions child = {};
+  WindowActorSidedOptions parent;
+  WindowActorChildOptions child;
 };
 
 dictionary WindowActorSidedOptions {
@@ -143,13 +155,15 @@ dictionary WindowActorSidedOptions {
    * If not passed, the specified side cannot receive messages, but may send
    * them using `sendAsyncMessage` or `sendQuery`.
    */
-  ByteString moduleURI;
+  required ByteString moduleURI;
 };
 
 dictionary WindowActorChildOptions : WindowActorSidedOptions {
   /**
    * Events which this actor wants to be listening to. When these events fire,
    * it will trigger actor creation, and then forward the event to the actor.
+   *
+   * NOTE: Listeners are not attached for windows loaded in chrome docshells.
    *
    * NOTE: `once` option is not support due to we register listeners in a shared
    * location.
@@ -160,10 +174,10 @@ dictionary WindowActorChildOptions : WindowActorSidedOptions {
   * An array of observer topics to listen to. An observer will be added for each
   * topic in the list.
   *
-  * Observer notifications in the list use nsGlobalWindowInner object as their
-  * subject, and the events will only be dispatched to the corresponding window
-  * actor. If additional observer notification's subjects are needed, please
-  * file a bug for that.
+  * Observer notifications in the list use nsGlobalWindowInner or
+  * nsGlobalWindowOuter object as their subject, and the events will only be
+  * dispatched to the corresponding window actor. If additional observer
+  * notification's subjects are needed, please file a bug for that.
   */
   sequence<ByteString> observers;
 };

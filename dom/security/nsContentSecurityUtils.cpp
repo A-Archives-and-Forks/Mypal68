@@ -8,9 +8,14 @@
 
 #include "mozilla/Components.h"
 #include "nsIContentSecurityPolicy.h"
+#include "nsIChannel.h"
+#include "nsIHttpChannel.h"
+#include "nsIMultiPartChannel.h"
 #include "nsIURI.h"
 
 #include "js/Array.h"  // JS::GetArrayLength
+#include "js/friend/ErrorMessages.h"  // JSMSG_UNSAFE_FILENAME
+#include "mozilla/Logging.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/StaticPrefs_security.h"
 #include "mozilla/StaticPrefs_extensions.h"
@@ -331,6 +336,151 @@ void nsContentSecurityUtils::NotifyEvalUsage(bool aIsSystemPrincipal,
   console->LogMessage(error);
 }
 
+/* static */
+nsresult nsContentSecurityUtils::GetHttpChannelFromPotentialMultiPart(
+    nsIChannel* aChannel, nsIHttpChannel** aHttpChannel) {
+  nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel);
+  if (httpChannel) {
+    httpChannel.forget(aHttpChannel);
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIMultiPartChannel> multipart = do_QueryInterface(aChannel);
+  if (!multipart) {
+    *aHttpChannel = nullptr;
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIChannel> baseChannel;
+  nsresult rv = multipart->GetBaseChannel(getter_AddRefs(baseChannel));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  httpChannel = do_QueryInterface(baseChannel);
+  httpChannel.forget(aHttpChannel);
+
+  return NS_OK;
+}
+
+nsresult ParseCSPAndEnforceFrameAncestorCheck(
+    nsIChannel* aChannel, nsIContentSecurityPolicy** aOutCSP) {
+  MOZ_ASSERT(aChannel);
+
+  // CSP can only hang off an http channel, if this channel is not
+  // an http channel then there is nothing to do here.
+  nsCOMPtr<nsIHttpChannel> httpChannel;
+  nsresult rv = nsContentSecurityUtils::GetHttpChannelFromPotentialMultiPart(
+      aChannel, getter_AddRefs(httpChannel));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  if (!httpChannel) {
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
+  ExtContentPolicyType contentType = loadInfo->GetExternalContentPolicyType();
+  // frame-ancestor check only makes sense for subdocument and object loads,
+  // if this is not a load of such type, there is nothing to do here.
+  if (contentType != ExtContentPolicy::TYPE_SUBDOCUMENT &&
+      contentType != ExtContentPolicy::TYPE_OBJECT) {
+    return NS_OK;
+  }
+
+  nsAutoCString tCspHeaderValue, tCspROHeaderValue;
+
+  Unused << httpChannel->GetResponseHeader(
+      NS_LITERAL_CSTRING("content-security-policy"), tCspHeaderValue);
+
+  Unused << httpChannel->GetResponseHeader(
+      NS_LITERAL_CSTRING("content-security-policy-report-only"),
+      tCspROHeaderValue);
+
+  // if there are no CSP values, then there is nothing to do here.
+  if (tCspHeaderValue.IsEmpty() && tCspROHeaderValue.IsEmpty()) {
+    return NS_OK;
+  }
+
+  NS_ConvertASCIItoUTF16 cspHeaderValue(tCspHeaderValue);
+  NS_ConvertASCIItoUTF16 cspROHeaderValue(tCspROHeaderValue);
+
+  RefPtr<nsCSPContext> csp = new nsCSPContext();
+  nsCOMPtr<nsIPrincipal> resultPrincipal;
+  rv = nsContentUtils::GetSecurityManager()->GetChannelResultPrincipal(
+      aChannel, getter_AddRefs(resultPrincipal));
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIURI> selfURI;
+  aChannel->GetURI(getter_AddRefs(selfURI));
+
+  nsCOMPtr<nsIReferrerInfo> referrerInfo = httpChannel->GetReferrerInfo();
+  nsAutoString referrerSpec;
+  if (referrerInfo) {
+    referrerInfo->GetComputedReferrerSpec(referrerSpec);
+  }
+  uint64_t innerWindowID = loadInfo->GetInnerWindowID();
+
+  rv = csp->SetRequestContextWithPrincipal(resultPrincipal, selfURI,
+                                           referrerSpec, innerWindowID);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  // ----- if there's a full-strength CSP header, apply it.
+  if (!cspHeaderValue.IsEmpty()) {
+    rv = CSP_AppendCSPFromHeader(csp, cspHeaderValue, false);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  // ----- if there's a report-only CSP header, apply it.
+  if (!cspROHeaderValue.IsEmpty()) {
+    rv = CSP_AppendCSPFromHeader(csp, cspROHeaderValue, true);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  // ----- Enforce frame-ancestor policy on any applied policies
+  bool safeAncestry = false;
+  // PermitsAncestry sends violation reports when necessary
+  rv = csp->PermitsAncestry(loadInfo, &safeAncestry);
+
+  if (NS_FAILED(rv) || !safeAncestry) {
+    // stop!  ERROR page!
+    aChannel->Cancel(NS_ERROR_CSP_FRAME_ANCESTOR_VIOLATION);
+    return NS_ERROR_CSP_FRAME_ANCESTOR_VIOLATION;
+  }
+
+  // return the CSP for x-frame-options check
+  csp.forget(aOutCSP);
+
+  return NS_OK;
+}
+
+void EnforceXFrameOptionsCheck(nsIChannel* aChannel,
+                               nsIContentSecurityPolicy* aCsp) {
+  MOZ_ASSERT(aChannel);
+  if (!FramingChecker::CheckFrameOptions(aChannel, aCsp)) {
+    // stop!  ERROR page!
+    aChannel->Cancel(NS_ERROR_XFO_VIOLATION);
+  }
+}
+
+/* static */
+void nsContentSecurityUtils::PerformCSPFrameAncestorAndXFOCheck(
+    nsIChannel* aChannel) {
+  nsCOMPtr<nsIContentSecurityPolicy> csp;
+  nsresult rv =
+      ParseCSPAndEnforceFrameAncestorCheck(aChannel, getter_AddRefs(csp));
+  if (NS_FAILED(rv)) {
+    return;
+  }
+
+  // X-Frame-Options needs to be enforced after CSP frame-ancestors
+  // checks because if frame-ancestors is present, then x-frame-options
+  // will be discarded
+  EnforceXFrameOptionsCheck(aChannel, csp);
+}
+
 #if defined(DEBUG)
 /* static */
 void nsContentSecurityUtils::AssertAboutPageHasCSP(Document* aDocument) {
@@ -464,3 +614,90 @@ void nsContentSecurityUtils::AssertAboutPageHasCSP(Document* aDocument) {
              "about: page must not contain a CSP including 'unsafe-inline'");
 }
 #endif
+
+/* static */
+bool nsContentSecurityUtils::ValidateScriptFilename(JSContext* cx,
+                                                    const char* aFilename) {
+  static Maybe<bool> sGeneralConfigFilenameSet;
+  // If the pref is permissive, allow everything
+  if (StaticPrefs::security_allow_parent_unrestricted_js_loads()) {
+    return true;
+  }
+
+  // If we're not in the parent process allow everything (presently)
+  if (!XRE_IsE10sParentProcess()) {
+    return true;
+  }
+
+  // We only perform a check of this preference on the Main Thread
+  // (because a String-based preference check is only safe on Main Thread.)
+  // The consequence of this is that if a user is using userChromeJS _and_
+  // the scripts they use start a worker - we will enter this function,
+  // skip over this pref check that would normally cause us to allow the
+  // load - and we will block it.
+  // While not ideal, we do not officially support userChromeJS, and hopefully
+  // the usage of workers is even lower than userChromeJS usage.
+  if (NS_IsMainThread()) {
+    // This preference is a file used for autoconfiguration of Firefox
+    // by administrators. It will also run in the parent process and throw
+    // assumptions about what can run where out of the window.
+    if (!sGeneralConfigFilenameSet.isSome()) {
+      nsAutoString jsConfigPref;
+      Preferences::GetString("general.config.filename", jsConfigPref);
+      sGeneralConfigFilenameSet.emplace(!jsConfigPref.IsEmpty());
+    }
+    if (sGeneralConfigFilenameSet.value()) {
+      MOZ_LOG(sCSMLog, LogLevel::Debug,
+              ("Allowing a javascript load of %s because "
+               "general.config.filename is set",
+               aFilename));
+      return true;
+    }
+  }
+
+  if (XRE_IsE10sParentProcess() &&
+      !StaticPrefs::extensions_webextensions_remote()) {
+    MOZ_LOG(sCSMLog, LogLevel::Debug,
+            ("Allowing a javascript load of %s because the web extension "
+             "process is disabled.",
+             aFilename));
+    return true;
+  }
+
+  NS_ConvertUTF8toUTF16 filenameU(aFilename);
+  if (StringBeginsWith(filenameU, NS_LITERAL_STRING("chrome://"))) {
+    // If it's a chrome:// url, allow it
+    return true;
+  }
+  if (StringBeginsWith(filenameU, NS_LITERAL_STRING("resource://"))) {
+    // If it's a resource:// url, allow it
+    return true;
+  }
+  if (StringBeginsWith(filenameU, NS_LITERAL_STRING("file://"))) {
+    // We will temporarily allow all file:// URIs through for now
+    return true;
+  }
+  if (StringBeginsWith(filenameU, NS_LITERAL_STRING("jar:file://"))) {
+    // We will temporarily allow all jar URIs through for now
+    return true;
+  }
+
+  // Log to MOZ_LOG
+  MOZ_LOG(sCSMLog, LogLevel::Info,
+          ("ValidateScriptFilename Failed: %s\n", aFilename));
+
+  // If we got here we are going to return false, so set the error context
+  const char* utf8Filename;
+  if (mozilla::IsUtf8(mozilla::MakeStringSpan(aFilename))) {
+    utf8Filename = aFilename;
+  } else {
+    utf8Filename = "(invalid UTF-8 filename)";
+  }
+  JS_ReportErrorNumberUTF8(cx, js::GetErrorMessage, nullptr,
+                           JSMSG_UNSAFE_FILENAME, utf8Filename);
+
+  // Presently we are not enforcing any restrictions for the script filename,
+  // we're only reporting Telemetry. In the future we will assert in debug
+  // builds and return false to prevent execution in non-debug builds.
+  return true;
+}

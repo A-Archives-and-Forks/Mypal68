@@ -7,7 +7,6 @@
 #include "ClientHandleParent.h"
 #include "ClientManagerParent.h"
 #include "ClientNavigateOpParent.h"
-#include "ClientOpenWindowOpParent.h"
 #include "ClientOpenWindowUtils.h"
 #include "ClientPrincipalUtils.h"
 #include "ClientSourceParent.h"
@@ -19,9 +18,9 @@
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/MozPromise.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Services.h"
-#include "mozilla/SystemGroup.h"
 #include "jsfriendapi.h"
 #include "nsIAsyncShutdown.h"
 #include "nsIXULRuntime.h"
@@ -103,12 +102,17 @@ RefPtr<GenericPromise> OnShutdown() {
         }
       });
 
-  MOZ_ALWAYS_SUCCEEDS(SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
+  MOZ_ALWAYS_SUCCEEDS(
+      SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
 
   return ref;
 }
 
 }  // anonymous namespace
+
+ClientManagerService::FutureClientSourceParent::FutureClientSourceParent(
+    const IPCClientInfo& aClientInfo)
+    : mPrincipalInfo(aClientInfo.principalInfo()), mAssociated(false) {}
 
 ClientManagerService::ClientManagerService() : mShutdown(false) {
   AssertIsOnBackgroundThread();
@@ -165,6 +169,37 @@ void ClientManagerService::Shutdown() {
   }
 }
 
+ClientSourceParent* ClientManagerService::MaybeUnwrapAsExistingSource(
+    const SourceTableEntry& aEntry) const {
+  AssertIsOnBackgroundThread();
+
+  if (aEntry.is<FutureClientSourceParent>()) {
+    return nullptr;
+  }
+
+  return aEntry.as<ClientSourceParent*>();
+}
+
+ClientSourceParent* ClientManagerService::FindExistingSource(
+    const nsID& aID, const PrincipalInfo& aPrincipalInfo) const {
+  AssertIsOnBackgroundThread();
+
+  auto entry = mSourceTable.Lookup(aID);
+
+  if (!entry) {
+    return nullptr;
+  }
+
+  ClientSourceParent* source = MaybeUnwrapAsExistingSource(entry.Data());
+
+  if (!source || source->IsFrozen() ||
+      NS_WARN_IF(!ClientMatchPrincipalInfo(source->Info().PrincipalInfo(),
+                                           aPrincipalInfo))) {
+    return nullptr;
+  }
+  return source;
+}
+
 // static
 already_AddRefed<ClientManagerService>
 ClientManagerService::GetOrCreateInstance() {
@@ -190,21 +225,57 @@ already_AddRefed<ClientManagerService> ClientManagerService::GetInstance() {
   return ref.forget();
 }
 
+namespace {
+
+bool IsNullPrincipalInfo(const PrincipalInfo& aPrincipalInfo) {
+  return aPrincipalInfo.type() == PrincipalInfo::TNullPrincipalInfo;
+}
+
+bool AreBothNullPrincipals(const PrincipalInfo& aPrincipalInfo1,
+                           const PrincipalInfo& aPrincipalInfo2) {
+  return IsNullPrincipalInfo(aPrincipalInfo1) &&
+         IsNullPrincipalInfo(aPrincipalInfo2);
+}
+
+}  // anonymous namespace
+
 bool ClientManagerService::AddSource(ClientSourceParent* aSource) {
   AssertIsOnBackgroundThread();
   MOZ_ASSERT(aSource);
+
+  auto entry = mSourceTable.Lookup(aSource->Info().Id());
+  if (entry) {
+    // Do not permit overwriting an existing ClientSource with the same
+    // UUID.  This would allow a spoofed ClientParentSource actor to
+    // intercept postMessage() intended for the real actor.
+    if (entry.Data().is<ClientSourceParent*>()) {
+      return false;
+    }
+    FutureClientSourceParent& placeHolder =
+        entry.Data().as<FutureClientSourceParent>();
+
+    const PrincipalInfo& placeHolderPrincipalInfo = placeHolder.PrincipalInfo();
+    const PrincipalInfo& sourcePrincipalInfo = aSource->Info().PrincipalInfo();
+
+    // The placeholder FutureClientSourceParent's PrincipalInfo must match the
+    // real ClientSourceParent's PrincipalInfo. The only exception is if both
+    // are null principals (two null principals are considered unequal).
+    if (!AreBothNullPrincipals(placeHolderPrincipalInfo, sourcePrincipalInfo) &&
+        NS_WARN_IF(!ClientMatchPrincipalInfo(placeHolderPrincipalInfo,
+                                             sourcePrincipalInfo))) {
+      return false;
+    }
+
+    placeHolder.ResolvePromiseIfExists(aSource);
+    *entry = AsVariant(aSource);
+    return true;
+  }
   if (!mSourceTable.WithEntryHandle(aSource->Info().Id(),
                                     [aSource](auto&& entry) {
-                                      // Do not permit overwriting an existing
-                                      // ClientSource with the same UUID.  This
-                                      // would allow a spoofed
-                                      // ClientParentSource actor to intercept
-                                      // postMessage() intended for the real
-                                      // actor.
                                       if (NS_WARN_IF(entry.HasEntry())) {
                                         return false;
                                       }
-                                      entry.Insert(aSource);
+                                      entry.Insert(AsVariant(aSource));
                                       return true;
                                     })) {
     return false;
@@ -223,23 +294,76 @@ bool ClientManagerService::RemoveSource(ClientSourceParent* aSource) {
   return true;
 }
 
-ClientSourceParent* ClientManagerService::FindSource(
+bool ClientManagerService::ExpectFutureSource(
+    const IPCClientInfo& aClientInfo) {
+  AssertIsOnBackgroundThread();
+
+  if (!mSourceTable.WithEntryHandle(
+          aClientInfo.id(), [&aClientInfo](auto&& entry) {
+            // Prevent overwrites.
+            if (entry.HasEntry()) {
+              return false;
+            }
+            entry.Insert(SourceTableEntry(
+                VariantIndex<0>(), FutureClientSourceParent(aClientInfo)));
+            return true;
+          })) {
+    return false;
+  }
+
+  return true;
+}
+
+void ClientManagerService::ForgetFutureSource(
+    const IPCClientInfo& aClientInfo) {
+  AssertIsOnBackgroundThread();
+
+  auto entry = mSourceTable.Lookup(aClientInfo.id());
+
+  if (entry) {
+    if (entry.Data().is<ClientSourceParent*>()) {
+      return;
+    }
+
+    if (!XRE_IsE10sParentProcess() &&
+        entry.Data().as<FutureClientSourceParent>().IsAssociated()) {
+      return;
+    }
+
+    CopyableErrorResult rv;
+    rv.ThrowInvalidStateError("Client creation aborted.");
+    entry.Data().as<FutureClientSourceParent>().RejectPromiseIfExists(rv);
+
+    entry.Remove();
+  }
+}
+
+RefPtr<SourcePromise> ClientManagerService::FindSource(
     const nsID& aID, const PrincipalInfo& aPrincipalInfo) {
   AssertIsOnBackgroundThread();
 
   auto entry = mSourceTable.Lookup(aID);
   if (!entry) {
-    return nullptr;
+    CopyableErrorResult rv;
+    rv.ThrowInvalidStateError("Unknown client.");
+    return SourcePromise::CreateAndReject(rv, __func__);
   }
 
-  ClientSourceParent* source = entry.Data();
+  if (entry.Data().is<FutureClientSourceParent>()) {
+    entry.Data().as<FutureClientSourceParent>().SetAsAssociated();
+    return entry.Data().as<FutureClientSourceParent>().Promise();
+  }
+
+  ClientSourceParent* source = entry.Data().as<ClientSourceParent*>();
   if (source->IsFrozen() ||
-      !ClientMatchPrincipalInfo(source->Info().PrincipalInfo(),
-                                aPrincipalInfo)) {
-    return nullptr;
+      NS_WARN_IF(!ClientMatchPrincipalInfo(source->Info().PrincipalInfo(),
+                                           aPrincipalInfo))) {
+    CopyableErrorResult rv;
+    rv.ThrowInvalidStateError("Unknown client.");
+    return SourcePromise::CreateAndReject(rv, __func__);
   }
 
-  return source;
+  return SourcePromise::CreateAndResolve(source, __func__);
 }
 
 void ClientManagerService::AddManager(ClientManagerParent* aManager) {
@@ -264,7 +388,7 @@ void ClientManagerService::RemoveManager(ClientManagerParent* aManager) {
 RefPtr<ClientOpPromise> ClientManagerService::Navigate(
     const ClientNavigateArgs& aArgs) {
   ClientSourceParent* source =
-      FindSource(aArgs.target().id(), aArgs.target().principalInfo());
+      FindExistingSource(aArgs.target().id(), aArgs.target().principalInfo());
   if (!source) {
     CopyableErrorResult rv;
     rv.ThrowInvalidStateError("Unknown client");
@@ -391,10 +515,9 @@ RefPtr<ClientOpPromise> ClientManagerService::MatchAll(
   RefPtr<PromiseListHolder> promiseList = new PromiseListHolder();
 
   for (const auto& entry : mSourceTable) {
-    ClientSourceParent* source = entry.GetWeak();
-    MOZ_DIAGNOSTIC_ASSERT(source);
+    ClientSourceParent* source = MaybeUnwrapAsExistingSource(entry.GetData());
 
-    if (source->IsFrozen() || !source->ExecutionReady()) {
+    if (!source || source->IsFrozen() || !source->ExecutionReady()) {
       continue;
     }
 
@@ -458,7 +581,7 @@ RefPtr<ClientOpPromise> ClaimOnMainThread(
         RefPtr<GenericErrorResultPromise> inner =
             swm->MaybeClaimClient(clientInfo, desc);
         inner->Then(
-            SystemGroup::EventTargetFor(TaskCategory::Other), __func__,
+            GetMainThreadSerialEventTarget(), __func__,
             [promise](bool aResult) {
               promise->Resolve(CopyableErrorResult(), __func__);
             },
@@ -469,7 +592,8 @@ RefPtr<ClientOpPromise> ClaimOnMainThread(
         scopeExit.release();
       });
 
-  MOZ_ALWAYS_SUCCEEDS(SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
+  MOZ_ALWAYS_SUCCEEDS(
+      SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
 
   return promise;
 }
@@ -486,10 +610,9 @@ RefPtr<ClientOpPromise> ClientManagerService::Claim(
   RefPtr<PromiseListHolder> promiseList = new PromiseListHolder();
 
   for (const auto& entry : mSourceTable) {
-    ClientSourceParent* source = entry.GetWeak();
-    MOZ_DIAGNOSTIC_ASSERT(source);
+    ClientSourceParent* source = MaybeUnwrapAsExistingSource(entry.GetData());
 
-    if (source->IsFrozen()) {
+    if (!source || source->IsFrozen()) {
       continue;
     }
 
@@ -531,7 +654,8 @@ RefPtr<ClientOpPromise> ClientManagerService::Claim(
 
 RefPtr<ClientOpPromise> ClientManagerService::GetInfoAndState(
     const ClientGetInfoAndStateArgs& aArgs) {
-  ClientSourceParent* source = FindSource(aArgs.id(), aArgs.principalInfo());
+  ClientSourceParent* source =
+      FindExistingSource(aArgs.id(), aArgs.principalInfo());
 
   if (!source) {
     CopyableErrorResult rv;
@@ -545,9 +669,9 @@ RefPtr<ClientOpPromise> ClientManagerService::GetInfoAndState(
     // rejection ultimately converted to `undefined` in Clients::Get
     return source->ExecutionReadyPromise()->Then(
         GetCurrentSerialEventTarget(), __func__,
-        [self, aArgs]() -> RefPtr<ClientOpPromise> {
+        [self = std::move(self), aArgs]() -> RefPtr<ClientOpPromise> {
           ClientSourceParent* source =
-              self->FindSource(aArgs.id(), aArgs.principalInfo());
+              self->FindExistingSource(aArgs.id(), aArgs.principalInfo());
 
           if (!source) {
             CopyableErrorResult rv;
@@ -562,104 +686,10 @@ RefPtr<ClientOpPromise> ClientManagerService::GetInfoAndState(
   return source->StartOp(aArgs);
 }
 
-namespace {
-
-class OpenWindowRunnable final : public Runnable {
-  RefPtr<ClientOpPromise::Private> mPromise;
-  const ClientOpenWindowArgs mArgs;
-  RefPtr<ContentParent> mSourceProcess;
-
-  ~OpenWindowRunnable() {
-    NS_ReleaseOnMainThreadSystemGroup(mSourceProcess.forget());
-  }
-
- public:
-  OpenWindowRunnable(ClientOpPromise::Private* aPromise,
-                     const ClientOpenWindowArgs& aArgs,
-                     already_AddRefed<ContentParent> aSourceProcess)
-      : Runnable("ClientManagerService::OpenWindowRunnable"),
-        mPromise(aPromise),
-        mArgs(aArgs),
-        mSourceProcess(aSourceProcess) {
-    MOZ_DIAGNOSTIC_ASSERT(mPromise);
-  }
-
-  NS_IMETHOD
-  Run() override {
-    MOZ_ASSERT(NS_IsMainThread());
-
-    if (!BrowserTabsRemoteAutostart()) {
-      RefPtr<ClientOpPromise> p = ClientOpenWindowInCurrentProcess(mArgs);
-      p->ChainTo(mPromise.forget(), __func__);
-      return NS_OK;
-    }
-
-    RefPtr<ContentParent> targetProcess;
-
-    // Possibly try to open the window in the same process that called
-    // openWindow().  This is a temporary compat setting until the
-    // multi-e10s service worker refactor is complete.
-    if (Preferences::GetBool("dom.clients.openwindow_favors_same_process",
-                             false)) {
-      targetProcess = mSourceProcess;
-    }
-
-    // Otherwise, use our normal remote process selection mechanism for
-    // opening the window.  This will start a process if one is not
-    // present.
-    if (!targetProcess) {
-      targetProcess = ContentParent::GetNewOrUsedBrowserProcess(
-          nullptr, DEFAULT_REMOTE_TYPE,
-          ContentParent::GetInitialProcessPriority(nullptr), nullptr);
-    }
-
-    // But starting a process can failure for any number of reasons. Reject the
-    // promise if we could not.
-    if (!targetProcess) {
-      CopyableErrorResult rv;
-      rv.ThrowAbortError("Opening window aborted");
-      mPromise->Reject(rv, __func__);
-      mPromise = nullptr;
-      return NS_OK;
-    }
-
-    ClientOpenWindowOpParent* actor =
-        new ClientOpenWindowOpParent(mArgs, mPromise);
-
-    // Normally, we call TransmitPermissionsForPrincipal for the first http
-    // load, but in this case, ClientOpenWindowOpChild will cause the initial
-    // about:blank load in the child to have this principal. That causes us to
-    // assert because the child process doesn't know that it's loading this
-    // principal.
-    auto principalOrErr =
-        PrincipalInfoToPrincipal(mArgs.principalInfo());
-    if (principalOrErr.isOk()) {
-      nsCOMPtr<nsIPrincipal> principal = principalOrErr.unwrap();
-      nsresult rv = targetProcess->TransmitPermissionsForPrincipal(principal);
-      Unused << NS_WARN_IF(NS_FAILED(rv));
-    }
-
-    // If this fails the actor will be automatically destroyed which will
-    // reject the promise.
-    Unused << targetProcess->SendPClientOpenWindowOpConstructor(actor, mArgs);
-
-    return NS_OK;
-  }
-};
-
-}  // anonymous namespace
-
 RefPtr<ClientOpPromise> ClientManagerService::OpenWindow(
-    const ClientOpenWindowArgs& aArgs,
-    already_AddRefed<ContentParent> aSourceProcess) {
-  RefPtr<ClientOpPromise::Private> promise =
-      new ClientOpPromise::Private(__func__);
-
-  nsCOMPtr<nsIRunnable> r =
-      new OpenWindowRunnable(promise, aArgs, std::move(aSourceProcess));
-  MOZ_ALWAYS_SUCCEEDS(SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
-
-  return promise;
+    const ClientOpenWindowArgs& aArgs) {
+  return InvokeAsync(GetMainThreadSerialEventTarget(), __func__,
+                     [aArgs]() { return ClientOpenWindow(aArgs); });
 }
 
 bool ClientManagerService::HasWindow(
@@ -667,7 +697,7 @@ bool ClientManagerService::HasWindow(
     const PrincipalInfo& aPrincipalInfo, const nsID& aClientId) {
   AssertIsOnBackgroundThread();
 
-  ClientSourceParent* source = FindSource(aClientId, aPrincipalInfo);
+  ClientSourceParent* source = FindExistingSource(aClientId, aPrincipalInfo);
   if (!source) {
     return false;
   }

@@ -170,9 +170,6 @@ with Files("KeyAlgorithm.webidl"):
 with Files("Key*Event*"):
     BUG_COMPONENT = ("Core", "DOM: UI Events & Focus Handling")
 
-with Files("KeyIdsInitData.webidl"):
-    BUG_COMPONENT = ("Core", "Audio/Video: Playback")
-
 with Files("Keyframe*"):
     BUG_COMPONENT = ("Core", "DOM: Animation")
 
@@ -640,7 +637,6 @@ WEBIDL_FILES = [
     "KeyEvent.webidl",
     "KeyframeAnimationOptions.webidl",
     "KeyframeEffect.webidl",
-    "KeyIdsInitData.webidl",
     "LinkStyle.webidl",
     "LoadURIOptions.webidl",
     "Localization.webidl",

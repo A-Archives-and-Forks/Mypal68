@@ -5,12 +5,16 @@
 #include "PostMessageEvent.h"
 
 #include "MessageEvent.h"
+#include "mozilla/dom/BrowsingContext.h"
+#include "mozilla/dom/BrowsingContextGroup.h"
+#include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/MessageEventBinding.h"
 #include "mozilla/dom/MessagePort.h"
 #include "mozilla/dom/RootedDictionary.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/EventDispatcher.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "nsDocShell.h"
 #include "nsGlobalWindowInner.h"
 #include "nsGlobalWindowOuter.h"
@@ -26,8 +30,8 @@ PostMessageEvent::PostMessageEvent(BrowsingContext* aSource,
                                    const nsAString& aCallerOrigin,
                                    nsGlobalWindowOuter* aTargetWindow,
                                    nsIPrincipal* aProvidedPrincipal,
-                                   const Maybe<uint64_t>& aCallerWindowID,
-                                   nsIURI* aCallerDocumentURI,
+                                   uint64_t aCallerWindowID, nsIURI* aCallerURI,
+                                   const nsCString& aScriptLocation,
                                    bool aIsFromPrivateWindow)
     : Runnable("dom::PostMessageEvent"),
       mSource(aSource),
@@ -35,7 +39,8 @@ PostMessageEvent::PostMessageEvent(BrowsingContext* aSource,
       mTargetWindow(aTargetWindow),
       mProvidedPrincipal(aProvidedPrincipal),
       mCallerWindowID(aCallerWindowID),
-      mCallerDocumentURI(aCallerDocumentURI),
+      mCallerURI(aCallerURI),
+      mScriptLocation(Some(aScriptLocation)),
       mIsFromPrivateWindow(aIsFromPrivateWindow) {}
 
 PostMessageEvent::~PostMessageEvent() = default;
@@ -50,9 +55,9 @@ PostMessageEvent::Run() {
   JSContext* cx = jsapi.cx();
 
   // The document URI is just used for the principal mismatch error message
-  // below. Use a stack variable so mCallerDocumentURI is not held onto after
+  // below. Use a stack variable so mCallerURI is not held onto after
   // this method finishes, regardless of the method outcome.
-  nsCOMPtr<nsIURI> callerDocumentURI = mCallerDocumentURI.forget();
+  nsCOMPtr<nsIURI> callerURI = mCallerURI.forget();
 
   // If we bailed before this point we're going to leak mMessage, but
   // that's probably better than crashing.
@@ -124,19 +129,20 @@ PostMessageEvent::Run() {
           do_CreateInstance(NS_SCRIPTERROR_CONTRACTID, &rv);
       NS_ENSURE_SUCCESS(rv, rv);
 
-      if (mCallerWindowID.isSome()) {
-        rv = errorObject->InitWithSourceURI(
-            errorText, callerDocumentURI, u""_ns, 0, 0, nsIScriptError::errorFlag,
-            "DOM Window", mCallerWindowID.value());
+      if (mCallerWindowID == 0) {
+        rv = errorObject->Init(
+            errorText, NS_ConvertUTF8toUTF16(mScriptLocation.value()),
+            u""_ns, 0, 0, nsIScriptError::errorFlag, "DOM Window",
+            mIsFromPrivateWindow, mProvidedPrincipal->IsSystemPrincipal());
+      } else if (callerURI) {
+        rv = errorObject->InitWithSourceURI(errorText, callerURI, u""_ns,
+                                            0, 0, nsIScriptError::errorFlag,
+                                            "DOM Window", mCallerWindowID);
       } else {
-        nsString uriSpec;
-        rv = NS_GetSanitizedURIStringFromURI(callerDocumentURI, uriSpec);
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        rv = errorObject->Init(errorText, uriSpec, u""_ns, 0, 0,
-                               nsIScriptError::errorFlag, "DOM Window",
-                               mIsFromPrivateWindow,
-                               mProvidedPrincipal->IsSystemPrincipal());
+        rv = errorObject->InitWithWindowID(
+            errorText, NS_ConvertUTF8toUTF16(mScriptLocation.value()),
+            u""_ns, 0, 0, nsIScriptError::errorFlag, "DOM Window",
+            mCallerWindowID);
       }
       NS_ENSURE_SUCCESS(rv, rv);
 
@@ -223,6 +229,54 @@ void PostMessageEvent::Dispatch(nsGlobalWindowInner* aTargetWindow,
   nsEventStatus status = nsEventStatus_eIgnore;
   EventDispatcher::Dispatch(ToSupports(aTargetWindow), presContext,
                             internalEvent, aEvent, &status);
+}
+
+void PostMessageEvent::DispatchToTargetThread(ErrorResult& aError) {
+  nsCOMPtr<nsIRunnable> event = this;
+
+  if (StaticPrefs::dom_separate_event_queue_for_post_message_enabled() &&
+      !DocGroup::TryToLoadIframesInBackground()) {
+    BrowsingContext* bc = mTargetWindow->GetBrowsingContext();
+    bc = bc ? bc->Top() : nullptr;
+    if (bc && bc->IsLoading()) {
+      // As long as the top level is loading, we can dispatch events to the
+      // queue because the queue will be flushed eventually
+      aError = bc->Group()->QueuePostMessageEvent(event.forget());
+      return;
+    }
+  }
+
+  // XXX Loading iframes in background isn't enabled by default and doesn't
+  //     work with Fission at the moment.
+  if (DocGroup::TryToLoadIframesInBackground()) {
+    RefPtr<nsIDocShell> docShell = mTargetWindow->GetDocShell();
+    RefPtr<nsDocShell> dShell = nsDocShell::Cast(docShell);
+
+    // PostMessage that are added to the BrowsingContextGroup are the ones that
+    // can be flushed when the top level document is loaded.
+    // TreadAsBackgroundLoad DocShells are treated specially.
+    if (dShell) {
+      if (!dShell->TreatAsBackgroundLoad()) {
+        BrowsingContext* bc = mTargetWindow->GetBrowsingContext();
+        bc = bc ? bc->Top() : nullptr;
+        if (bc && bc->IsLoading()) {
+          // As long as the top level is loading, we can dispatch events to the
+          // queue because the queue will be flushed eventually
+          aError = bc->Group()->QueuePostMessageEvent(event.forget());
+          return;
+        }
+      } else if (mTargetWindow->GetExtantDoc() &&
+                 mTargetWindow->GetExtantDoc()->GetReadyStateEnum() <
+                     Document::READYSTATE_COMPLETE) {
+        mozilla::dom::DocGroup* docGroup = mTargetWindow->GetDocGroup();
+        aError = docGroup->QueueIframePostMessages(event.forget(),
+                                                   dShell->GetOuterWindowID());
+        return;
+      }
+    }
+  }
+
+  aError = mTargetWindow->Dispatch(TaskCategory::Other, event.forget());
 }
 
 }  // namespace mozilla::dom

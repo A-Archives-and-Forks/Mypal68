@@ -6,19 +6,30 @@
 #define mozilla_dom_WindowGlobalParent_h
 
 #include "mozilla/RefPtr.h"
+#include "mozilla/dom/ClientInfo.h"
+#include "mozilla/dom/ClientIPCTypes.h"
+#include "mozilla/dom/DOMRect.h"
 #include "mozilla/dom/PWindowGlobalParent.h"
 #include "mozilla/dom/BrowserParent.h"
+#include "mozilla/dom/WindowContext.h"
 #include "nsRefPtrHashtable.h"
 #include "nsWrapperCache.h"
 #include "nsISupports.h"
+#include "nsIContentParent.h"
 #include "mozilla/dom/WindowGlobalActor.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
+#include "mozilla/net/CookieJarSettings.h"
 
 class nsIPrincipal;
 class nsIURI;
 class nsFrameLoader;
 
 namespace mozilla {
+
+namespace gfx {
+class CrossProcessPaint;
+}  // namespace gfx
+
 namespace dom {
 
 class WindowGlobalChild;
@@ -28,14 +39,16 @@ class JSWindowActorMessageMeta;
 /**
  * A handle in the parent process to a specific nsGlobalWindowInner object.
  */
-class WindowGlobalParent final : public WindowGlobalActor,
+class WindowGlobalParent final : public WindowContext,
+                                 public WindowGlobalActor,
                                  public PWindowGlobalParent {
+  friend class gfx::CrossProcessPaint;
   friend class PWindowGlobalParent;
 
  public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(WindowGlobalParent,
-                                                         WindowGlobalActor)
+                                                         WindowContext)
 
   static already_AddRefed<WindowGlobalParent> GetByInnerWindowId(
       uint64_t aInnerWindowId);
@@ -46,7 +59,7 @@ class WindowGlobalParent final : public WindowGlobalActor,
   }
 
   // Has this actor been shut down
-  bool IsClosed() { return mIPCClosed; }
+  bool IsClosed() { return !CanSend(); }
 
   // Check if this actor is managed by PInProcess, as-in the document is loaded
   // in-process.
@@ -62,40 +75,56 @@ class WindowGlobalParent final : public WindowGlobalActor,
 
   // Get this actor's manager if it is not an in-process actor. Returns
   // |nullptr| if the actor has been torn down, or is in-process.
-  already_AddRefed<BrowserParent> GetRemoteTab();
+  already_AddRefed<BrowserParent> GetBrowserParent();
 
   void ReceiveRawMessage(const JSWindowActorMessageMeta& aMeta,
-                         ipc::StructuredCloneData&& aData);
+                         ipc::StructuredCloneData&& aData,
+                         ipc::StructuredCloneData&& aStack);
 
   // The principal of this WindowGlobal. This value will not change over the
   // lifetime of the WindowGlobal object, even to reflect changes in
   // |document.domain|.
   nsIPrincipal* DocumentPrincipal() { return mDocumentPrincipal; }
 
+  nsIPrincipal* ContentBlockingAllowListPrincipal() {
+    return mDocContentBlockingAllowListPrincipal;
+  }
+
   // The BrowsingContext which this WindowGlobal has been loaded into.
+  // FIXME: It's quite awkward that this method has a slightly different name
+  // than the one on WindowContext.
   CanonicalBrowsingContext* BrowsingContext() override {
-    return mBrowsingContext;
+    return CanonicalBrowsingContext::Cast(WindowContext::GetBrowsingContext());
   }
 
   // Get the root nsFrameLoader object for the tree of BrowsingContext nodes
   // which this WindowGlobal is a part of. This will be the nsFrameLoader
   // holding the BrowserParent for remote tabs, and the root content frameloader
   // for non-remote tabs.
-  nsFrameLoader* GetRootFrameLoader() { return mFrameLoader; }
+  already_AddRefed<nsFrameLoader> GetRootFrameLoader();
 
   // The current URI which loaded in the document.
   nsIURI* GetDocumentURI() override { return mDocumentURI; }
 
-  // Window IDs for inner/outer windows.
-  uint64_t OuterWindowId() { return mOuterWindowId; }
-  uint64_t InnerWindowId() { return mInnerWindowId; }
+  nsIPrincipal* GetContentBlockingAllowListPrincipal() const {
+    return mDocContentBlockingAllowListPrincipal;
+  }
+
+  Maybe<ClientInfo> GetClientInfo() { return mClientInfo; }
+
+  uint64_t ContentParentId();
 
   bool IsCurrentGlobal();
 
-  already_AddRefed<Promise> ChangeFrameRemoteness(dom::BrowsingContext* aBc,
-                                                  const nsACString& aRemoteType,
-                                                  uint64_t aPendingSwitchId,
-                                                  ErrorResult& aRv);
+  bool IsProcessRoot();
+
+  bool IsInitialDocument() { return mIsInitialDocument; }
+
+  bool HasBeforeUnload() { return mHasBeforeUnload; }
+
+  already_AddRefed<mozilla::dom::Promise> DrawSnapshot(
+      const DOMRect* aRect, double aScale, const nsACString& aBackgroundColor,
+      mozilla::ErrorResult& aRv);
 
   already_AddRefed<Promise> GetSecurityInfo(ErrorResult& aRv);
 
@@ -107,24 +136,63 @@ class WindowGlobalParent final : public WindowGlobalActor,
   // be called after setting the Manager actor.
   void Init(const WindowGlobalInit& aInit);
 
-  nsISupports* GetParentObject();
+  nsIGlobalObject* GetParentObject();
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
+
+  nsIContentParent* GetContentParent();
+
+  nsICookieJarSettings* CookieJarSettings() { return mCookieJarSettings; }
+
+  bool DocumentHasLoaded() { return mDocumentHasLoaded; }
+
+  bool DocumentHasUserInteracted() { return mDocumentHasUserInteracted; }
+
+  uint32_t SandboxFlags() { return mSandboxFlags; }
+
+  bool GetDocumentBlockAllMixedContent() { return mBlockAllMixedContent; }
+
+  bool GetDocumentUpgradeInsecureRequests() { return mUpgradeInsecureRequests; }
 
  protected:
   const nsACString& GetRemoteType() override;
   JSWindowActor::Type GetSide() override { return JSWindowActor::Type::Parent; }
 
   // IPC messages
+  mozilla::ipc::IPCResult RecvLoadURI(
+      const MaybeDiscarded<dom::BrowsingContext>& aTargetBC,
+      nsDocShellLoadState* aLoadState, bool aSetNavigating);
+  mozilla::ipc::IPCResult RecvInternalLoad(
+      const MaybeDiscarded<dom::BrowsingContext>& aTargetBC,
+      nsDocShellLoadState* aLoadState);
   mozilla::ipc::IPCResult RecvUpdateDocumentURI(nsIURI* aURI);
-  mozilla::ipc::IPCResult RecvBecomeCurrentWindowGlobal();
+  mozilla::ipc::IPCResult RecvUpdateDocumentPrincipal(
+      nsIPrincipal* aNewDocumentPrincipal);
+  mozilla::ipc::IPCResult RecvUpdateDocumentHasLoaded(bool aDocumentHasLoaded);
+  mozilla::ipc::IPCResult RecvUpdateDocumentHasUserInteracted(
+      bool aDocumentHasUserInteracted);
+  mozilla::ipc::IPCResult RecvUpdateSandboxFlags(uint32_t aSandboxFlags);
+  mozilla::ipc::IPCResult RecvUpdateDocumentCspSettings(
+      bool aBlockAllMixedContent, bool aUpgradeInsecureRequests);
+  mozilla::ipc::IPCResult RecvSetIsInitialDocument(bool aIsInitialDocument) {
+    mIsInitialDocument = aIsInitialDocument;
+    return IPC_OK();
+  }
+  mozilla::ipc::IPCResult RecvSetHasBeforeUnload(bool aHasBeforeUnload);
+  mozilla::ipc::IPCResult RecvSetClientInfo(
+      const IPCClientInfo& aIPCClientInfo);
   mozilla::ipc::IPCResult RecvDestroy();
   mozilla::ipc::IPCResult RecvRawMessage(const JSWindowActorMessageMeta& aMeta,
-                                         const ClonedMessageData& aData);
-  mozilla::ipc::IPCResult RecvDidEmbedBrowsingContext(
-      dom::BrowsingContext* aContext);
+                                         const ClonedMessageData& aData,
+                                         const ClonedMessageData& aStack);
+  mozilla::ipc::IPCResult RecvUpdateCookieJarSettings(
+      const CookieJarSettingsArgs& aCookieJarSettingsArgs);
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
+
+  void DrawSnapshotInternal(gfx::CrossProcessPaint* aPaint,
+                            const Maybe<IntRect>& aRect, float aScale,
+                            nscolor aBackgroundColor, uint32_t aFlags);
 
  private:
   ~WindowGlobalParent();
@@ -132,17 +200,31 @@ class WindowGlobalParent final : public WindowGlobalActor,
   // NOTE: This document principal doesn't reflect possible |document.domain|
   // mutations which may have been made in the actual document.
   nsCOMPtr<nsIPrincipal> mDocumentPrincipal;
+  nsCOMPtr<nsIPrincipal> mDocContentBlockingAllowListPrincipal;
   nsCOMPtr<nsIURI> mDocumentURI;
-  RefPtr<nsFrameLoader> mFrameLoader;
-  RefPtr<CanonicalBrowsingContext> mBrowsingContext;
   nsRefPtrHashtable<nsCStringHashKey, JSWindowActorParent> mWindowActors;
-  uint64_t mInnerWindowId;
-  uint64_t mOuterWindowId;
   bool mInProcess;
-  bool mIPCClosed;
+  bool mIsInitialDocument;
+
+  // True if this window has a "beforeunload" event listener.
+  bool mHasBeforeUnload;
+
+  Maybe<ClientInfo> mClientInfo;
+  // Fields being mirrored from the corresponding document
+  nsCOMPtr<nsICookieJarSettings> mCookieJarSettings;
+  uint32_t mSandboxFlags;
+  bool mDocumentHasLoaded;
+  bool mDocumentHasUserInteracted;
+  bool mBlockAllMixedContent;
+  bool mUpgradeInsecureRequests;
 };
 
 }  // namespace dom
 }  // namespace mozilla
+
+inline nsISupports* ToSupports(
+    mozilla::dom::WindowGlobalParent* aWindowGlobal) {
+  return static_cast<mozilla::dom::WindowContext*>(aWindowGlobal);
+}
 
 #endif  // !defined(mozilla_dom_WindowGlobalParent_h)

@@ -11,7 +11,11 @@
 #include "nsIRemoteTab.h"
 #include "nsPIDOMWindow.h"
 #include "nsCOMPtr.h"
+#include "mozilla/dom/EffectsInfo.h"
+#include "mozilla/layers/LayersMessageUtils.h"
+#include "ipc/IPCMessageUtils.h"
 #include "TabMessageTypes.h"
+#include "X11UndefineNone.h"
 
 namespace mozilla::dom {
 
@@ -55,6 +59,66 @@ struct ParamTraits<nsIRemoteTab::NavigationType>
           nsIRemoteTab::NavigationType,
           nsIRemoteTab::NavigationType::NAVIGATE_BACK,
           nsIRemoteTab::NavigationType::NAVIGATE_URL> {};
+
+template <>
+struct ParamTraits<mozilla::dom::EffectsInfo> {
+  typedef mozilla::dom::EffectsInfo paramType;
+
+  static void Write(Message* aMsg, const paramType& aParam) {
+    WriteParam(aMsg, aParam.mVisibleRect);
+    WriteParam(aMsg, aParam.mScaleX);
+    WriteParam(aMsg, aParam.mScaleY);
+  }
+
+  static bool Read(const Message* aMsg, PickleIterator* aIter,
+                   paramType* aResult) {
+    return ReadParam(aMsg, aIter, &aResult->mVisibleRect) &&
+           ReadParam(aMsg, aIter, &aResult->mScaleX) &&
+           ReadParam(aMsg, aIter, &aResult->mScaleY);
+  }
+};
+
+template <>
+struct ParamTraits<mozilla::WhenToScroll>
+    : public ContiguousEnumSerializerInclusive<
+          mozilla::WhenToScroll, mozilla::WhenToScroll::Always,
+          mozilla::WhenToScroll::IfNotFullyVisible> {};
+
+template <>
+struct ParamTraits<mozilla::ScrollFlags>
+    : public BitFlagsEnumSerializer<mozilla::ScrollFlags,
+                                    mozilla::ScrollFlags::ALL_BITS> {};
+
+template <>
+struct ParamTraits<mozilla::ScrollAxis> {
+  typedef mozilla::ScrollAxis paramType;
+
+  static void Write(Message* aMsg, const paramType& aParam) {
+    WriteParam(aMsg, aParam.mWhereToScroll);
+    WriteParam(aMsg, aParam.mWhenToScroll);
+    WriteParam(aMsg, aParam.mOnlyIfPerceivedScrollableDirection);
+  }
+
+  static bool Read(const Message* aMsg, PickleIterator* aIter,
+                   paramType* aResult) {
+    if (!ReadParam(aMsg, aIter, &aResult->mWhereToScroll)) {
+      return false;
+    }
+    if (!ReadParam(aMsg, aIter, &aResult->mWhenToScroll)) {
+      return false;
+    }
+
+    // We can't set mOnlyIfPerceivedScrollableDirection directly since it's
+    // a bitfield.
+    bool value;
+    if (!ReadParam(aMsg, aIter, &value)) {
+      return false;
+    }
+    aResult->mOnlyIfPerceivedScrollableDirection = value;
+
+    return true;
+  }
+};
 
 }  // namespace IPC
 

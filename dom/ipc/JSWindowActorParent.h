@@ -38,6 +38,8 @@ class JSWindowActorParent final : public JSWindowActor {
     return MakeAndAddRef<JSWindowActorParent>();
   }
 
+  nsIGlobalObject* GetParentObject() const override;
+
   WindowGlobalParent* GetManager() const;
   void Init(const nsACString& aName, WindowGlobalParent* aManager);
   void StartDestroy();
@@ -47,6 +49,7 @@ class JSWindowActorParent final : public JSWindowActor {
  protected:
   void SendRawMessage(const JSWindowActorMessageMeta& aMeta,
                       ipc::StructuredCloneData&& aData,
+                      ipc::StructuredCloneData&& aStack,
                       ErrorResult& aRv) override;
 
  private:

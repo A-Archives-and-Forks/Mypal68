@@ -26,7 +26,6 @@
 #include "mozilla/dom/FrameLoaderBinding.h"
 #include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/dom/BrowserChild.h"
-#include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/PointerEventHandler.h"
 #include "mozilla/dom/UIEvent.h"
 #include "mozilla/dom/UIEventBinding.h"
@@ -252,8 +251,7 @@ nsresult EventStateManager::UpdateUserActivityTimer() {
   if (!gUserInteractionTimerCallback) return NS_OK;
 
   if (!gUserInteractionTimer) {
-    gUserInteractionTimer =
-        NS_NewTimer(SystemGroup::EventTargetFor(TaskCategory::Other)).take();
+    gUserInteractionTimer = NS_NewTimer().take();
   }
 
   if (gUserInteractionTimer) {
@@ -348,13 +346,14 @@ NS_INTERFACE_MAP_END
 NS_IMPL_CYCLE_COLLECTING_ADDREF(EventStateManager)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(EventStateManager)
 
-NS_IMPL_CYCLE_COLLECTION(EventStateManager, mCurrentTargetContent,
-                         mGestureDownContent, mGestureDownFrameOwner,
-                         mLastLeftMouseDownContent, mLastMiddleMouseDownContent,
-                         mLastRightMouseDownContent, mActiveContent,
-                         mHoverContent, mURLTargetContent,
-                         mMouseEnterLeaveHelper, mPointersEnterLeaveHelper,
-                         mDocument, mIMEContentObserver, mAccessKeys)
+NS_IMPL_CYCLE_COLLECTION_WEAK(EventStateManager, mCurrentTargetContent,
+                              mGestureDownContent, mGestureDownFrameOwner,
+                              mLastLeftMouseDownContent,
+                              mLastMiddleMouseDownContent,
+                              mLastRightMouseDownContent, mActiveContent,
+                              mHoverContent, mURLTargetContent,
+                              mMouseEnterLeaveHelper, mPointersEnterLeaveHelper,
+                              mDocument, mIMEContentObserver, mAccessKeys)
 
 void EventStateManager::ReleaseCurrentIMEContentObserver() {
   if (mIMEContentObserver) {
@@ -884,7 +883,7 @@ void EventStateManager::NotifyTargetUserActivation(WidgetEvent* aEvent,
   }
 
   Document* doc = node->OwnerDoc();
-  if (!doc || doc->HasBeenUserGestureActivated()) {
+  if (!doc) {
     return;
   }
 
@@ -1255,9 +1254,7 @@ bool EventStateManager::WalkESMTreeToHandleAccessKey(
           mDocument->GetWindow(),
           [&accessKeyInfo](BrowserParent* aBrowserParent) -> bool {
             // Only forward accesskeys for the active tab.
-            bool active;
-            aBrowserParent->GetDocShellIsActive(&active);
-            if (active) {
+            if (aBrowserParent->GetDocShellIsActive()) {
               // Even if there is no target for the accesskey in this process,
               // the event may match with a content accesskey.  If so, the
               // keyboard event should be handled with reply event for
@@ -1463,8 +1460,7 @@ void EventStateManager::CreateClickHoldTimer(nsPresContext* inPresContext,
   int32_t clickHoldDelay = StaticPrefs::ui_click_hold_context_menus_delay();
   NS_NewTimerWithFuncCallback(
       getter_AddRefs(mClickHoldTimer), sClickHoldCallback, this, clickHoldDelay,
-      nsITimer::TYPE_ONE_SHOT, "EventStateManager::CreateClickHoldTimer",
-      SystemGroup::EventTargetFor(TaskCategory::Other));
+      nsITimer::TYPE_ONE_SHOT, "EventStateManager::CreateClickHoldTimer");
 }  // CreateClickHoldTimer
 
 //
@@ -2175,44 +2171,18 @@ nsresult EventStateManager::GetContentViewer(nsIContentViewer** aCv) {
   return NS_OK;
 }
 
-nsresult EventStateManager::ChangeTextSize(int32_t change) {
-  nsCOMPtr<nsIContentViewer> cv;
-  nsresult rv = GetContentViewer(getter_AddRefs(cv));
-  NS_ENSURE_SUCCESS(rv, rv);
+nsresult EventStateManager::ChangeZoom(int32_t change) {
+  MOZ_ASSERT(change == 1 || change == -1, "Can only change by +/- 10%.");
 
-  if (cv) {
-    float textzoom;
-    float zoomMin = ((float)StaticPrefs::zoom_minPercent()) / 100;
-    float zoomMax = ((float)StaticPrefs::zoom_maxPercent()) / 100;
-    cv->GetTextZoom(&textzoom);
-    textzoom += ((float)change) / 10;
-    if (textzoom < zoomMin)
-      textzoom = zoomMin;
-    else if (textzoom > zoomMax)
-      textzoom = zoomMax;
-    cv->SetTextZoom(textzoom);
-  }
-
-  return NS_OK;
-}
-
-nsresult EventStateManager::ChangeFullZoom(int32_t change) {
-  nsCOMPtr<nsIContentViewer> cv;
-  nsresult rv = GetContentViewer(getter_AddRefs(cv));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (cv) {
-    float fullzoom;
-    float zoomMin = ((float)StaticPrefs::zoom_minPercent()) / 100;
-    float zoomMax = ((float)StaticPrefs::zoom_maxPercent()) / 100;
-    cv->GetFullZoom(&fullzoom);
-    fullzoom += ((float)change) / 10;
-    if (fullzoom < zoomMin)
-      fullzoom = zoomMin;
-    else if (fullzoom > zoomMax)
-      fullzoom = zoomMax;
-    cv->SetFullZoom(fullzoom);
-  }
+  // Send the zoom change as a chrome event so it will be handled
+  // by the front end actors in the same way as other zoom actions.
+  // This excludes documents hosted in non-browser containers, like
+  // in a WebExtension.
+  nsContentUtils::DispatchChromeEvent(
+      mDocument, ToSupports(mDocument),
+      (change == 1 ? NS_LITERAL_STRING("DoZoomEnlargeBy10")
+                   : NS_LITERAL_STRING("DoZoomReduceBy10")),
+      CanBubble::eYes, Cancelable::eYes);
 
   return NS_OK;
 }
@@ -2233,19 +2203,14 @@ void EventStateManager::DoScrollHistory(int32_t direction) {
 
 void EventStateManager::DoScrollZoom(nsIFrame* aTargetFrame,
                                      int32_t adjustment) {
-  // Exclude form controls and content in chrome docshells.
+  // Exclude content in chrome docshells.
   nsIContent* content = aTargetFrame->GetContent();
   if (content && !nsContentUtils::IsInChromeDocshell(content->OwnerDoc())) {
     // positive adjustment to decrease zoom, negative to increase
     int32_t change = (adjustment > 0) ? -1 : 1;
 
     EnsureDocument(mPresContext);
-    if (Preferences::GetBool("browser.zoom.full") ||
-        content->OwnerDoc()->IsSyntheticDocument()) {
-      ChangeFullZoom(change);
-    } else {
-      ChangeTextSize(change);
-    }
+    ChangeZoom(change);
     nsContentUtils::DispatchChromeEvent(
         mDocument, ToSupports(mDocument),
         NS_LITERAL_STRING("ZoomChangeUsingMouseWheel"), CanBubble::eYes,
@@ -3096,8 +3061,8 @@ void EventStateManager::PostHandleKeyboardEvent(
   switch (aKeyboardEvent->mKeyNameIndex) {
     case KEY_NAME_INDEX_ZoomIn:
     case KEY_NAME_INDEX_ZoomOut:
-      ChangeFullZoom(
-          aKeyboardEvent->mKeyNameIndex == KEY_NAME_INDEX_ZoomIn ? 1 : -1);
+      ChangeZoom(aKeyboardEvent->mKeyNameIndex == KEY_NAME_INDEX_ZoomIn ? 1
+                                                                        : -1);
       aStatus = nsEventStatus_eConsumeNoDefault;
       break;
     default:
@@ -4411,6 +4376,18 @@ void EventStateManager::NotifyMouseOut(WidgetMouseEvent* aMouseEvent,
 
   // Turn recursion protection back off
   wrapper->mFirstOutEventElement = nullptr;
+}
+
+void EventStateManager::RecomputeMouseEnterStateForRemoteFrame(
+    Element& aElement) {
+  if (!mMouseEnterLeaveHelper ||
+      mMouseEnterLeaveHelper->mLastOverElement != &aElement) {
+    return;
+  }
+
+  if (BrowserParent* remote = BrowserParent::GetFrom(&aElement)) {
+    remote->MouseEnterIntoWidget();
+  }
 }
 
 void EventStateManager::NotifyMouseOver(WidgetMouseEvent* aMouseEvent,

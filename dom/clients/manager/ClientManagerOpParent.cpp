@@ -65,10 +65,8 @@ void ClientManagerOpParent::Init(const ClientOpConstructorArgs& aArgs) {
       break;
     }
     case ClientOpConstructorArgs::TClientOpenWindowArgs: {
-      RefPtr<ContentParent> contentParent =
-          BackgroundParent::GetContentParent(Manager()->Manager());
       DoServiceOp(&ClientManagerService::OpenWindow,
-                  aArgs.get_ClientOpenWindowArgs(), contentParent.forget());
+                  aArgs.get_ClientOpenWindowArgs());
       break;
     }
     default: {

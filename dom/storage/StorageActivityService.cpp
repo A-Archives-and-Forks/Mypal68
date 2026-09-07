@@ -10,6 +10,7 @@
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/Services.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticPtr.h"
 #include "nsCOMPtr.h"
 #include "nsComponentManagerUtils.h"
@@ -73,7 +74,7 @@ void StorageActivityService::SendActivity(
         }
       });
 
-  SystemGroup::Dispatch(TaskCategory::Other, r.forget());
+  SchedulerGroup::Dispatch(TaskCategory::Other, r.forget());
 }
 
 /* static */
@@ -98,7 +99,7 @@ void StorageActivityService::SendActivity(const nsACString& aOrigin) {
   if (NS_IsMainThread()) {
     Unused << r->Run();
   } else {
-    SystemGroup::Dispatch(TaskCategory::Other, r.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, r.forget());
   }
 }
 

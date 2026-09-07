@@ -14,8 +14,7 @@
 
 using namespace mozilla::ipc;
 
-namespace mozilla {
-namespace net {
+namespace mozilla::net {
 
 mozilla::ipc::IPCResult WebrtcTCPSocketChild::RecvOnClose(
     const nsresult& aReason) {
@@ -94,5 +93,4 @@ void WebrtcTCPSocketChild::AsyncOpen(
   SendAsyncOpen(aHost, aPort, aLocalAddress, aLocalPort, aUseTls, proxyConfig);
 }
 
-}  // namespace net
-}  // namespace mozilla
+}  // namespace mozilla::net

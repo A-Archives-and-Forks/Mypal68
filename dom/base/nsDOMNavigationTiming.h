@@ -18,6 +18,18 @@ class nsIURI;
 using DOMTimeMilliSec = unsigned long long;
 using DOMHighResTimeStamp = double;
 
+class PickleIterator;
+namespace IPC {
+class Message;
+}  // namespace IPC
+namespace mozilla {
+namespace ipc {
+class IProtocol;
+template <typename>
+struct IPDLParamTraits;
+}  // namespace ipc
+}  // namespace mozilla
+
 class nsDOMNavigationTiming final : public mozilla::RelativeTimeline {
  public:
   enum Type {
@@ -120,6 +132,10 @@ class nsDOMNavigationTiming final : public mozilla::RelativeTimeline {
 
   void NotifyNavigationStart(DocShellState aDocShellState);
   void NotifyFetchStart(nsIURI* aURI, Type aNavigationType);
+  // A restoration occurs when the document is loaded from the
+  // bfcache. This method sets the appropriate parameters of the
+  // navigation timing object in this case.
+  void NotifyRestoreStart();
   void NotifyBeforeUnload();
   void NotifyUnloadAccepted(nsIURI* aOldURI);
   void NotifyUnloadEventStart();
@@ -156,6 +172,10 @@ class nsDOMNavigationTiming final : public mozilla::RelativeTimeline {
     return duration.ToMilliseconds();
   }
 
+  // Called by the DocumentLoadListener before sending the timing information
+  // to the new content process.
+  void Anonymize(nsIURI* aFinalURI);
+
   inline already_AddRefed<nsDOMNavigationTiming> CloneNavigationTime(
       nsDocShell* aDocShell) const {
     RefPtr<nsDOMNavigationTiming> timing = new nsDOMNavigationTiming(aDocShell);
@@ -165,6 +185,8 @@ class nsDOMNavigationTiming final : public mozilla::RelativeTimeline {
   }
 
  private:
+  friend class nsDocShell;
+  nsDOMNavigationTiming(nsDocShell* aDocShell, nsDOMNavigationTiming* aOther);
   nsDOMNavigationTiming(const nsDOMNavigationTiming&) = delete;
   ~nsDOMNavigationTiming();
 
@@ -175,6 +197,8 @@ class nsDOMNavigationTiming final : public mozilla::RelativeTimeline {
 
   bool IsTopLevelContentDocumentInContentProcess() const;
 
+// Should those be amended, the IPC serializer should be updated
+// accordingly.
   mozilla::WeakPtr<nsDocShell> mDocShell;
 
   nsCOMPtr<nsIURI> mUnloadedURI;
@@ -202,7 +226,26 @@ class nsDOMNavigationTiming final : public mozilla::RelativeTimeline {
 
   mozilla::TimeStamp mTTFI;
 
-  bool mDocShellHasBeenActiveSinceNavigationStart : 1;
+  bool mDocShellHasBeenActiveSinceNavigationStart;
+
+  friend struct mozilla::ipc::IPDLParamTraits<nsDOMNavigationTiming*>;
 };
+
+// IPDL serializer. Please be aware of the caveats in sending across
+// the information and the potential resulting data leakage.
+// For now, this serializer is to only be used under a very narrowed scope
+// so that only the starting times are ever set.
+namespace mozilla {
+namespace ipc {
+template <>
+struct IPDLParamTraits<nsDOMNavigationTiming*> {
+  static void Write(IPC::Message* aMsg, IProtocol* aActor,
+                    nsDOMNavigationTiming* aParam);
+  static bool Read(const IPC::Message* aMsg, PickleIterator* aIter,
+                   IProtocol* aActor, RefPtr<nsDOMNavigationTiming>* aResult);
+};
+
+}  // namespace ipc
+}  // namespace mozilla
 
 #endif /* nsDOMNavigationTiming_h___ */

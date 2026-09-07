@@ -117,7 +117,7 @@ StaticRefPtr<PeerConnectionCtxObserver>
     PeerConnectionCtx::gPeerConnectionCtxObserver;
 
 const std::map<const std::string, PeerConnectionImpl*>&
-PeerConnectionCtx::mGetPeerConnections() {
+PeerConnectionCtx::GetPeerConnections() {
   return mPeerConnections;
 }
 
@@ -306,8 +306,7 @@ nsresult PeerConnectionCtx::Initialize() {
   nsresult rv = NS_NewTimerWithFuncCallback(
       getter_AddRefs(mTelemetryTimer), EverySecondTelemetryCallback_m, this,
       1000, nsITimer::TYPE_REPEATING_PRECISE_CAN_SKIP,
-      "EverySecondTelemetryCallback_m",
-      SystemGroup::EventTargetFor(TaskCategory::Other));
+      "EverySecondTelemetryCallback_m");
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (XRE_IsContentProcess()) {
@@ -357,7 +356,7 @@ nsresult PeerConnectionCtx::Cleanup() {
 
   mQueuedJSEPOperations.Clear();
   mGMPService = nullptr;
-  mTransportHandler->Destroy();
+  mTransportHandler = nullptr;
   for (auto& [id, pc] : mPeerConnections) {
     (void)id;
     pc->Close();

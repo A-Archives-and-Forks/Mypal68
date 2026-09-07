@@ -6,7 +6,6 @@
 
 #include "PluginHangUIParent.h"
 
-#include "mozilla/Telemetry.h"
 #include "mozilla/ipc/ProtocolUtils.h"
 #include "mozilla/plugins/PluginModuleParent.h"
 
@@ -29,38 +28,6 @@ using mozilla::widget::WidgetUtils;
 
 using std::string;
 using std::vector;
-
-namespace {
-class nsPluginHangUITelemetry : public mozilla::Runnable {
- public:
-  nsPluginHangUITelemetry(int aResponseCode, int aDontAskCode,
-                          uint32_t aResponseTimeMs, uint32_t aTimeoutMs)
-      : Runnable("nsPluginHangUITelemetry"),
-        mResponseCode(aResponseCode),
-        mDontAskCode(aDontAskCode),
-        mResponseTimeMs(aResponseTimeMs),
-        mTimeoutMs(aTimeoutMs) {}
-
-  NS_IMETHOD
-  Run() override {
-    mozilla::Telemetry::Accumulate(
-        mozilla::Telemetry::PLUGIN_HANG_UI_USER_RESPONSE, mResponseCode);
-    mozilla::Telemetry::Accumulate(mozilla::Telemetry::PLUGIN_HANG_UI_DONT_ASK,
-                                   mDontAskCode);
-    mozilla::Telemetry::Accumulate(
-        mozilla::Telemetry::PLUGIN_HANG_UI_RESPONSE_TIME, mResponseTimeMs);
-    mozilla::Telemetry::Accumulate(mozilla::Telemetry::PLUGIN_HANG_TIME,
-                                   mTimeoutMs + mResponseTimeMs);
-    return NS_OK;
-  }
-
- private:
-  int mResponseCode;
-  int mDontAskCode;
-  uint32_t mResponseTimeMs;
-  uint32_t mTimeoutMs;
-};
-}  // namespace
 
 namespace mozilla {
 namespace plugins {
@@ -310,26 +277,15 @@ bool PluginHangUIParent::RecvUserResponse(const unsigned int& aResponse) {
   mLastUserResponse = aResponse;
   mResponseTicks = ::GetTickCount();
   mIsShowing = false;
-  // responseCode: 1 = Stop, 2 = Continue, 3 = Cancel
-  int responseCode;
   if (aResponse & HANGUI_USER_RESPONSE_STOP) {
     // User clicked Stop
     mModule->TerminateChildProcess(mMainThreadMessageLoop,
                                    mozilla::ipc::kInvalidProcessId,
                                    "ModalHangUI"_ns, u""_ns);
-    responseCode = 1;
   } else if (aResponse & HANGUI_USER_RESPONSE_CONTINUE) {
     mModule->OnHangUIContinue();
     // User clicked Continue
-    responseCode = 2;
-  } else {
-    // Dialog was cancelled
-    responseCode = 3;
   }
-  int dontAskCode = (aResponse & HANGUI_USER_RESPONSE_DONT_SHOW_AGAIN) ? 1 : 0;
-  nsCOMPtr<nsIRunnable> workItem = new nsPluginHangUITelemetry(
-      responseCode, dontAskCode, LastShowDurationMs(), mTimeoutPrefMs);
-  NS_DispatchToMainThread(workItem);
   return true;
 }
 

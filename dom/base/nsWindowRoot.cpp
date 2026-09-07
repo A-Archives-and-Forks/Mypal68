@@ -14,6 +14,9 @@
 #include "nsLayoutCID.h"
 #include "nsContentCID.h"
 #include "nsString.h"
+#include "nsFrameLoaderOwner.h"
+#include "nsFrameLoader.h"
+#include "nsQueryActor.h"
 #include "nsGlobalWindow.h"
 #include "nsFocusManager.h"
 #include "nsIContent.h"
@@ -43,7 +46,9 @@ nsWindowRoot::~nsWindowRoot() {
     mListenerManager->Disconnect();
   }
 
-  JSWindowActorService::UnregisterWindowRoot(this);
+  if (XRE_IsContentProcess()) {
+    JSWindowActorService::UnregisterChromeEventTarget(this);
+  }
 }
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(nsWindowRoot, mWindow, mListenerManager,
@@ -160,6 +165,57 @@ nsresult nsWindowRoot::GetControllerForCommand(const char* aCommand,
                                                nsIController** _retval) {
   NS_ENSURE_ARG_POINTER(_retval);
   *_retval = nullptr;
+
+  // If this is the parent process, check if a child browsing context from
+  // another process is focused, and ask if it has a controller actor that
+  // supports the command.
+  if (XRE_IsParentProcess()) {
+    nsFocusManager* fm = nsFocusManager::GetFocusManager();
+    if (!fm) {
+      return NS_ERROR_FAILURE;
+    }
+
+    // Unfortunately, messages updating the active/focus state in the focus
+    // manager don't happen fast enough in the case when switching focus between
+    // processes when clicking on a chrome UI element while a child tab is
+    // focused, so we need to check whether the focus manager thinks a child
+    // frame is focused as well.
+    nsCOMPtr<nsPIDOMWindowOuter> focusedWindow;
+    nsIContent* focusedContent = nsFocusManager::GetFocusedDescendant(
+        mWindow, nsFocusManager::eIncludeAllDescendants,
+        getter_AddRefs(focusedWindow));
+    RefPtr<nsFrameLoaderOwner> loaderOwner = do_QueryObject(focusedContent);
+    if (loaderOwner) {
+      // Only check browsing contexts if a remote frame is focused. If chrome is
+      // focused, just check the controllers directly below.
+      RefPtr<nsFrameLoader> frameLoader = loaderOwner->GetFrameLoader();
+      if (frameLoader && frameLoader->IsRemoteFrame()) {
+        // GetActiveBrowsingContextInChrome actually returns the top-level
+        // browsing context if the focus is in a child process tab, or null if
+        // the focus is in chrome.
+        BrowsingContext* focusedBC =
+            fm->GetActiveBrowsingContextInChrome()
+                ? fm->GetFocusedBrowsingContextInChrome()
+                : nullptr;
+        CanonicalBrowsingContext* canonicalFocusedBC =
+            CanonicalBrowsingContext::Cast(focusedBC);
+        if (canonicalFocusedBC) {
+          // At this point, it is known that a child process is focused, so ask
+          // its Controllers actor if the command is supported.
+          nsCOMPtr<nsIController> controller =
+              do_QueryActor("Controllers", canonicalFocusedBC);
+          if (controller) {
+            bool supported;
+            controller->SupportsCommand(aCommand, &supported);
+            if (supported) {
+              controller.forget(_retval);
+              return NS_OK;
+            }
+          }
+        }
+      }
+    }
+  }
 
   {
     nsCOMPtr<nsIControllers> controllers;
@@ -287,32 +343,29 @@ JSObject* nsWindowRoot::WrapObject(JSContext* aCx,
   return mozilla::dom::WindowRoot_Binding::Wrap(aCx, this, aGivenProto);
 }
 
-void nsWindowRoot::AddBrowser(mozilla::dom::BrowserParent* aBrowser) {
-  nsWeakPtr weakBrowser =
-      do_GetWeakReference(static_cast<nsIRemoteTab*>(aBrowser));
+void nsWindowRoot::AddBrowser(nsIRemoteTab* aBrowser) {
+  nsWeakPtr weakBrowser = do_GetWeakReference(aBrowser);
   mWeakBrowsers.Insert(weakBrowser);
 }
 
-void nsWindowRoot::RemoveBrowser(mozilla::dom::BrowserParent* aBrowser) {
-  nsWeakPtr weakBrowser =
-      do_GetWeakReference(static_cast<nsIRemoteTab*>(aBrowser));
+void nsWindowRoot::RemoveBrowser(nsIRemoteTab* aBrowser) {
+  nsWeakPtr weakBrowser = do_GetWeakReference(aBrowser);
   mWeakBrowsers.Remove(weakBrowser);
 }
 
 void nsWindowRoot::EnumerateBrowsers(BrowserEnumerator aEnumFunc, void* aArg) {
   // Collect strong references to all browsers in a separate array in
   // case aEnumFunc alters mWeakBrowsers.
-  nsTArray<RefPtr<BrowserParent>> browserParents;
+  nsTArray<nsCOMPtr<nsIRemoteTab>> remoteTabs;
   for (const auto& key : mWeakBrowsers) {
-    nsCOMPtr<nsIRemoteTab> browserParent(
-        do_QueryReferent(key));
-    if (BrowserParent* tab = BrowserParent::GetFrom(browserParent)) {
-      browserParents.AppendElement(tab);
+    nsCOMPtr<nsIRemoteTab> remoteTab(do_QueryReferent(key));
+    if (remoteTab) {
+      remoteTabs.AppendElement(remoteTab);
     }
   }
 
-  for (uint32_t i = 0; i < browserParents.Length(); ++i) {
-    aEnumFunc(browserParents[i], aArg);
+  for (uint32_t i = 0; i < remoteTabs.Length(); ++i) {
+    aEnumFunc(remoteTabs[i], aArg);
   }
 }
 
@@ -321,9 +374,9 @@ void nsWindowRoot::EnumerateBrowsers(BrowserEnumerator aEnumFunc, void* aArg) {
 already_AddRefed<EventTarget> NS_NewWindowRoot(nsPIDOMWindowOuter* aWindow) {
   nsCOMPtr<EventTarget> result = new nsWindowRoot(aWindow);
 
-  RefPtr<JSWindowActorService> wasvc = JSWindowActorService::GetSingleton();
-  if (wasvc) {
-    wasvc->RegisterWindowRoot(result);
+  if (XRE_IsContentProcess()) {
+    RefPtr<JSWindowActorService> wasvc = JSWindowActorService::GetSingleton();
+    wasvc->RegisterChromeEventTarget(result);
   }
 
   return result.forget();

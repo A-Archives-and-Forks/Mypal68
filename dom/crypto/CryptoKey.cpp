@@ -343,16 +343,39 @@ nsresult CryptoKey::AddPublicKeyData(SECKEYPublicKey* aPublicKey) {
 void CryptoKey::ClearUsages() { mAttributes &= CLEAR_USAGES; }
 
 nsresult CryptoKey::AddUsage(const nsString& aUsage) {
-  return AddUsageIntersecting(aUsage, USAGES_MASK);
-}
-
-nsresult CryptoKey::AddUsageIntersecting(const nsString& aUsage,
-                                         uint32_t aUsageMask) {
   KeyUsage usage;
   if (NS_FAILED(StringToUsage(aUsage, usage))) {
     return NS_ERROR_DOM_SYNTAX_ERR;
   }
 
+  MOZ_ASSERT(usage & USAGES_MASK, "Usages should be valid");
+
+  // This is harmless if usage is 0, so we don't repeat the assertion check
+  AddUsage(usage);
+  return NS_OK;
+}
+
+nsresult CryptoKey::AddAllowedUsage(const nsString& aUsage,
+                                    const nsString& aAlgorithm) {
+  return AddAllowedUsageIntersecting(aUsage, aAlgorithm, USAGES_MASK);
+}
+
+nsresult CryptoKey::AddAllowedUsageIntersecting(const nsString& aUsage,
+                                                const nsString& aAlgorithm,
+                                                uint32_t aUsageMask) {
+  uint32_t allowedUsages = GetAllowedUsagesForAlgorithm(aAlgorithm);
+  KeyUsage usage;
+  if (NS_FAILED(StringToUsage(aUsage, usage))) {
+    return NS_ERROR_DOM_SYNTAX_ERR;
+  }
+
+  if ((usage & allowedUsages) != usage) {
+    return NS_ERROR_DOM_SYNTAX_ERR;
+  }
+
+  MOZ_ASSERT(usage & USAGES_MASK, "Usages should be valid");
+
+  // This is harmless if usage is 0, so we don't repeat the assertion check
   if (usage & aUsageMask) {
     AddUsage(usage);
     return NS_OK;
@@ -386,6 +409,28 @@ bool CryptoKey::AllUsagesRecognized(const Sequence<nsString>& aUsages) {
     }
   }
   return true;
+}
+
+uint32_t CryptoKey::GetAllowedUsagesForAlgorithm(const nsString& aAlgorithm) {
+  uint32_t allowedUsages = 0;
+  if (aAlgorithm.EqualsASCII(WEBCRYPTO_ALG_AES_CTR) ||
+      aAlgorithm.EqualsASCII(WEBCRYPTO_ALG_AES_CBC) ||
+      aAlgorithm.EqualsASCII(WEBCRYPTO_ALG_AES_GCM) ||
+      aAlgorithm.EqualsASCII(WEBCRYPTO_ALG_RSA_OAEP)) {
+    allowedUsages = ENCRYPT | DECRYPT | WRAPKEY | UNWRAPKEY;
+  } else if (aAlgorithm.EqualsASCII(WEBCRYPTO_ALG_AES_KW)) {
+    allowedUsages = WRAPKEY | UNWRAPKEY;
+  } else if (aAlgorithm.EqualsASCII(WEBCRYPTO_ALG_HMAC) ||
+             aAlgorithm.EqualsASCII(WEBCRYPTO_ALG_RSASSA_PKCS1) ||
+             aAlgorithm.EqualsASCII(WEBCRYPTO_ALG_RSA_PSS) ||
+             aAlgorithm.EqualsASCII(WEBCRYPTO_ALG_ECDSA)) {
+    allowedUsages = SIGN | VERIFY;
+  } else if (aAlgorithm.EqualsASCII(WEBCRYPTO_ALG_ECDH) ||
+             aAlgorithm.EqualsASCII(WEBCRYPTO_ALG_HKDF) ||
+             aAlgorithm.EqualsASCII(WEBCRYPTO_ALG_PBKDF2)) {
+    allowedUsages = DERIVEBITS | DERIVEKEY;
+  }
+  return allowedUsages;
 }
 
 nsresult CryptoKey::SetSymKey(const CryptoBuffer& aSymKey) {
@@ -485,7 +530,7 @@ UniqueSECKEYPublicKey CryptoKey::PublicKeyFromSpki(CryptoBuffer& aKeyData) {
   bool isECDHAlgorithm =
       SECITEM_ItemsAreEqual(&SEC_OID_DATA_EC_DH, &spki->algorithm.algorithm);
 
-  // Check for |id-ecDH|. Per the WebCrypto spec we must
+  // Check for |id-ecDH|. Per old versions of the WebCrypto spec we must
   // support this OID but NSS does unfortunately not know it. Let's
   // change the algorithm to |id-ecPublicKey| to make NSS happy.
   if (isECDHAlgorithm) {
@@ -530,17 +575,6 @@ nsresult CryptoKey::PublicKeyToSpki(SECKEYPublicKey* aPubKey,
   spki.reset(SECKEY_CreateSubjectPublicKeyInfo(aPubKey));
   if (!spki) {
     return NS_ERROR_DOM_OPERATION_ERR;
-  }
-
-  // Per WebCrypto spec we must export ECDH SPKIs with the algorithm OID
-  // id-ecDH (1.3.132.112). NSS doesn't know about this OID and there is
-  // no way to specify the algorithm to use when exporting a public key.
-  if (aPubKey->keyType == ecKey) {
-    SECStatus rv = SECITEM_CopyItem(spki->arena, &spki->algorithm.algorithm,
-                                    &SEC_OID_DATA_EC_DH);
-    if (rv != SECSuccess) {
-      return NS_ERROR_DOM_OPERATION_ERR;
-    }
   }
 
   const SEC_ASN1Template* tpl = SEC_ASN1_GET(CERT_SubjectPublicKeyInfoTemplate);

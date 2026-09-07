@@ -360,25 +360,18 @@ void U2FTokenManager::DoRegister(const WebAuthnMakeCredentialInfo& aInfo,
                          origin.get());
 
   uint64_t tid = mLastTransactionId;
-  mozilla::TimeStamp startTime = mozilla::TimeStamp::Now();
 
   mTokenManagerImpl->Register(aInfo, aForceNoneAttestation)
       ->Then(
           GetCurrentSerialEventTarget(), __func__,
-          [tid, startTime](WebAuthnMakeCredentialResult&& aResult) {
+          [tid](WebAuthnMakeCredentialResult&& aResult) {
             U2FTokenManager* mgr = U2FTokenManager::Get();
             mgr->MaybeConfirmRegister(tid, aResult);
-            Telemetry::ScalarAdd(Telemetry::ScalarID::SECURITY_WEBAUTHN_USED,
-                                 u"U2FRegisterFinish"_ns, 1);
-            Telemetry::AccumulateTimeDelta(
-                Telemetry::WEBAUTHN_CREATE_CREDENTIAL_MS, startTime);
           },
           [tid](nsresult rv) {
             MOZ_ASSERT(NS_FAILED(rv));
             U2FTokenManager* mgr = U2FTokenManager::Get();
             mgr->MaybeAbortRegister(tid, rv);
-            Telemetry::ScalarAdd(Telemetry::ScalarID::SECURITY_WEBAUTHN_USED,
-                                 u"U2FRegisterAbort"_ns, 1);
           })
       ->Track(mRegisterPromise);
 }
@@ -419,25 +412,18 @@ void U2FTokenManager::Sign(PWebAuthnTransactionParent* aTransactionParent,
   SendPromptNotification(kSignPromptNotifcation, aTransactionId, origin.get());
 
   uint64_t tid = mLastTransactionId = aTransactionId;
-  mozilla::TimeStamp startTime = mozilla::TimeStamp::Now();
 
   mTokenManagerImpl->Sign(aTransactionInfo)
       ->Then(
           GetCurrentSerialEventTarget(), __func__,
-          [tid, startTime](WebAuthnGetAssertionResult&& aResult) {
+          [tid](WebAuthnGetAssertionResult&& aResult) {
             U2FTokenManager* mgr = U2FTokenManager::Get();
             mgr->MaybeConfirmSign(tid, aResult);
-            Telemetry::ScalarAdd(Telemetry::ScalarID::SECURITY_WEBAUTHN_USED,
-                                 u"U2FSignFinish"_ns, 1);
-            Telemetry::AccumulateTimeDelta(Telemetry::WEBAUTHN_GET_ASSERTION_MS,
-                                           startTime);
           },
           [tid](nsresult rv) {
             MOZ_ASSERT(NS_FAILED(rv));
             U2FTokenManager* mgr = U2FTokenManager::Get();
             mgr->MaybeAbortSign(tid, rv);
-            Telemetry::ScalarAdd(Telemetry::ScalarID::SECURITY_WEBAUTHN_USED,
-                                 u"U2FSignAbort"_ns, 1);
           })
       ->Track(mSignPromise);
 }

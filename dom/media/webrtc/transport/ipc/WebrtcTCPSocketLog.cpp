@@ -4,8 +4,6 @@
 
 #include "WebrtcTCPSocketLog.h"
 
-namespace mozilla {
-namespace net {
+namespace mozilla::net {
 LazyLogModule webrtcTCPSocketLog("webrtcProxy");
-}  // namespace net
-}  // namespace mozilla
+}  // namespace mozilla::net

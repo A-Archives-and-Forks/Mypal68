@@ -4,7 +4,9 @@
 
 #include "mozilla/dom/WindowGlobalActor.h"
 
+#include "nsContentUtils.h"
 #include "mozJSComponentLoader.h"
+#include "mozilla/ContentBlockingAllowList.h"
 #include "mozilla/Logging.h"
 #include "mozilla/dom/JSWindowActorService.h"
 #include "mozilla/dom/JSWindowActorParent.h"
@@ -12,9 +14,31 @@
 
 namespace mozilla::dom {
 
+WindowGlobalInit WindowGlobalActor::AboutBlankInitializer(
+    dom::BrowsingContext* aBrowsingContext, nsIPrincipal* aPrincipal) {
+  MOZ_ASSERT(aBrowsingContext);
+  MOZ_ASSERT(aPrincipal);
+
+  nsCOMPtr<nsIURI> documentURI;
+  Unused << NS_NewURI(getter_AddRefs(documentURI), "about:blank");
+
+  uint64_t outerWindowId = nsContentUtils::GenerateWindowId();
+  uint64_t innerWindowId = nsContentUtils::GenerateWindowId();
+
+  nsCOMPtr<nsIPrincipal> contentBlockingAllowListPrincipal;
+  ContentBlockingAllowList::ComputePrincipal(
+      aPrincipal, getter_AddRefs(contentBlockingAllowListPrincipal));
+
+  return WindowGlobalInit(aPrincipal, contentBlockingAllowListPrincipal,
+                          documentURI, aBrowsingContext, innerWindowId,
+                          outerWindowId);
+}
+
 void WindowGlobalActor::ConstructActor(const nsACString& aName,
                                        JS::MutableHandleObject aActor,
                                        ErrorResult& aRv) {
+  MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
+
   JSWindowActor::Type actorType = GetSide();
   MOZ_ASSERT_IF(actorType == JSWindowActor::Type::Parent,
                 XRE_IsParentProcess());
@@ -107,15 +131,5 @@ void WindowGlobalActor::ConstructActor(const nsACString& aName,
     return;
   }
 }
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WindowGlobalActor)
-  NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-NS_INTERFACE_MAP_END
-
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(WindowGlobalActor)
-
-NS_IMPL_CYCLE_COLLECTING_ADDREF(WindowGlobalActor)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(WindowGlobalActor)
 
 }  // namespace mozilla::dom

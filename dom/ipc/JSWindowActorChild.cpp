@@ -4,6 +4,7 @@
 
 #include "mozilla/dom/JSWindowActorBinding.h"
 #include "mozilla/dom/JSWindowActorChild.h"
+#include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/WindowGlobalChild.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/dom/MessageManagerBinding.h"
@@ -12,6 +13,10 @@
 
 namespace mozilla {
 namespace dom {
+
+JSWindowActorChild::JSWindowActorChild(nsIGlobalObject* aGlobal)
+    : mGlobal(aGlobal ? aGlobal
+                      : xpc::NativeGlobal(xpc::PrivilegedJunkScope())) {}
 
 JSWindowActorChild::~JSWindowActorChild() { MOZ_ASSERT(!mManager); }
 
@@ -27,6 +32,8 @@ void JSWindowActorChild::Init(const nsACString& aName,
   MOZ_ASSERT(!mManager, "Cannot Init() a JSWindowActorChild twice!");
   SetName(aName);
   mManager = aManager;
+
+  InvokeCallback(CallbackFunction::ActorCreated);
 }
 
 namespace {
@@ -35,51 +42,65 @@ class AsyncMessageToParent : public Runnable {
  public:
   AsyncMessageToParent(const JSWindowActorMessageMeta& aMetadata,
                        ipc::StructuredCloneData&& aData,
-                       WindowGlobalParent* aParent)
+                       ipc::StructuredCloneData&& aStack,
+                       WindowGlobalChild* aManager)
       : mozilla::Runnable("WindowGlobalParent::HandleAsyncMessage"),
         mMetadata(aMetadata),
         mData(std::move(aData)),
-        mParent(aParent) {}
+        mStack(std::move(aStack)),
+        mManager(aManager) {}
 
   NS_IMETHOD Run() override {
     MOZ_ASSERT(NS_IsMainThread(), "Should be called on the main thread.");
-    mParent->ReceiveRawMessage(mMetadata, std::move(mData));
+    RefPtr<WindowGlobalParent> parent = mManager->GetParentActor();
+    if (parent) {
+      parent->ReceiveRawMessage(mMetadata, std::move(mData), std::move(mStack));
+    }
     return NS_OK;
   }
 
  private:
   JSWindowActorMessageMeta mMetadata;
   ipc::StructuredCloneData mData;
-  RefPtr<WindowGlobalParent> mParent;
+  ipc::StructuredCloneData mStack;
+  RefPtr<WindowGlobalChild> mManager;
 };
 
 }  // anonymous namespace
 
 void JSWindowActorChild::SendRawMessage(const JSWindowActorMessageMeta& aMeta,
                                         ipc::StructuredCloneData&& aData,
+                                        ipc::StructuredCloneData&& aStack,
                                         ErrorResult& aRv) {
-  if (NS_WARN_IF(!mCanSend || !mManager || mManager->IsClosed())) {
+  if (NS_WARN_IF(!mCanSend || !mManager || !mManager->CanSend())) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
 
   if (mManager->IsInProcess()) {
-    RefPtr<WindowGlobalParent> wgp = mManager->GetParentActor();
-    nsCOMPtr<nsIRunnable> runnable =
-        new AsyncMessageToParent(aMeta, std::move(aData), wgp);
+    nsCOMPtr<nsIRunnable> runnable = new AsyncMessageToParent(
+        aMeta, std::move(aData), std::move(aStack), mManager);
     NS_DispatchToMainThread(runnable.forget());
+    return;
+  }
+
+  if (NS_WARN_IF(
+          !AllowMessage(aMeta, aData.DataLength() + aStack.DataLength()))) {
+    aRv.Throw(NS_ERROR_UNEXPECTED);
     return;
   }
 
   // Cross-process case - send data over WindowGlobalChild to other side.
   ClonedMessageData msgData;
+  ClonedMessageData stackData;
   ContentChild* cc = ContentChild::GetSingleton();
-  if (NS_WARN_IF(!aData.BuildClonedMessageDataForChild(cc, msgData))) {
+  if (NS_WARN_IF(!aData.BuildClonedMessageDataForChild(cc, msgData)) ||
+      NS_WARN_IF(!aStack.BuildClonedMessageDataForChild(cc, stackData))) {
     aRv.Throw(NS_ERROR_DOM_DATA_CLONE_ERR);
     return;
   }
 
-  if (NS_WARN_IF(!mManager->SendRawMessage(aMeta, msgData))) {
+  if (NS_WARN_IF(!mManager->SendRawMessage(aMeta, msgData, stackData))) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
     return;
   }
@@ -91,7 +112,7 @@ Document* JSWindowActorChild::GetDocument(ErrorResult& aRv) {
     return nullptr;
   }
 
-  nsGlobalWindowInner* window = mManager->WindowGlobal();
+  nsGlobalWindowInner* window = mManager->GetWindowGlobal();
   return window ? window->GetDocument() : nullptr;
 }
 

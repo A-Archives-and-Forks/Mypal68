@@ -45,7 +45,7 @@ class SurfaceHelper : public Runnable {
     }
 
     // It guarantees the reference will be released on main thread.
-    NS_ReleaseOnMainThreadSystemGroup("SurfaceHelper::surface", surface.forget());
+    NS_ReleaseOnMainThread("SurfaceHelper::surface", surface.forget());
     return NS_OK;
   }
 

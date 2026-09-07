@@ -12,7 +12,6 @@
 #include <regex>
 
 #include "mozilla/Assertions.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/Logging.h"
 
 using mozilla::LogLevel;
@@ -89,16 +88,12 @@ bool ParsingResultComparer::Compare(const Sdp& rsdparsaSdp, const Sdp& sipccSdp,
   bool result = rsdparsaSdpStr == sipccSdpStr;
   LOG_EXPECT(result, expect, ("The original sdp: \n%s", mOriginalSdp.c_str()));
   if (result) {
-    Telemetry::ScalarAdd(Telemetry::ScalarID::WEBRTC_SDP_PARSER_DIFF,
-                         NS_LITERAL_STRING("serialization_is_equal"), 1);
     LOG_EXPECT(result, expect, ("Serialization is equal"));
     return result;
   }
   // Do a deep comparison
   result = true;
 
-  Telemetry::ScalarAdd(Telemetry::ScalarID::WEBRTC_SDP_PARSER_DIFF,
-                       NS_LITERAL_STRING("serialization_is_not_equal"), 1);
   LOG_EXPECT(result, expect,
              ("Serialization is not equal\n"
               " --- Sipcc SDP ---\n"
@@ -112,8 +107,6 @@ bool ParsingResultComparer::Compare(const Sdp& rsdparsaSdp, const Sdp& sipccSdp,
 
   // Compare the session level
   if (rsdparsaOriginStr != sipccOriginStr) {
-    Telemetry::ScalarAdd(Telemetry::ScalarID::WEBRTC_SDP_PARSER_DIFF,
-                         NS_LITERAL_STRING("o="), 1);
     result = false;
     LOG_EXPECT(result, expect,
                ("origin is not equal\nrust origin: %s\nsipcc origin: %s",
@@ -142,8 +135,6 @@ bool ParsingResultComparer::Compare(const Sdp& rsdparsaSdp, const Sdp& sipccSdp,
 
   if (sipccMediaSecCount != rsdparsaMediaSecCount) {
     result = false;
-    Telemetry::ScalarAdd(Telemetry::ScalarID::WEBRTC_SDP_PARSER_DIFF,
-                         NS_LITERAL_STRING("inequal_msec_count"), 1);
     LOG_EXPECT(result, expect,
                ("Media section count is NOT equal, rsdparsa: %d, sipcc: %d \n",
                 rsdparsaMediaSecCount, sipccMediaSecCount));
@@ -169,8 +160,6 @@ bool ParsingResultComparer::CompareMediaSections(
     result = false;
     nsString typeStr = NS_LITERAL_STRING("m=");
     typeStr += valueDescription;
-    Telemetry::ScalarAdd(Telemetry::ScalarID::WEBRTC_SDP_PARSER_DIFF, typeStr,
-                         1);
     LOG_EXPECT(result, expect,
                ("The media line values %s are not equal\n"
                 "rsdparsa value: %s\n"
@@ -245,8 +234,6 @@ bool ParsingResultComparer::CompareAttrLists(
         nsString typeStr;
         typeStr.AssignASCII(attrStr.c_str());
         typeStr += NS_LITERAL_STRING("_missing");
-        Telemetry::ScalarAdd(Telemetry::ScalarID::WEBRTC_SDP_PARSER_DIFF,
-                             typeStr, 1);
         LOG_EXPECT(result, expect,
                    ("Rust is missing the attribute: %s\n", attrStr.c_str()));
         LOG_EXPECT(result, expect,
@@ -270,8 +257,6 @@ bool ParsingResultComparer::CompareAttrLists(
           nsString typeStr;
           typeStr.AssignASCII(attrStr.c_str());
           typeStr += NS_LITERAL_STRING("_inequal");
-          Telemetry::ScalarAdd(Telemetry::ScalarID::WEBRTC_SDP_PARSER_DIFF,
-                               typeStr, 1);
           LOG_EXPECT(result, expect,
                      ("%s is neither equal to sipcc nor to the orginal sdp\n"
                       "--------------rsdparsa attribute---------------\n"
@@ -293,40 +278,11 @@ bool ParsingResultComparer::CompareAttrLists(
         nsString typeStr;
         typeStr.AssignASCII(attrStr.c_str());
         typeStr += NS_LITERAL_STRING("_unexpected");
-        Telemetry::ScalarAdd(Telemetry::ScalarID::WEBRTC_SDP_PARSER_DIFF,
-                             typeStr, 1);
       }
     }
   }
 
   return result;
-}
-
-// TODO Track a tuple of failures?
-void ParsingResultComparer::TrackRustParsingFailed(
-    size_t sipccErrorCount) const {
-  if (sipccErrorCount) {
-    Telemetry::ScalarAdd(Telemetry::ScalarID::WEBRTC_SDP_PARSER_DIFF,
-                         NS_LITERAL_STRING("rsdparsa_failed__sipcc_has_errors"),
-                         1);
-  } else {
-    Telemetry::ScalarAdd(Telemetry::ScalarID::WEBRTC_SDP_PARSER_DIFF,
-                         NS_LITERAL_STRING("rsdparsa_failed__sipcc_succeeded"),
-                         1);
-  }
-}
-
-void ParsingResultComparer::TrackSipccParsingFailed(
-    size_t webrtcSdpErrorCount) const {
-  if (webrtcSdpErrorCount) {
-    Telemetry::ScalarAdd(
-        Telemetry::ScalarID::WEBRTC_SDP_PARSER_DIFF,
-        NS_LITERAL_STRING("sipcc_failed__webrtcsdp_has_errors"), 1);
-  } else {
-    Telemetry::ScalarAdd(Telemetry::ScalarID::WEBRTC_SDP_PARSER_DIFF,
-                         NS_LITERAL_STRING("sipcc_failed__webrtcsdp_succeeded"),
-                         1);
-  }
 }
 
 std::vector<std::string> SplitLines(const std::string& sdp) {

@@ -105,10 +105,13 @@ already_AddRefed<Promise> Clipboard::Write(DataTransfer& aData,
     return nullptr;
   }
 
+  nsPIDOMWindowInner* owner = GetOwner();
+  Document* doc = owner ? owner->GetDoc() : nullptr;
+
   // We want to disable security check for automated tests that have the pref
   //  dom.events.testing.asyncClipboard set to true
   if (!IsTestingPrefEnabled() &&
-      !nsContentUtils::IsCutCopyAllowed(aSubjectPrincipal)) {
+      !nsContentUtils::IsCutCopyAllowed(doc, aSubjectPrincipal)) {
     MOZ_LOG(GetClipboardLog(), LogLevel::Debug,
             ("Clipboard, Write, Not allowed to write to clipboard\n"));
     p->MaybeRejectWithUndefined();
@@ -123,8 +126,6 @@ already_AddRefed<Promise> Clipboard::Write(DataTransfer& aData,
     return p.forget();
   }
 
-  nsPIDOMWindowInner* owner = GetOwner();
-  Document* doc = owner ? owner->GetDoc() : nullptr;
   nsILoadContext* context = doc ? doc->GetLoadContext() : nullptr;
   if (!context) {
     p->MaybeRejectWithUndefined();

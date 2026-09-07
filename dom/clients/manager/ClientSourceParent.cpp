@@ -14,7 +14,7 @@
 #include "mozilla/dom/ServiceWorkerManager.h"
 #include "mozilla/dom/ServiceWorkerUtils.h"
 #include "mozilla/ipc/BackgroundParent.h"
-#include "mozilla/SystemGroup.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/Unused.h"
 
 namespace mozilla::dom {
@@ -74,7 +74,8 @@ void ClientSourceParent::KillInvalidChild() {
   // there is a small window of time before we kill the process.  This is why
   // we start the actor destruction immediately above.
   nsCOMPtr<nsIRunnable> r = new KillContentParentRunnable(std::move(process));
-  MOZ_ALWAYS_SUCCEEDS(SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
+  MOZ_ALWAYS_SUCCEEDS(
+      SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
 }
 
 mozilla::ipc::IPCResult ClientSourceParent::RecvWorkerSyncPing() {
@@ -151,7 +152,8 @@ IPCResult ClientSourceParent::RecvInheritController(
           swm->NoteInheritedController(clientInfo, controller);
         });
 
-    MOZ_ALWAYS_SUCCEEDS(SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
+    MOZ_ALWAYS_SUCCEEDS(
+        SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
   }
 
   return IPC_OK();
@@ -169,7 +171,8 @@ IPCResult ClientSourceParent::RecvNoteDOMContentLoaded() {
                                  swm->MaybeCheckNavigationUpdate(clientInfo);
                                });
 
-    MOZ_ALWAYS_SUCCEEDS(SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
+    MOZ_ALWAYS_SUCCEEDS(
+        SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
   }
   return IPC_OK();
 }

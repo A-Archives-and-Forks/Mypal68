@@ -19,6 +19,12 @@ class nsIPrincipal;
 class nsIURI;
 class nsPIDOMWindowOuter;
 
+namespace mozilla {
+namespace dom {
+class WindowGlobalParent;
+}
+}  // namespace mozilla
+
 class ThirdPartyUtil final : public mozIThirdPartyUtil {
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -28,6 +34,9 @@ class ThirdPartyUtil final : public mozIThirdPartyUtil {
 
   static void Startup();
   static ThirdPartyUtil* GetInstance();
+
+  nsresult IsThirdPartyGlobal(mozilla::dom::WindowGlobalParent* aWindowGlobal,
+                              bool* aResult);
 
  private:
   ~ThirdPartyUtil();

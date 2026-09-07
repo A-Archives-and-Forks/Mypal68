@@ -14,6 +14,8 @@
 #include "nsServiceManagerUtils.h"
 #include "AudioEventTimeline.h"
 
+#include "mozilla/SchedulerGroup.h"
+
 namespace mozilla {
 
 LazyLogModule gWebAudioAPILog("WebAudioAPI");
@@ -100,7 +102,7 @@ void WebAudioUtils::LogToDeveloperConsole(uint64_t aWindowID,
     nsCOMPtr<nsIRunnable> task = NS_NewRunnableFunction(
         "dom::WebAudioUtils::LogToDeveloperConsole",
         [aWindowID, aKey] { LogToDeveloperConsole(aWindowID, aKey); });
-    SystemGroup::Dispatch(TaskCategory::Other, task.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, task.forget());
     return;
   }
 

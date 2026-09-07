@@ -26,6 +26,7 @@
 #include "mozilla/dom/PushUtil.h"
 #include "mozilla/dom/Request.h"
 #include "mozilla/dom/Response.h"
+#include "mozilla/dom/ServiceWorkerOp.h"
 #include "mozilla/dom/TypedArray.h"
 #include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/WorkerScope.h"
@@ -125,6 +126,14 @@ void FetchEvent::PostInit(
   mChannel = aChannel;
   mRegistration = aRegistration;
   mScriptSpec.Assign(aScriptSpec);
+}
+
+void FetchEvent::PostInit(const nsACString& aScriptSpec,
+                          RefPtr<FetchEventOp> aRespondWithHandler) {
+  MOZ_ASSERT(aRespondWithHandler);
+
+  mScriptSpec.Assign(aScriptSpec);
+  mRespondWithHandler = std::move(aRespondWithHandler);
 }
 
 /*static*/
@@ -781,11 +790,21 @@ void FetchEvent::RespondWith(JSContext* aCx, Promise& aArg, ErrorResult& aRv) {
 
   StopImmediatePropagation();
   mWaitToRespond = true;
-  RefPtr<RespondWithHandler> handler = new RespondWithHandler(
-      mChannel, mRegistration, mRequest->Mode(), ir->IsClientRequest(),
-      mRequest->Redirect(), mScriptSpec, NS_ConvertUTF8toUTF16(requestURL),
-      ir->GetFragment(), spec, line, column);
-  aArg.AppendNativeHandler(handler);
+
+  if (mChannel) {
+    RefPtr<RespondWithHandler> handler = new RespondWithHandler(
+        mChannel, mRegistration, mRequest->Mode(), ir->IsClientRequest(),
+        mRequest->Redirect(), mScriptSpec, NS_ConvertUTF8toUTF16(requestURL),
+        ir->GetFragment(), spec, line, column);
+
+    aArg.AppendNativeHandler(handler);
+  } else {
+    MOZ_ASSERT(mRespondWithHandler);
+
+    mRespondWithHandler->RespondWithCalledAt(spec, line, column);
+    aArg.AppendNativeHandler(mRespondWithHandler);
+    mRespondWithHandler = nullptr;
+  }
 
   if (!WaitOnPromise(aArg)) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
@@ -824,9 +843,16 @@ void FetchEvent::ReportCanceled() {
   // nsString requestURL;
   // CopyUTF8toUTF16(url, requestURL);
 
-  ::AsyncLog(mChannel.get(), mPreventDefaultScriptSpec,
-             mPreventDefaultLineNumber, mPreventDefaultColumnNumber,
-             "InterceptionCanceledWithURL"_ns, requestURL);
+  if (mChannel) {
+    ::AsyncLog(mChannel.get(), mPreventDefaultScriptSpec,
+               mPreventDefaultLineNumber, mPreventDefaultColumnNumber,
+               "InterceptionCanceledWithURL"_ns, requestURL);
+  } else {
+    mRespondWithHandler->ReportCanceled(mPreventDefaultScriptSpec,
+                                        mPreventDefaultLineNumber,
+                                        mPreventDefaultColumnNumber);
+    mRespondWithHandler = nullptr;
+  }
 }
 
 namespace {

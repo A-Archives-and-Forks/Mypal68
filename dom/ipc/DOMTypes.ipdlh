@@ -4,6 +4,7 @@
 
 include "mozilla/GfxMessageUtils.h";
 include "mozilla/dom/CSPMessageUtils.h";
+include "mozilla/dom/DocShellMessageUtils.h";
 include "mozilla/dom/ReferrerInfoUtils.h";
 include "mozilla/dom/TabMessageUtils.h";
 include "mozilla/ipc/URIUtils.h";
@@ -12,6 +13,7 @@ include "mozilla/layers/LayersMessageUtils.h";
 include IPCBlob;
 include IPCStream;
 include ProtocolTypes;
+include protocol PSHEntry;
 
 using struct mozilla::void_t from "mozilla/ipc/IPCCore.h";
 
@@ -27,13 +29,20 @@ using CSSSize from "Units.h";
 using ScreenIntSize from "Units.h";
 using mozilla::LayoutDeviceIntPoint from "Units.h";
 using nsSizeMode from "nsIWidgetListener.h";
+using ScrollbarPreference from "mozilla/ScrollbarPreferences.h";
 using hal::ScreenOrientation from "mozilla/HalScreenConfiguration.h";
 using mozilla::gfx::SurfaceFormat from "mozilla/gfx/Types.h";
 using refcounted class nsIPrincipal from "mozilla/dom/PermissionMessageUtils.h";
-using refcounted class mozilla::dom::BrowsingContext from "mozilla/dom/BrowsingContext.h";
+using mozilla::dom::MaybeDiscardedBrowsingContext from "mozilla/dom/BrowsingContext.h";
 using refcounted class nsIURI from "nsIURI.h";
 using refcounted class nsIContentSecurityPolicy from "nsIContentSecurityPolicy.h";
+using refcounted class nsIInputStream from "mozilla/ipc/IPCStreamUtils.h";
 using refcounted class nsIReferrerInfo from "nsIReferrerInfo.h";
+using refcounted class nsIVariant from "mozilla/dom/PropertyBagUtils.h";
+using class mozilla::TimeStamp from "mozilla/TimeStamp.h";
+using refcounted class nsISHEntry from "nsISHEntry.h";
+using refcounted class mozilla::dom::BrowsingContext from "mozilla/dom/BrowsingContext.h";
+using refcounted class mozilla::dom::CrossProcessSHEntry from "mozilla/dom/MaybeNewPSHEntry.h";
 
 namespace mozilla {
 namespace dom {
@@ -132,6 +141,15 @@ struct FrameScriptInfo
   bool runInGlobalScope;
 };
 
+struct FeaturePolicyInfo
+{
+  nsString[]   inheritedDeniedFeatureNames;
+  nsString     declaredString;
+  nsIPrincipal defaultOrigin;
+  nsIPrincipal selfOrigin;
+  nsIPrincipal srcOrigin;
+};
+
 /**
  * The information required to complete a window creation request.
  */
@@ -211,8 +229,9 @@ struct PerformanceInfo
 struct WindowGlobalInit
 {
   nsIPrincipal principal;
+  nsIPrincipal contentBlockingAllowListPrincipal;
   nsIURI documentURI;
-  BrowsingContext browsingContext;
+  MaybeDiscardedBrowsingContext browsingContext;
   uint64_t innerWindowId;
   uint64_t outerWindowId;
 };
@@ -230,6 +249,7 @@ struct DocShellLoadStateInit
   bool InheritPrincipal;
   bool PrincipalIsExplicit;
   nsIPrincipal PrincipalToInherit;
+  nsIPrincipal StoragePrincipalToInherit;
   bool ForceAllowDataURI;
   bool OriginalFrameSrc;
   bool IsFormSubmission;
@@ -248,16 +268,94 @@ struct DocShellLoadStateInit
   // also the CSP that will be applied to the load in case the load
   // encounters a server side redirect.
   nsIContentSecurityPolicy Csp;
+
+  MaybeDiscardedBrowsingContext SourceBrowsingContext;
+
+  nsCString? OriginalURIString;
+  int32_t? CancelContentJSEpoch;
+
+  nsIInputStream PostDataStream;
+  nsIInputStream HeadersStream;
+
+  nsString SrcdocData; // useless without sourcedocshell
+  // This might be missing if serialization of session history entries is
+  // not supported. This is the case when 'fission.sessionHistoryInParent'
+  // pref is off.
+  CrossProcessSHEntry SHEntry;
+
   // Fields missing due to lack of need or serialization
-  // nsCOMPtr<nsISHEntry> mSHEntry;
   // nsCOMPtr<nsIDocShell> mSourceDocShell;
   // bool mIsSrcDocLoad; // useless without sourcedocshell
-  // nsString mSrcdocData; // useless without sourcedocshell
-  // nsIInputStream PostDataStream; // will be used after IPC transaction
-  // nsIInputStream HeadersStream; // will be used after IPC transaction
   // nsIChannel pendingRedirectedChannel; // sent through other mechanism
 
   bool IsMetaRefresh;
+};
+
+struct TimedChannelInfo
+{
+  bool timingEnabled;
+  int8_t redirectCount;
+  int8_t internalRedirectCount;
+  TimeStamp asyncOpen;
+  TimeStamp channelCreation;
+  TimeStamp redirectStart;
+  TimeStamp redirectEnd;
+  nsString initiatorType;
+  bool allRedirectsSameOrigin;
+  bool allRedirectsPassTimingAllowCheck;
+  bool? timingAllowCheckForPrincipal;
+  TimeStamp launchServiceWorkerStart;
+  TimeStamp launchServiceWorkerEnd;
+  TimeStamp dispatchFetchEventStart;
+  TimeStamp dispatchFetchEventEnd;
+  TimeStamp handleFetchEventStart;
+  TimeStamp handleFetchEventEnd;
+  TimeStamp responseStart;
+  TimeStamp responseEnd;
+};
+
+struct ReplacementChannelConfigInit
+{
+  uint32_t redirectFlags;
+  uint32_t classOfService;
+  bool? privateBrowsing;
+  nsCString? method;
+  nsIReferrerInfo referrerInfo;
+  TimedChannelInfo? timedChannel;
+  nsIInputStream uploadStream;
+  bool uploadStreamHasHeaders;
+  nsCString? contentType;
+  nsCString? contentLength;
+};
+
+union IPDLVariantValue
+{
+  bool;
+  uint8_t;   // In practice, uint8_t and uint16_t are likely unneeded,
+  int16_t;   // as signed->unsigned->signed has universal behavior.
+  uint16_t;  // but those conversions are only guaranteed in C++20.
+  int32_t;
+  uint32_t;
+  float;
+  double;
+  nsID;
+  nsString;
+  nsCString;
+  nsIURI;
+  nsIPrincipal;
+};
+
+struct IDPLVariant
+{
+  uint32_t type;  // We explicitly store the original nsIVariant type so that
+                  // the conversion back into a nsVariant later is lossless.
+  IPDLVariantValue data;
+};
+
+struct IPDLProperty
+{
+  nsString name;
+  nsIVariant value;
 };
 
 // Struct with information to show a frame from the parent process.
@@ -265,7 +363,6 @@ struct ParentShowInfo
 {
   nsString name;
   bool fullscreenAllowed;
-  bool isPrivate;
   bool fakeShowInfo;
   bool isTransparent;
   float dpi;
@@ -280,12 +377,19 @@ struct OwnerShowInfo {
   // render to a virtual <0, 0> top-left point.
   ScreenIntSize size;
 
-  // TODO(emilio): Scrollbar and margin preferences go here.
+  // TODO(emilio): Margin preferences go here.
+  ScrollbarPreference scrollbarPreference;
 
   // TODO(emilio): I think we should really be able to figure out these from the
   // parent process too instead.
   bool parentWindowIsActive;
   nsSizeMode sizeMode;
+};
+
+struct SwapEntriesDocshellData {
+  CrossProcessSHEntry oldEntry;
+  CrossProcessSHEntry newEntry;
+  MaybeDiscardedBrowsingContext context;
 };
 
 } // namespace dom

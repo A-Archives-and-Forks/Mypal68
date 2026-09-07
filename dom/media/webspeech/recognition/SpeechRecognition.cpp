@@ -121,9 +121,10 @@ class SpeechRecognitionShutdownBlocker : public media::ShutdownBlocker {
   const RefPtr<SpeechRecognition> mRecognition;
 };
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED(SpeechRecognition, DOMEventTargetHelper,
-                                   mStream, mTrack, mRecognitionService,
-                                   mSpeechGrammarList)
+NS_IMPL_CYCLE_COLLECTION_WEAK_PTR_INHERITED(SpeechRecognition,
+                                            DOMEventTargetHelper, mStream,
+                                            mTrack, mRecognitionService,
+                                            mSpeechGrammarList)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(SpeechRecognition)
   NS_INTERFACE_MAP_ENTRY(nsIObserver)

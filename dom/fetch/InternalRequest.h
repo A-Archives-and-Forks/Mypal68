@@ -10,6 +10,7 @@
 #include "mozilla/dom/RequestBinding.h"
 #include "mozilla/dom/SafeRefPtr.h"
 #include "mozilla/LoadTainting.h"
+#include "mozilla/UniquePtr.h"
 
 #include "nsIChannelEventSink.h"
 #include "nsIInputStream.h"
@@ -24,6 +25,7 @@ namespace mozilla {
 
 namespace ipc {
 class PrincipalInfo;
+class AutoIPCStream;
 }  // namespace ipc
 
 namespace dom {
@@ -69,6 +71,7 @@ namespace dom {
  *
  */
 
+class IPCInternalRequest;
 class Request;
 
 #define kFETCH_CLIENT_REFERRER_STR "about:client"
@@ -87,6 +90,12 @@ class InternalRequest final : public AtomicSafeRefCounted<InternalRequest> {
                   const nsAString& aReferrer, ReferrerPolicy aReferrerPolicy,
                   nsContentPolicyType aContentPolicyType,
                   const nsAString& aIntegrity);
+
+  explicit InternalRequest(const IPCInternalRequest& aIPCRequest);
+
+  template <typename M>
+  void ToIPC(IPCInternalRequest* aIPCRequest, M* aManager,
+             UniquePtr<mozilla::ipc::AutoIPCStream>& aAutoStream);
 
   SafeRefPtr<InternalRequest> Clone();
 

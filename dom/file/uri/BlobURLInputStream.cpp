@@ -9,28 +9,7 @@
 #include "mozilla/dom/IPCBlobUtils.h"
 #include "nsStreamUtils.h"
 
-namespace mozilla {
-
-template <class T>
-inline NS_HIDDEN_(void) BlobURLInputStreamRelMainT(already_AddRefed<T> aDoomed) {
-    RefPtr<T> doomed = dont_AddRef(aDoomed.take());
-    nsCOMPtr<nsIEventTarget> target;
-    if (!NS_IsMainThread()) {
-      target = SystemGroup::EventTargetFor(TaskCategory::Other);
-    }
-    if (!doomed || !target) {
-     return;
-    }
-    bool onCurrentThread = false;
-    nsresult rv = target->IsOnCurrentThread(&onCurrentThread);
-    if (NS_SUCCEEDED(rv) && onCurrentThread) {
-      return;
-    }
-    nsCOMPtr<nsIRunnable> ev = new ::detail::ProxyReleaseEvent<T>(nullptr, doomed.forget());
-    target->Dispatch(ev, NS_DISPATCH_NORMAL);
-}
-
-namespace dom {
+namespace mozilla::dom {
 
 NS_IMPL_ADDREF(BlobURLInputStream);
 NS_IMPL_RELEASE(BlobURLInputStream);
@@ -309,7 +288,7 @@ NS_IMETHODIMP BlobURLInputStream::OnInputStreamLengthReady(
 // private:
 BlobURLInputStream::~BlobURLInputStream() {
   if (mChannel) {
-    BlobURLInputStreamRelMainT(mChannel.forget());
+    NS_ReleaseOnMainThread("BlobURLInputStream::mChannel", mChannel.forget());
   }
 }
 
@@ -357,7 +336,7 @@ void BlobURLInputStream::RetrieveBlobData(const MutexAutoLock& aProofOfLock) {
   auto cleanupOnEarlyExit = MakeScopeExit([&] {
     mState = State::ERROR;
     mError = NS_ERROR_FAILURE;
-    BlobURLInputStreamRelMainT(mChannel.forget());
+    NS_ReleaseOnMainThread("BlobURLInputStream::mChannel", mChannel.forget());
     NotifyWaitTargets(aProofOfLock);
   });
 
@@ -482,7 +461,8 @@ void BlobURLInputStream::RetrieveBlobData(const MutexAutoLock& aProofOfLock) {
             self->mError = aResult.type() == BlobURLDataRequestResult::Tnsresult
                                ? aResult.get_nsresult()
                                : NS_ERROR_FAILURE;
-            BlobURLInputStreamRelMainT(self->mChannel.forget());
+            NS_ReleaseOnMainThread("BlobURLInputStream::mChannel",
+                                   self->mChannel.forget());
             self->NotifyWaitTargets(lock);
           },
           [self](mozilla::ipc::ResponseRejectReason aReason) {
@@ -490,7 +470,8 @@ void BlobURLInputStream::RetrieveBlobData(const MutexAutoLock& aProofOfLock) {
             NS_WARNING("IPC call to SendBlobURLDataRequest failed!");
             self->mState = State::ERROR;
             self->mError = NS_ERROR_FAILURE;
-            BlobURLInputStreamRelMainT(self->mChannel.forget());
+            NS_ReleaseOnMainThread("BlobURLInputStream::mChannel",
+                                   self->mChannel.forget());
             self->NotifyWaitTargets(lock);
           });
 }
@@ -591,6 +572,4 @@ void BlobURLInputStream::ReleaseUnderlyingStream(
   mBlobSize = -1;
 }
 
-}  // namespace dom
-
-}  // namespace mozilla
+}  // namespace mozilla::dom

@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsCOMPtr.h"
-#include "nsGeoPosition.h"
+#include "GeolocationPosition.h"
 #include "nsIConsoleService.h"
 #include "nsServiceManagerUtils.h"
 #include "CoreLocationLocationProvider.h"

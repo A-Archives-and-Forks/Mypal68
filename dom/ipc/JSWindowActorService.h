@@ -68,8 +68,8 @@ class JSWindowActorProtocol final : public nsIObserver,
   const ParentSide& Parent() const { return mParent; }
   const ChildSide& Child() const { return mChild; }
 
-  void RegisterListenersFor(EventTarget* aRoot);
-  void UnregisterListenersFor(EventTarget* aRoot);
+  void RegisterListenersFor(EventTarget* aTarget);
+  void UnregisterListenersFor(EventTarget* aTarget);
   void AddObservers();
   void RemoveObservers();
   bool Matches(BrowsingContext* aBrowsingContext, nsIURI* aURI,
@@ -78,6 +78,8 @@ class JSWindowActorProtocol final : public nsIObserver,
  private:
   explicit JSWindowActorProtocol(const nsACString& aName) : mName(aName) {}
   extensions::MatchPatternSet* GetURIMatcher();
+  bool RemoteTypePrefixMatches(const nsDependentCSubstring& aRemoteType);
+  bool MessageManagerGroupMatches(BrowsingContext* aBrowsingContext);
   ~JSWindowActorProtocol() = default;
 
   nsCString mName;
@@ -85,6 +87,7 @@ class JSWindowActorProtocol final : public nsIObserver,
   bool mIncludeChrome = false;
   nsTArray<nsString> mMatches;
   nsTArray<nsCString> mRemoteTypes;
+  nsTArray<nsString> mMessageManagerGroups;
 
   ParentSide mParent;
   ChildSide mChild;
@@ -111,11 +114,11 @@ class JSWindowActorService final {
   // from mDescriptors to JSWindowActorInfos.
   void GetJSWindowActorInfos(nsTArray<JSWindowActorInfo>& aInfos);
 
-  // Register or unregister a WindowRoot object from this JSWindowActorService.
-  void RegisterWindowRoot(EventTarget* aRoot);
+  // Register or unregister a chrome event target.
+  void RegisterChromeEventTarget(EventTarget* aTarget);
 
   // NOTE: This method is static, as it may be called during shutdown.
-  static void UnregisterWindowRoot(EventTarget* aRoot);
+  static void UnregisterChromeEventTarget(EventTarget* aTarget);
 
   already_AddRefed<JSWindowActorProtocol> GetProtocol(const nsACString& aName);
 
@@ -123,7 +126,7 @@ class JSWindowActorService final {
   JSWindowActorService();
   ~JSWindowActorService();
 
-  nsTArray<EventTarget*> mRoots;
+  nsTArray<EventTarget*> mChromeEventTargets;
   nsRefPtrHashtable<nsCStringHashKey, JSWindowActorProtocol> mDescriptors;
 };
 

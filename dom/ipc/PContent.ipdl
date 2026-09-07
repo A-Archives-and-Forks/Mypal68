@@ -4,7 +4,6 @@
 
 include protocol PBackground;
 include protocol PBrowser;
-include protocol PClientOpenWindowOp;
 include protocol PCompositorManager;
 include protocol PContentPermissionRequest;
 include protocol PCycleCollectWithLogs;
@@ -34,6 +33,7 @@ include protocol PTestShell;
 include protocol PRemoteSpellcheckEngine;
 include protocol PWebBrowserPersistDocument;
 include protocol PWebrtcGlobal;
+include protocol PWindowGlobal;
 include protocol PURLClassifier;
 include protocol PURLClassifierLocal;
 #ifdef MOZ_VR
@@ -43,6 +43,8 @@ include protocol PRemoteDecoderManager;
 include protocol PProfiler;
 include protocol PScriptCache;
 include protocol PSessionStorageObserver;
+include protocol PSHEntry;
+include protocol PSHistory;
 include DOMTypes;
 include IPCBlob;
 include PTabContext;
@@ -64,6 +66,10 @@ include "mozilla/dom/CSPMessageUtils.h";
 include "mozilla/dom/ReferrerInfoUtils.h";
 include "mozilla/ipc/ByteBufUtils.h";
 include "mozilla/ipc/URIUtils.h";
+
+#if defined(MOZ_SANDBOX) && defined(MOZ_DEBUG) && defined(ENABLE_TESTS)
+include protocol PSandboxTesting;
+#endif
 
 using refcounted class nsIDOMGeoPosition from "nsGeoPositionIPCSerialiser.h";
 using refcounted class nsIAlertNotification from "mozilla/AlertNotificationIPCSerializer.h";
@@ -96,12 +102,12 @@ using mozilla::Telemetry::DynamicScalarDefinition from "mozilla/TelemetryComms.h
 using mozilla::Telemetry::ChildEventData from "mozilla/TelemetryComms.h";
 using mozilla::Telemetry::DiscardedData from "mozilla/TelemetryComms.h";
 using mozilla::CrossProcessMutexHandle from "mozilla/ipc/CrossProcessMutex.h";
-using refcounted class nsIInputStream from "mozilla/ipc/IPCStreamUtils.h";
-using refcounted class mozilla::dom::BrowsingContext from "mozilla/dom/BrowsingContext.h";
-using mozilla::dom::BrowsingContextId from "mozilla/dom/ipc/IdType.h";
+using mozilla::dom::MaybeDiscardedBrowsingContext from "mozilla/dom/BrowsingContext.h";
 using mozilla::dom::BrowsingContextTransaction from "mozilla/dom/BrowsingContext.h";
-using mozilla::dom::BrowsingContextFieldEpochs from "mozilla/dom/BrowsingContext.h";
 using mozilla::dom::BrowsingContextInitializer from "mozilla/dom/BrowsingContext.h";
+using mozilla::dom::MaybeDiscardedWindowContext from "mozilla/dom/WindowContext.h";
+using mozilla::dom::WindowContextTransaction from "mozilla/dom/WindowContext.h";
+using mozilla::dom::WindowContextInitializer from "mozilla/dom/WindowContext.h";
 using base::SharedMemoryHandle from "base/shared_memory.h";
 using mozilla::ipc::SharedMemoryBasic::Handle from "mozilla/ipc/SharedMemoryBasic.h";
 using mozilla::fontlist::Pointer from "SharedFontList.h";
@@ -109,6 +115,9 @@ using gfxSparseBitSet from "gfxFontUtils.h";
 using FontVisibility from "gfxFontEntry.h";
 using mozilla::dom::MediaControlKeysEvent from "ipc/MediaControlIPC.h";
 using mozilla::dom::ControlledMediaState from "ipc/MediaControlIPC.h";
+using refcounted class nsDocShellLoadState from "nsDocShellLoadState.h";
+using mozilla::dom::ServiceWorkerShutdownState::Progress from "mozilla/dom/ServiceWorkerShutdownState.h";
+using refcounted class mozilla::dom::CrossProcessSHEntry from "mozilla/dom/MaybeNewPSHEntry.h";
 
 union ChromeRegistryItem
 {
@@ -227,6 +236,7 @@ struct JSWindowActorInfo
   nsCString[] observers;
   nsString[] matches;
   nsCString[] remoteTypes;
+  nsString[] messageManagerGroups;
 };
 
 struct GMPAPITags
@@ -317,14 +327,22 @@ struct NotificationEventData
 
 struct PostMessageData
 {
-    BrowsingContext source;
+    MaybeDiscardedBrowsingContext source;
     nsString origin;
     nsString targetOrigin;
     nsIURI targetOriginURI;
     nsIPrincipal callerPrincipal;
     nsIPrincipal subjectPrincipal;
-    nsIURI callerDocumentURI;
+    nsIURI callerURI;
     bool isFromPrivateWindow;
+    nsCString scriptLocation;
+    uint64_t innerWindowId;
+};
+
+struct KeyValuePair
+{
+    nsString key;
+    nsString value;
 };
 
 union BlobURLDataRequestResult
@@ -341,7 +359,6 @@ union BlobURLDataRequestResult
 nested(upto inside_cpow) sync protocol PContent
 {
     manages PBrowser;
-    manages PClientOpenWindowOp;
     manages PContentPermissionRequest;
     manages PCycleCollectWithLogs;
     manages PExternalHelperApp;
@@ -367,6 +384,8 @@ nested(upto inside_cpow) sync protocol PContent
     manages PURLClassifierLocal;
     manages PScriptCache;
     manages PSessionStorageObserver;
+    manages PSHEntry;
+    manages PSHistory;
 
     // Depending on exactly how the new browser is being created, it might be
     // created from either the child or parent process!
@@ -395,17 +414,19 @@ nested(upto inside_cpow) sync protocol PContent
     // Keep the last 3 attributes in sync with GetProcessAttributes!
 parent:
     async ConstructPopupBrowser(ManagedEndpoint<PBrowserParent> browserEp,
+                                ManagedEndpoint<PWindowGlobalParent> windowEp,
                                 TabId tabId, IPCTabContext context,
-                                BrowsingContext browsingContext,
+                                WindowGlobalInit windowInit,
                                 uint32_t chromeFlags);
 
 child:
     async ConstructBrowser(ManagedEndpoint<PBrowserChild> browserEp,
-                           TabId tabId, TabId sameTabGroupAs,
+                           ManagedEndpoint<PWindowGlobalChild> windowEp,
+                           TabId tabId,
                            IPCTabContext context,
-                           BrowsingContext browsingContext,
+                           WindowGlobalInit windowInit,
                            uint32_t chromeFlags, ContentParentId cpId,
-                           bool isForBrowser);
+                           bool isForBrowser, bool isTopLevel);
 
 both:
     async PFileDescriptorSet(FileDescriptor fd);
@@ -776,47 +797,54 @@ child:
      */
     async AddDynamicScalars(DynamicScalarDefinition[] definitions);
 
-    /*
-     * Message to construct a PClientOpenWindowOp actor.  This is used to
-     * open windows cross-process and receive notification when the operation
-     * has completed.
-     */
-    async PClientOpenWindowOp(ClientOpenWindowArgs aArgs);
-
     // This message is sent to content processes, and triggers the creation of a
     // new HttpChannelChild that will be connected to the parent channel
     // represented by registrarId.
     // This is on PContent not PNecko, as PNecko may not be initialized yet.
-    async CrossProcessRedirect(uint32_t aRegistrarId,
-                               nsIURI aURI,
-                               uint32_t aNewLoadFlags,
-                               LoadInfoArgs? aLoadInfo,
-                               uint64_t aChannelId,
-                               nsIURI aOriginalURI,
-                               uint64_t aIdentifier,
-                               uint32_t aRedirectMode);
+    // The returned loadInfo needs to be set on the channel - since the channel
+    // moved to a new process it now has different properties.
+
+    async CrossProcessRedirect(RedirectToRealChannelArgs args,
+                               Endpoint<PStreamFilterParent>[] aEndpoint)
+        returns (nsresult rv);
 
     /**
     * This method is used to notifty content process to start delayed autoplay
     * media via browsing context.
     */
-    async StartDelayedAutoplayMediaComponents(BrowsingContext aContext);
-
-    /**
-    * This method is used to notifty content process to mute or unmute media.
-    */
-    async SetMediaMuted(BrowsingContext aContext, bool aMuted);
+    async StartDelayedAutoplayMediaComponents(MaybeDiscardedBrowsingContext aContext);
 
     /**
      * This method is used to dispatch MediaControlKeysEvent to content process
      * in order to control media within a specific browsing context tree.
      */
-    async UpdateMediaControlKeysEvent(BrowsingContext aContext,
+    async UpdateMediaControlKeysEvent(MaybeDiscardedBrowsingContext aContext,
                                       MediaControlKeysEvent aEvent);
 
     // Begin subscribing to a new BrowsingContextGroup, sending down the current
     // value for every individual BrowsingContext.
-    async RegisterBrowsingContextGroup(BrowsingContextInitializer[] aInits);
+    async RegisterBrowsingContextGroup(BrowsingContextInitializer[] aInits,
+                                       WindowContextInitializer[] aWindowInits);
+
+#if defined(MOZ_SANDBOX) && defined(MOZ_DEBUG) && defined(ENABLE_TESTS)
+    // Initialize top-level actor for testing content process sandbox.
+    async InitSandboxTesting(Endpoint<PSandboxTestingChild> aEndpoint);
+#endif
+
+    async DestroySHEntrySharedState(uint64_t aID);
+
+    async EvictContentViewers(uint64_t[] aToEvictSharedStateIDs);
+
+    async LoadURI(MaybeDiscardedBrowsingContext aContext, nsDocShellLoadState aLoadState, bool aSetNavigating);
+
+    async InternalLoad(MaybeDiscardedBrowsingContext aContext, nsDocShellLoadState aLoadState, bool aTakeFocus);
+
+    async DisplayLoadError(MaybeDiscardedBrowsingContext aContext, nsString aURI);
+
+    // Tell aContext's docshell to update its mOSHE and mLSHE entries
+    async UpdateSHEntriesInDocShell(CrossProcessSHEntry aOldEntry,
+                                    CrossProcessSHEntry aNewEntry,
+                                    MaybeDiscardedBrowsingContext aContext);
 
 parent:
     async InitBackground(Endpoint<PBackgroundParent> aEndpoint);
@@ -885,6 +913,11 @@ parent:
 
     async PSessionStorageObserver();
 
+    async PSHistory(MaybeDiscardedBrowsingContext aContext);
+
+    // Clone using shared id.
+    sync PSHEntry(nullable PSHistory shistory, uint64_t sharedID);
+
     // Services remoting
 
     async StartVisitedQueries(nsIURI[] uri);
@@ -923,6 +956,24 @@ parent:
     // translate that to a ServiceWorker event.
     async NotificationEvent(nsString type, NotificationEventData data);
 
+    // Creates a helper for forwarding data from an nsExternalAppHandler
+    // running in the content process, to one running in the parent
+    // process.
+    // Bug 1574372 aims to run nsExternalAppHandler entirely in the
+    // parent so that we can remove this.
+    //
+    // Serializes the uri, loadInfo, contentType, referrer, contentDisposition
+    // headers and contentLength of the channel so that we can make them
+    // available to the parent instance via a nsIChannel helper. Also
+    // passes whether the original channel was an instance of nsIFileChannel.
+    //
+    // aContext is the BrowsingContext that initiated the load, and created the
+    // channel.
+    //
+    // Pass true for aForceSave to always save this content to disk, regardless of
+    // nsIMIMEInfo and other such influences.
+    // Pass true for aShouldCloseWindow to specify that aContext was opened specifically
+    // for this load, and should be closed once we've handled it.
     async PExternalHelperApp(nsIURI uri,
                              LoadInfoArgs? loadInfoArgs,
                              nsCString aMimeContentType,
@@ -933,7 +984,8 @@ parent:
                              int64_t aContentLength,
                              bool aWasFileChannel,
                              nsIURI aReferrer,
-                             nullable PBrowser aBrowser);
+                             MaybeDiscardedBrowsingContext aContext,
+                             bool aShouldCloseWindow);
 
     async PHandlerService();
 
@@ -942,6 +994,22 @@ parent:
     async SetGeolocationHigherAccuracy(bool enable);
 
     async ConsoleMessage(nsString message);
+    /**
+     * Used to route shutdown diagnostic info from the content process
+     * ServiceWorkers to the parent process' ServiceWorkerManager's
+     * ServiceWorkerShutdownBlocker. (The only other actor chain available
+     * for this would be very convoluted and create ordering problems).
+     */
+    async ReportServiceWorkerShutdownProgress(uint32_t aShutdownStateId,
+                                              Progress aProgress);
+
+    /**
+     * Whenever docshell updates its SH entries, we need to update them in
+     * the corresponding BrowsingContext
+     */
+    async UpdateSHEntriesInBC(nullable PSHEntry aNewLSHE, nullable
+                              PSHEntry aNewOSHE, MaybeDiscardedBrowsingContext aContext);
+
     async ScriptError(nsString message, nsString sourceName, nsString sourceLine,
                       uint32_t lineNumber, uint32_t colNumber, uint32_t flags,
                       nsCString category, bool privateWindow,
@@ -992,6 +1060,8 @@ parent:
 
     sync KeywordToURI(nsCString keyword)
         returns (nsString providerName, nsIInputStream postData, nsIURI uri);
+    sync GetFixupURIInfo(nsCString uriString, uint32_t fixupflags)
+        returns (nsString providerName, nsIInputStream postData, nsIURI fixedURI, nsIURI preferredURI);
 
     sync NotifyKeywordSearchLoading(nsString providerName, nsString keyword);
 
@@ -1095,8 +1165,11 @@ parent:
      *       principals that can live in the content process should
      *       provided.
      */
-    async PContentPermissionRequest(PermissionRequest[] aRequests, Principal aPrincipal,
-                                    Principal aTopLevelPrincipal, bool aIsHandlingUserInput,
+    async PContentPermissionRequest(PermissionRequest[] aRequests,
+                                    Principal aPrincipal,
+                                    Principal aTopLevelPrincipal,
+                                    bool aIsHandlingUserInput,
+                                    bool aMaybeUnsafePermissionDelegate,
                                     TabId tabId);
 
     async ShutdownProfile(nsCString aProfile);
@@ -1278,6 +1351,7 @@ parent:
     sync GetHyphDict(nsIURI aURI) returns (Handle aHandle, uint32_t aSize);
 
     async CreateWindow(nullable PBrowser aThisTab,
+                       MaybeDiscardedBrowsingContext aParent,
                        PBrowser aNewTab,
                        uint32_t aChromeFlags,
                        bool aCalledFromJS,
@@ -1287,11 +1361,13 @@ parent:
                        float aFullZoom,
                        Principal aTriggeringPrincipal,
                        nsIContentSecurityPolicy aCsp,
-                       nsIReferrerInfo aReferrerInfo)
+                       nsIReferrerInfo aReferrerInfo,
+                       OriginAttributes aOriginAttributes)
         returns (CreatedWindowInfo window);
 
     async CreateWindowInDifferentProcess(
       PBrowser aThisTab,
+      MaybeDiscardedBrowsingContext aParent,
       uint32_t aChromeFlags,
       bool aCalledFromJS,
       bool aWidthSpecified,
@@ -1301,7 +1377,8 @@ parent:
       nsString aName,
       nsIPrincipal aTriggeringPrincipal,
       nsIContentSecurityPolicy aCsp,
-      nsIReferrerInfo aReferrerInfo);
+      nsIReferrerInfo aReferrerInfo,
+      OriginAttributes aOriginAttributes);
 
     /**
      * Tells the parent to ungrab the pointer on the default display.
@@ -1378,9 +1455,9 @@ parent:
 
     /*
      * A 3rd party tracking origin (aTrackingOrigin) has received the permission
-     * granted to have access to aGrantedOrigin when loaded by aParentPrincipal.
+     * granted to have access to aGrantedOrigin when loaded by aParentWindowId.
      */
-    async FirstPartyStorageAccessGrantedForOrigin(Principal aParentPrincipal,
+    async FirstPartyStorageAccessGrantedForOrigin(uint64_t aParentWindowId,
                                                   Principal aTrackingPrincipal,
                                                   nsCString aTrackingOrigin,
                                                   int aAllowMode)
@@ -1395,21 +1472,22 @@ parent:
     * certain tab. We would use the browsing context to find the corresponding
     * controller.
     */
-    async NotifyMediaStateChanged(BrowsingContext aContext,
+    async NotifyMediaStateChanged(MaybeDiscardedBrowsingContext aContext,
                                   ControlledMediaState aState);
 
    /**
     * When media became audible or inaudible in content process, we have to
     * notify chrome process in order to which tab is audible.
     */
-    async NotifyMediaAudibleChanged(BrowsingContext aContext, bool aAudible);
+    async NotifyMediaAudibleChanged(MaybeDiscardedBrowsingContext aContext,
+                                    bool aAudible);
 
     async BlobURLDataRequest(nsCString aBlobURL, nsIPrincipal aTriggeringPrincipal, nsIPrincipal aLoadingPrincipal, OriginAttributes aOriginAttributes) returns (BlobURLDataRequestResult aResult);
 
 both:
-    async CommitBrowsingContextTransaction(BrowsingContext aContext,
+    async CommitBrowsingContextTransaction(MaybeDiscardedBrowsingContext aContext,
                                            BrowsingContextTransaction aTransaction,
-                                           BrowsingContextFieldEpochs aEpochs);
+                                           uint64_t aEpoch);
 
     async AsyncMessage(nsString aMessage, ClonedMessageData aData);
 
@@ -1437,36 +1515,80 @@ both:
     async AttachBrowsingContext(BrowsingContextInitializer aInit);
 
     /**
-     * Remove the synced BrowsingContext 'aContext' from the parent.
+     * Remove the synced BrowsingContext with id 'aContextId' from the parent.
      * DetachBrowsingContext is only needed to be called once for any
      * BrowsingContext, since detaching a node in the BrowsingContext detaches
      * the entire sub-tree rooted at that node. Calling DetachBrowsingContext
      * with an already detached BrowsingContext effectively does nothing. Note
      * that it is not an error to call DetachBrowsingContext on a
-     * BrowsingContext belonging to an already detached subtree. The
-     * 'aMoveToBFCache' paramater controls if detaching a BrowsingContext
-     * should move it to the bfcache allowing it to be re-attached if navigated
-     * to.
+     * BrowsingContext belonging to an already detached subtree.
+     *
+     * As the passed-in context is allowed to already be detached, it is passed
+     * by id, rather than using BrowsingContext's serializer.
+     *
+     * Callers should keep the BrowsingContext alive until this async request is
+     * resolved or rejected, in order to ensure that in-flight messages still
+     * have valid targets.
      */
-    async DetachBrowsingContext(BrowsingContext aContext);
+    async DetachBrowsingContext(uint64_t aContextId) returns (bool unused);
 
     /**
      * Removes all of 'aContext'\'s children, and caches them in the
      * BrowsingContextGroup.
      */
-    async CacheBrowsingContextChildren(BrowsingContext aContext);
+    async CacheBrowsingContextChildren(MaybeDiscardedBrowsingContext aContext);
 
     /**
      * Re-attach all BrowsingContexts in a 'aContext'.
      */
-    async RestoreBrowsingContextChildren(BrowsingContext aContext,
-                                         BrowsingContextId[] aChildren);
+    async RestoreBrowsingContextChildren(MaybeDiscardedBrowsingContext aContext,
+                                         MaybeDiscardedBrowsingContext[] aChildren);
 
-    async WindowClose(BrowsingContext aContext, bool aTrustedCaller);
-    async WindowFocus(BrowsingContext aContext);
-    async WindowBlur(BrowsingContext aContext);
-    async WindowPostMessage(BrowsingContext aContext, ClonedMessageData aMessage,
+    async WindowClose(MaybeDiscardedBrowsingContext aContext,
+                      bool aTrustedCaller);
+    async WindowFocus(MaybeDiscardedBrowsingContext aContext);
+    async WindowBlur(MaybeDiscardedBrowsingContext aContext);
+    async RaiseWindow(MaybeDiscardedBrowsingContext aContext);
+    async ClearFocus(MaybeDiscardedBrowsingContext aContext);
+    async SetFocusedBrowsingContext(MaybeDiscardedBrowsingContext aContext);
+    async SetActiveBrowsingContext(MaybeDiscardedBrowsingContext aContext);
+    async UnsetActiveBrowsingContext(MaybeDiscardedBrowsingContext aContext);
+    async SetFocusedElement(MaybeDiscardedBrowsingContext aContext, bool aNeedsFocus);
+parent:
+    async BlurToParent(MaybeDiscardedBrowsingContext aFocusedBrowsingContext,
+                      MaybeDiscardedBrowsingContext aBrowsingContextToClear,
+                      MaybeDiscardedBrowsingContext aAncestorBrowsingContextToFocus,
+                      bool aIsLeavingDocument, bool aAdjustWidget,
+                      bool aBrowsingContextToClearHandled,
+                      bool aAncestorBrowsingContextToFocusHandled);
+child:
+    async BlurToChild(MaybeDiscardedBrowsingContext aFocusedBrowsingContext,
+                      MaybeDiscardedBrowsingContext aBrowsingContextToClear,
+                      MaybeDiscardedBrowsingContext aAncestorBrowsingContextToFocus,
+                      bool aIsLeavingDocument, bool aAdjustWidget);
+    async SetupFocusedAndActive(MaybeDiscardedBrowsingContext aFocusedBrowsingContext,
+                                MaybeDiscardedBrowsingContext aActiveBrowsingContext);
+both:
+    async WindowPostMessage(MaybeDiscardedBrowsingContext aContext,
+                            ClonedMessageData aMessage,
                             PostMessageData aData);
+
+    /**
+     * Move sessionStorage data between parent and content processes. See
+     * SessionStorageManager documentation for more details.
+     */
+    async SessionStorageData(uint64_t aTopContextId, nsCString aOriginAttrs,
+                             nsCString aOriginKey, KeyValuePair[] aDefaultData,
+                             KeyValuePair[] aSessionData);
+    async CommitWindowContextTransaction(MaybeDiscardedWindowContext aContext,
+                                         WindowContextTransaction aTransaction,
+                                         uint64_t aEpoch);
+
+child:
+    // NOTE: These methods are only needed on the child, as the parent
+    // WindowContext is managed using the PWindowGlobal actor's lifecycle.
+    async CreateWindowContext(WindowContextInitializer aInit);
+    async DiscardWindowContext(uint64_t aContextId) returns (bool unused);
 };
 
 }

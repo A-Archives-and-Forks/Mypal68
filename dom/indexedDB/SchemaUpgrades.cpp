@@ -39,6 +39,7 @@
 #include "mozilla/Monitor.h"
 #include "mozilla/OriginAttributes.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/Span.h"
 #include "mozilla/TaskCategory.h"
 #include "mozilla/UniquePtr.h"
@@ -2752,7 +2753,7 @@ class DeserializeUpgradeValueHelper final : public Runnable {
 
     RefPtr<Runnable> self = this;
     const nsresult rv =
-        SystemGroup::Dispatch(TaskCategory::Other, self.forget());
+        SchedulerGroup::Dispatch(TaskCategory::Other, self.forget());
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }

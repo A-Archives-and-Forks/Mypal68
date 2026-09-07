@@ -14,6 +14,8 @@
 namespace mozilla {
 namespace dom {
 
+class BrowsingContext;
+
 /**
  * Base class for RemoteObjectProxy. Implements the pieces of the handler that
  * don't depend on properties/methods of the specific WebIDL interface that this
@@ -107,11 +109,13 @@ class RemoteObjectProxyBase : public js::BaseProxyHandler,
    */
   void GetOrCreateProxyObject(JSContext* aCx, void* aNative,
                               const JSClass* aClasp,
+                              JS::Handle<JSObject*> aTransplantTo,
                               JS::MutableHandle<JSObject*> aProxy,
                               bool& aNewObjectCreated) const;
 
   const prototypes::ID mPrototypeID;
 
+  friend struct SetDOMProxyInformation;
   static const char sCrossOriginProxyFamily;
 };
 
@@ -129,7 +133,7 @@ class RemoteObjectProxyBase : public js::BaseProxyHandler,
  * hash map in the JS compartment's private (@see
  * xpc::CompartmentPrivate::GetRemoteProxyMap).
  */
-template <class Native, JSPropertySpec* P, JSFunctionSpec* F>
+template <class Native, const CrossOriginProperties& P>
 class RemoteObjectProxy : public RemoteObjectProxyBase {
  public:
   void finalize(JS::GCContext* aGcx, JSObject* aProxy) const final {
@@ -138,9 +142,11 @@ class RemoteObjectProxy : public RemoteObjectProxyBase {
   }
 
   void GetProxyObject(JSContext* aCx, Native* aNative,
+                      JS::Handle<JSObject*> aTransplantTo,
                       JS::MutableHandle<JSObject*> aProxy) const {
     bool objectCreated = false;
-    GetOrCreateProxyObject(aCx, aNative, &sClass, aProxy, objectCreated);
+    GetOrCreateProxyObject(aCx, aNative, &sClass, aTransplantTo, aProxy,
+                           objectCreated);
     if (objectCreated) {
       NS_ADDREF(aNative);
     }
@@ -153,7 +159,7 @@ class RemoteObjectProxy : public RemoteObjectProxyBase {
   bool EnsureHolder(JSContext* aCx, JS::Handle<JSObject*> aProxy,
                     JS::MutableHandle<JSObject*> aHolder) const final {
     return MaybeCrossOriginObjectMixins::EnsureHolder(
-        aCx, aProxy, /* slot = */ 0, P, F, aHolder);
+        aCx, aProxy, /* slot = */ 0, P, aHolder);
   }
 
   static const JSClass sClass;
@@ -182,6 +188,12 @@ static inline bool IsRemoteObjectProxy(JSObject* aObj) {
   }
   return RemoteObjectProxyBase::IsRemoteObjectProxy(aObj);
 }
+
+/**
+ * Return the browsing context for this remote outer window proxy.
+ * Only call this function on remote outer window proxies.
+ */
+BrowsingContext* GetBrowsingContext(JSObject* aProxy);
 
 }  // namespace dom
 }  // namespace mozilla

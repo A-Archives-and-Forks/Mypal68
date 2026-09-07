@@ -75,6 +75,11 @@ class TabContext {
    */
   void SetPrivateBrowsingAttributes(bool aIsPrivateBrowsing);
 
+  /**
+   * Set the first party domain of the tab context's origin attributes.
+   */
+  void SetFirstPartyDomainAttributes(const nsAString& aFirstPartyDomain);
+
   bool SetTabContext(uint64_t aChromeOuterWindowID,
                      UIStateChangeType aShowFocusRings,
                      const OriginAttributes& aOriginAttributes,
@@ -155,6 +160,10 @@ class MutableTabContext : public TabContext {
 
   bool SetTabContextForJSPluginFrame(uint32_t aJSPluginID) {
     return TabContext::SetTabContextForJSPluginFrame(aJSPluginID);
+  }
+
+  void SetFirstPartyDomainAttributes(const nsAString& aFirstPartyDomain) {
+    TabContext::SetFirstPartyDomainAttributes(aFirstPartyDomain);
   }
 };
 

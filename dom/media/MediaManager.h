@@ -87,8 +87,7 @@ class MediaDevice : public nsIMediaDevice {
       dom::CallerType aCallerType);
 
   nsresult Allocate(const dom::MediaTrackConstraints& aConstraints,
-                    const MediaEnginePrefs& aPrefs,
-                    const mozilla::ipc::PrincipalInfo& aPrincipalInfo,
+                    const MediaEnginePrefs& aPrefs, uint64_t aWindowId,
                     const char** aOutBadConstraint);
   void SetTrack(const RefPtr<MediaTrack>& aTrack,
                 const PrincipalHandle& aPrincipal);

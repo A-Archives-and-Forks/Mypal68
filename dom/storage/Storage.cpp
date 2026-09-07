@@ -9,6 +9,7 @@
 #include "mozilla/dom/StorageEvent.h"
 #include "mozilla/dom/StorageEventBinding.h"
 #include "mozilla/BasePrincipal.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StorageAccess.h"
 #include "nsPIDOMWindow.h"
 
@@ -147,7 +148,7 @@ void Storage::NotifyChange(Storage* aStorage, nsIPrincipal* aPrincipal,
   if (aImmediateDispatch) {
     Unused << r->Run();
   } else {
-    SystemGroup::Dispatch(TaskCategory::Other, r.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, r.forget());
   }
 }
 

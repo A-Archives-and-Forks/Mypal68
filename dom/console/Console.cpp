@@ -238,10 +238,10 @@ class MainThreadConsoleData final {
 
  private:
   ~MainThreadConsoleData() {
-    NS_ReleaseOnMainThreadSystemGroup("MainThreadConsoleData::mStorage",
-                                      mStorage.forget());
-    NS_ReleaseOnMainThreadSystemGroup("MainThreadConsoleData::mSandbox",
-                                      mSandbox.forget());
+    NS_ReleaseOnMainThread("MainThreadConsoleData::mStorage",
+                           mStorage.forget());
+    NS_ReleaseOnMainThread("MainThreadConsoleData::mSandbox",
+                           mSandbox.forget());
   }
 
   // All members, except for mRefCnt, are accessed only on the main thread,
@@ -792,6 +792,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Console)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mGlobal)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mConsoleEventNotifier)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDumpFunction)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_REFERENCE
   tmp->Shutdown();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 

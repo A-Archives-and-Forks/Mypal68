@@ -128,6 +128,25 @@ UniquePtr<ClientSource> ClientManager::CreateSourceInternal(
   return source;
 }
 
+UniquePtr<ClientSource> ClientManager::CreateSourceInternal(
+    const ClientInfo& aClientInfo, nsISerialEventTarget* aEventTarget) {
+  NS_ASSERT_OWNINGTHREAD(ClientManager);
+
+  ClientSourceConstructorArgs args(aClientInfo.Id(), aClientInfo.Type(),
+                                   aClientInfo.PrincipalInfo(),
+                                   aClientInfo.CreationTime());
+  UniquePtr<ClientSource> source(new ClientSource(this, aEventTarget, args));
+
+  if (IsShutdown()) {
+    source->Shutdown();
+    return source;
+  }
+
+  source->Activate(GetActor());
+
+  return source;
+}
+
 already_AddRefed<ClientHandle> ClientManager::CreateHandleInternal(
     const ClientInfo& aClientInfo, nsISerialEventTarget* aSerialEventTarget) {
   NS_ASSERT_OWNINGTHREAD(ClientManager);
@@ -205,6 +224,36 @@ WorkerPrivate* ClientManager::GetWorkerPrivate() const {
   return GetActor()->GetWorkerPrivate();
 }
 
+// Used to share logic between ExpectFutureSource and ForgetFutureSource.
+/* static */ bool ClientManager::ExpectOrForgetFutureSource(
+    const ClientInfo& aClientInfo,
+    bool (PClientManagerChild::*aMethod)(const IPCClientInfo&)) {
+  bool rv = true;
+
+  RefPtr<ClientManager> mgr = ClientManager::GetOrCreateForCurrentThread();
+  mgr->MaybeExecute(
+      [&](ClientManagerChild* aActor) {
+        if (!(aActor->*aMethod)(aClientInfo.ToIPC())) {
+          rv = false;
+        }
+      },
+      [&] { rv = false; });
+
+  return rv;
+}
+
+/* static */ bool ClientManager::ExpectFutureSource(
+    const ClientInfo& aClientInfo) {
+  return ExpectOrForgetFutureSource(
+      aClientInfo, &PClientManagerChild::SendExpectFutureClientSource);
+}
+
+/* static */ bool ClientManager::ForgetFutureSource(
+    const ClientInfo& aClientInfo) {
+  return ExpectOrForgetFutureSource(
+      aClientInfo, &PClientManagerChild::SendForgetFutureClientSource);
+}
+
 // static
 void ClientManager::Startup() {
   MOZ_ASSERT(NS_IsMainThread());
@@ -250,6 +299,34 @@ UniquePtr<ClientSource> ClientManager::CreateSource(
     const PrincipalInfo& aPrincipal) {
   RefPtr<ClientManager> mgr = GetOrCreateForCurrentThread();
   return mgr->CreateSourceInternal(aType, aEventTarget, aPrincipal);
+}
+
+// static
+UniquePtr<ClientSource> ClientManager::CreateSourceFromInfo(
+    const ClientInfo& aClientInfo, nsISerialEventTarget* aEventTarget) {
+  RefPtr<ClientManager> mgr = GetOrCreateForCurrentThread();
+  return mgr->CreateSourceInternal(aClientInfo, aEventTarget);
+}
+
+Maybe<ClientInfo> ClientManager::CreateInfo(ClientType aType,
+                                            nsIPrincipal* aPrincipal) {
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(aPrincipal);
+
+  PrincipalInfo principalInfo;
+  nsresult rv = PrincipalToPrincipalInfo(aPrincipal, &principalInfo);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    MOZ_CRASH("ClientManager::CreateSource() cannot serialize bad principal");
+  }
+
+  nsID id;
+  rv = nsContentUtils::GenerateUUIDInPlace(id);
+  MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return Nothing();
+  }
+
+  return Some(ClientInfo(id, aType, principalInfo, TimeStamp::Now()));
 }
 
 // static

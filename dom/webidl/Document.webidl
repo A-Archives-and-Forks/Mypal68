@@ -22,6 +22,7 @@ interface URI;
 interface nsIDocShell;
 interface nsILoadGroup;
 interface nsIReferrerInfo;
+interface nsIPermissionDelegateHandler;
 interface XULCommandDispatcher;
 
 enum VisibilityState { "hidden", "visible" };
@@ -441,11 +442,8 @@ partial interface Document {
   [ChromeOnly]
   attribute Node? popupNode;
 
-  // The JS debugger uses DOM mutation events to implement DOM mutation
-  // breakpoints. This is used to avoid logging a warning that the user
-  // cannot address and have no control over.
   [ChromeOnly]
-  attribute boolean dontWarnAboutMutationEventsAndAllowSlowDOMMutations;
+  attribute boolean devToolsWatchingDOMMutations;
 
   /**
    * These attributes correspond to rangeParent and rangeOffset. They will help
@@ -547,7 +545,7 @@ partial interface Document {
   [ChromeOnly] readonly attribute boolean userHasInteracted;
 };
 
-// Extension to give chrome JS the ability to simulate activate the docuement
+// Extension to give chrome JS the ability to simulate activate the document
 // by user gesture.
 partial interface Document {
   [ChromeOnly]
@@ -555,6 +553,12 @@ partial interface Document {
   // For testing only.
   [ChromeOnly]
   undefined clearUserGestureActivation();
+  [ChromeOnly]
+  readonly attribute boolean hasBeenUserGestureActivated;
+  [ChromeOnly]
+  readonly attribute boolean hasValidTransientUserGestureActivation;
+  [ChromeOnly]
+  boolean consumeTransientUserGestureActivation();
 };
 
 // Extension to give chrome JS the ability to set an event handler which is
@@ -646,4 +650,10 @@ partial interface Document {
 partial interface Document {
   [ChromeOnly, BinaryName="setUserHasInteracted"]
   undefined userInteractionForTesting();
+};
+
+// Extension for permission delegation.
+partial interface Document {
+  [ChromeOnly, Pure]
+  readonly attribute nsIPermissionDelegateHandler permDelegateHandler;
 };

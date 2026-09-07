@@ -20,6 +20,7 @@
 #include "nsServiceManagerUtils.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/LoadInfo.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StorageAccess.h"
 #include "mozilla/dom/ClientIPCTypes.h"
 #include "mozilla/dom/DOMMozPromiseRequestHolder.h"

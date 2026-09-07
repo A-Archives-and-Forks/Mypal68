@@ -32,6 +32,7 @@
 #include "nsIContentPrefService2.h"
 #include "nsContentUtils.h"
 
+class nsIEditor;
 class nsIRadioGroupContainer;
 class nsIRadioVisitor;
 

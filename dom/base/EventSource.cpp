@@ -295,8 +295,8 @@ class EventSourceImpl final : public nsIObserver,
 
     ~EventSourceServiceNotifier() {
       mService->EventSourceConnectionClosed(mHttpChannelId, mInnerWindowID);
-      NS_ReleaseOnMainThreadSystemGroup("EventSourceServiceNotifier::mService",
-                                        mService.forget());
+      NS_ReleaseOnMainThread("EventSourceServiceNotifier::mService",
+                             mService.forget());
     }
 
    private:

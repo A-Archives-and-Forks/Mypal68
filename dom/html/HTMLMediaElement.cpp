@@ -497,7 +497,10 @@ class HTMLMediaElement::MediaControlEventListener final
     return true;
   }
 
-  HTMLMediaElement* Owner() const { return mElement.get(); }
+  HTMLMediaElement* Owner() const {
+    MOZ_ASSERT(mElement);
+    return mElement.get();
+  }
 
   void NotifyMediaStateChanged(ControlledMediaState aState) {
     MOZ_ASSERT(NS_IsMainThread());
@@ -1917,6 +1920,11 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLMediaElement,
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSelectedVideoStreamTrack)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPendingPlayPromises)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSeekDOMPromise)
+  if (tmp->mMediaControlEventListener) {
+    tmp->StopListeningMediaControlEventIfNeeded();
+    tmp->mMediaControlEventListener = nullptr;
+  }
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_PTR
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED_0(HTMLMediaElement,

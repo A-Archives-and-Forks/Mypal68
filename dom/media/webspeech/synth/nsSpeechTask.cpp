@@ -19,7 +19,8 @@ namespace mozilla::dom {
 
 // nsSpeechTask
 
-NS_IMPL_CYCLE_COLLECTION(nsSpeechTask, mSpeechSynthesis, mUtterance, mCallback);
+NS_IMPL_CYCLE_COLLECTION_WEAK(nsSpeechTask, mSpeechSynthesis, mUtterance,
+                              mCallback)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsSpeechTask)
   NS_INTERFACE_MAP_ENTRY(nsISpeechTask)

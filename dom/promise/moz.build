@@ -16,6 +16,7 @@ EXPORTS.mozilla.dom += [
 UNIFIED_SOURCES += [
     "Promise.cpp",
     "PromiseDebugging.cpp",
+    "PromiseNativeHandler.cpp",
 ]
 
 LOCAL_INCLUDES += [

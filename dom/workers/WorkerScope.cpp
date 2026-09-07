@@ -65,6 +65,7 @@
 #include "mozilla/dom/ServiceWorkerManager.h"
 #include "mozilla/dom/ServiceWorkerRegistration.h"
 #include "mozilla/dom/ServiceWorkerRegistrationDescriptor.h"
+#include "mozilla/dom/ServiceWorkerUtils.h"
 #include "mozilla/dom/SharedWorkerGlobalScopeBinding.h"
 #include "mozilla/dom/SimpleGlobalObject.h"
 #include "mozilla/dom/TimeoutHandler.h"
@@ -355,6 +356,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(WorkerGlobalScope,
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mIndexedDB)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mCacheStorage)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDebuggerNotificationManager)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_REFERENCE
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED_0(WorkerGlobalScope,
@@ -1010,6 +1012,21 @@ already_AddRefed<Promise> ServiceWorkerGlobalScope::SkipWaiting(
   RefPtr<Promise> promise = Promise::Create(this, aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
+  }
+
+  if (ServiceWorkerParentInterceptEnabled()) {
+    mWorkerPrivate->SetServiceWorkerSkipWaitingFlag()->Then(
+        GetCurrentSerialEventTarget(), __func__,
+        [promise](bool aOk) {
+          Unused << NS_WARN_IF(!aOk);
+          promise->MaybeResolveWithUndefined();
+        },
+        [promise](nsresult aRv) {
+          MOZ_ASSERT(NS_FAILED(aRv));
+          promise->MaybeResolveWithUndefined();
+        });
+
+    return promise.forget();
   }
 
   RefPtr<PromiseWorkerProxy> promiseProxy =

@@ -27,9 +27,7 @@
 #include "TransceiverImpl.h"
 #include "libwebrtcglue/AudioConduit.h"
 
-namespace mozilla {
-
-namespace dom {
+namespace mozilla::dom {
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(RTCRtpReceiver, mWindow, mTrack)
 NS_IMPL_CYCLE_COLLECTING_ADDREF(RTCRtpReceiver)
@@ -591,7 +589,6 @@ std::string RTCRtpReceiver::GetMid() const {
   return std::string();
 }
 
-}  // namespace dom
-}  // namespace mozilla
+}  // namespace mozilla::dom
 
 #undef LOGTAG

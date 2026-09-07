@@ -254,10 +254,10 @@ RefPtr<ClientOpPromise> ClientNavigateOpChild::DoNavigate(
   auto referrerInfo = MakeRefPtr<ReferrerInfo>(*doc);
   loadState->SetReferrerInfo(referrerInfo);
   loadState->SetLoadType(LOAD_STOP_CONTENT);
-  loadState->SetSourceDocShell(docShell);
+  loadState->SetSourceBrowsingContext(docShell->GetBrowsingContext());
   loadState->SetLoadFlags(nsIWebNavigation::LOAD_FLAGS_NONE);
   loadState->SetFirstParty(true);
-  rv = docShell->LoadURI(loadState);
+  rv = docShell->LoadURI(loadState, false);
   if (NS_FAILED(rv)) {
     /// There are tests that try sending file:/// and mixed-content URLs
     /// in here and expect them to reject with a TypeError.  This does not match

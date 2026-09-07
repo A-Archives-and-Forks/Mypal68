@@ -151,8 +151,7 @@ void CCGCScheduler::PokeShrinkingGC() {
         }
       },
       this, StaticPrefs::javascript_options_compact_on_user_inactive_delay(),
-      nsITimer::TYPE_ONE_SHOT_LOW_PRIORITY, "ShrinkingGCTimerFired",
-      SystemGroup::EventTargetFor(TaskCategory::GarbageCollection));
+      nsITimer::TYPE_ONE_SHOT_LOW_PRIORITY, "ShrinkingGCTimerFired");
 }
 
 void CCGCScheduler::PokeFullGC() {
@@ -167,8 +166,7 @@ void CCGCScheduler::PokeFullGC() {
           s->EnsureGCRunner(0);
         },
         this, StaticPrefs::javascript_options_gc_delay_full(),
-        nsITimer::TYPE_ONE_SHOT_LOW_PRIORITY, "FullGCTimerFired",
-        SystemGroup::EventTargetFor(TaskCategory::GarbageCollection));
+        nsITimer::TYPE_ONE_SHOT_LOW_PRIORITY, "FullGCTimerFired");
   }
 }
 
@@ -221,7 +219,7 @@ void CCGCScheduler::EnsureGCRunner(uint32_t aDelay) {
       "CCGCScheduler::EnsureGCRunner", aDelay,
       StaticPrefs::javascript_options_gc_delay_interslice(),
       int64_t(mActiveIntersliceGCBudget.ToMilliseconds()), true,
-      [this] { return mDidShutdown; }, TaskCategory::GarbageCollection);
+      [this] { return mDidShutdown; });
 }
 
 // nsJSEnvironmentObserver observes the user-interaction-inactive notifications
@@ -273,7 +271,7 @@ void CCGCScheduler::EnsureCCRunner(TimeDuration aDelay, TimeDuration aBudget) {
     mCCRunner = IdleTaskRunner::Create(
         CCRunnerFired, "EnsureCCRunner::CCRunnerFired", 0,
         aDelay.ToMilliseconds(), aBudget.ToMilliseconds(), true,
-        [this] { return mDidShutdown; }, TaskCategory::GarbageCollection);
+        [this] { return mDidShutdown; });
   } else {
     mCCRunner->SetMinimumUsefulBudget(aBudget.ToMilliseconds());
     nsIEventTarget* target = mozilla::GetCurrentEventTarget();

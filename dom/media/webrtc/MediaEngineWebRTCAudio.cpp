@@ -13,6 +13,7 @@
 #include "MediaTrackConstraints.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/ErrorNames.h"
+#include "nsContentUtils.h"
 #include "nsIDUtils.h"
 #include "transport/runnable_utils.h"
 #include "Tracing.h"
@@ -410,7 +411,7 @@ void MediaEngineWebRTCMicrophoneSource::ApplySettings(
 
 nsresult MediaEngineWebRTCMicrophoneSource::Allocate(
     const dom::MediaTrackConstraints& aConstraints,
-    const MediaEnginePrefs& aPrefs, const ipc::PrincipalInfo& aPrincipalInfo,
+    const MediaEnginePrefs& aPrefs, uint64_t aWindowID,
     const char** aOutBadConstraint) {
   AssertIsOnOwningThread();
 

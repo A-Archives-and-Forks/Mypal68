@@ -24,8 +24,7 @@ namespace mozilla::dom {
 
 class RemoteOuterWindowProxy
     : public RemoteObjectProxy<BrowsingContext,
-                               Window_Binding::sCrossOriginAttributes,
-                               Window_Binding::sCrossOriginMethods> {
+                               Window_Binding::sCrossOriginProperties> {
  public:
   using Base = RemoteObjectProxy;
 
@@ -62,15 +61,16 @@ const JSClass RemoteOuterWindowProxy::Base::sClass =
     PROXY_CLASS_DEF("Proxy", JSCLASS_HAS_RESERVED_SLOTS(2));
 
 bool GetRemoteOuterWindowProxy(JSContext* aCx, BrowsingContext* aContext,
+                               JS::Handle<JSObject*> aTransplantTo,
                                JS::MutableHandle<JSObject*> aRetVal) {
   MOZ_ASSERT(!aContext->GetDocShell(),
              "Why are we creating a RemoteOuterWindowProxy?");
 
-  sSingleton.GetProxyObject(aCx, aContext, aRetVal);
+  sSingleton.GetProxyObject(aCx, aContext, aTransplantTo, aRetVal);
   return !!aRetVal;
 }
 
-static BrowsingContext* GetBrowsingContext(JSObject* aProxy) {
+BrowsingContext* GetBrowsingContext(JSObject* aProxy) {
   MOZ_ASSERT(IsRemoteObjectProxy(aProxy, prototypes::id::Window));
   return static_cast<BrowsingContext*>(
       RemoteObjectProxyBase::GetNative(aProxy));

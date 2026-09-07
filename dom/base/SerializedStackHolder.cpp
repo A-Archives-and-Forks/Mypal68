@@ -6,6 +6,7 @@
 
 #include "js/SavedFrameAPI.h"
 #include "mozilla/dom/WorkerPrivate.h"
+#include "nsJSPrincipals.h"
 
 namespace mozilla::dom {
 

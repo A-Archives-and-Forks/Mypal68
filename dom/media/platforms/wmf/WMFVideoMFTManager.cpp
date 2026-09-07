@@ -24,6 +24,7 @@
 #include "mozilla/AbstractThread.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/Logging.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticPrefs_media.h"
 #include "mozilla/SyncRunnable.h"
 #include "mozilla/Telemetry.h"
@@ -115,7 +116,7 @@ class DeleteObjectTask : public Runnable {
 template <class T>
 void DeleteOnMainThread(UniquePtr<T>&& aObject) {
   nsCOMPtr<nsIRunnable> r = new DeleteObjectTask<T>(std::move(aObject));
-  SystemGroup::Dispatch(TaskCategory::Other, r.forget());
+  SchedulerGroup::Dispatch(TaskCategory::Other, r.forget());
 }
 
 LayersBackend GetCompositorBackendType(
@@ -483,8 +484,8 @@ bool WMFVideoMFTManager::InitializeDXVA() {
     event->Run();
   } else {
     // This logic needs to run on the main thread
-    mozilla::SyncRunnable::DispatchToThread(
-        SystemGroup::EventTargetFor(mozilla::TaskCategory::Other), event);
+    mozilla::SyncRunnable::DispatchToThread(GetMainThreadSerialEventTarget(),
+                                            event);
   }
   mDXVA2Manager = std::move(event->mDXVA2Manager);
 
@@ -801,8 +802,8 @@ bool WMFVideoMFTManager::CanUseDXVA(IMFMediaType* aType, float aFramerate) {
     event->Run();
   } else {
     // This logic needs to run on the main thread
-    mozilla::SyncRunnable::DispatchToThread(
-        SystemGroup::EventTargetFor(mozilla::TaskCategory::Other), event);
+    mozilla::SyncRunnable::DispatchToThread(GetMainThreadSerialEventTarget(),
+                                            event);
   }
 
   return event->mSupportsConfig;

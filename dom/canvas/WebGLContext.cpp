@@ -507,7 +507,7 @@ bool WebGLContext::CreateAndInitGL(
     }
 
     // If "Use hardware acceleration when available" option is disabled:
-    if (!gfxConfig::IsEnabled(Feature::HW_COMPOSITING)) {
+    if (!gfxConfig::IsEnabled(gfx::Feature::HW_COMPOSITING)) {
       highPower = false;
     }
 

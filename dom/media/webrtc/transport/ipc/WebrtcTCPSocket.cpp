@@ -22,8 +22,7 @@
 #include "WebrtcTCPSocketCallback.h"
 #include "WebrtcTCPSocketLog.h"
 
-namespace mozilla {
-namespace net {
+namespace mozilla::net {
 
 class WebrtcTCPData {
  public:
@@ -367,7 +366,7 @@ nsresult WebrtcTCPSocket::OpenWithHttpProxy() {
 
   nsCOMPtr<nsILoadInfo> loadInfo;
   Maybe<net::LoadInfoArgs> loadInfoArgs = Some(mProxyConfig->loadInfoArgs());
-  rv = LoadInfoArgsToLoadInfo(loadInfoArgs, getter_AddRefs(loadInfo));
+  rv = ipc::LoadInfoArgsToLoadInfo(loadInfoArgs, getter_AddRefs(loadInfo));
   if (NS_FAILED(rv)) {
     LOG(("WebrtcTCPSocket %p: could not init load info\n", this));
     return rv;
@@ -729,5 +728,4 @@ size_t WebrtcTCPSocket::CountUnwrittenBytes() const {
   return count;
 }
 
-}  // namespace net
-}  // namespace mozilla
+}  // namespace mozilla::net

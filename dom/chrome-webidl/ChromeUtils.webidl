@@ -438,6 +438,22 @@ partial namespace ChromeUtils {
   [ChromeOnly]
   // aError should a nsresult.
   boolean isClassifierBlockingErrorCode(unsigned long aError);
+
+  /**
+   * If leak detection is enabled, print a note to the leak log that this
+   * process will intentionally crash. This should be called only on child
+   * processes for testing purpose.
+   */
+#ifdef ENABLE_TESTS
+  [ChromeOnly, Throws]
+  void privateNoteIntentionalCrash();
+#endif
+
+  /**
+   * ContentChild of the current process.
+   */
+  [ChromeOnly]
+  readonly attribute nsIContentChild? contentChild;
 };
 
 /*

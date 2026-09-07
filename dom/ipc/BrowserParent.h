@@ -69,6 +69,8 @@ class ClonedMessageData;
 class ContentParent;
 class Element;
 class DataTransfer;
+class BrowserHost;
+class BrowserBridgeParent;
 
 namespace ipc {
 class StructuredCloneData;
@@ -80,7 +82,6 @@ class StructuredCloneData;
  */
 class BrowserParent final : public PBrowserParent,
                             public nsIDOMEventListener,
-                            public nsIRemoteTab,
                             public nsIAuthPromptProvider,
                             public nsIKeyEventInPluginCallback,
                             public nsSupportsWeakReference,
@@ -90,7 +91,6 @@ class BrowserParent final : public PBrowserParent,
   using TapType = GeckoContentController_TapType;
 
   friend class PBrowserParent;
-  friend class BrowserBridgeParent;  // for clearing mBrowserBridgeParent
 
   virtual ~BrowserParent();
 
@@ -100,18 +100,15 @@ class BrowserParent final : public PBrowserParent,
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_NSIAUTHPROMPTPROVIDER
-  // nsIRemoteTab
-  NS_DECL_NSIREMOTETAB
   // nsIDOMEventListener interfaces
   NS_DECL_NSIDOMEVENTLISTENER
 
-  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(BrowserParent, nsIRemoteTab)
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(BrowserParent, nsIDOMEventListener)
 
   BrowserParent(ContentParent* aManager, const TabId& aTabId,
                 const TabContext& aContext,
                 CanonicalBrowsingContext* aBrowsingContext,
-                uint32_t aChromeFlags,
-                BrowserBridgeParent* aBrowserBridgeParent = nullptr);
+                uint32_t aChromeFlags);
 
   // Call from LayoutStatics only
   static void InitializeStatics();
@@ -123,8 +120,6 @@ class BrowserParent final : public PBrowserParent,
   static BrowserParent* GetFocused();
 
   static BrowserParent* GetFrom(nsFrameLoader* aFrameLoader);
-
-  static BrowserParent* GetFrom(nsIRemoteTab* aBrowserParent);
 
   static BrowserParent* GetFrom(PBrowserParent* aBrowserParent);
 
@@ -146,12 +141,6 @@ class BrowserParent final : public PBrowserParent,
   Element* GetOwnerElement() const { return mFrameElement; }
 
   nsIBrowserDOMWindow* GetBrowserDOMWindow() const { return mBrowserDOMWindow; }
-
-  // Returns the BrowserBridgeParent if this BrowserParent is for an
-  // out-of-process iframe and nullptr otherwise.
-  BrowserBridgeParent* GetBrowserBridgeParent() const {
-    return mBrowserBridgeParent;
-  }
 
   already_AddRefed<nsPIDOMWindowOuter> GetParentWindowOuter();
 
@@ -179,9 +168,20 @@ class BrowserParent final : public PBrowserParent,
    */
   a11y::DocAccessibleParent* GetTopLevelDocAccessible() const;
 
-  layout::RemoteLayerTreeOwner* GetRenderFrame();
+  LayersId GetLayersId() const;
+
+  // Returns the BrowserBridgeParent if this BrowserParent is for an
+  // out-of-process iframe and nullptr otherwise.
+  BrowserBridgeParent* GetBrowserBridgeParent() const;
+
+  // Returns the BrowserHost if this BrowserParent is for a top-level browser
+  // and nullptr otherwise.
+  BrowserHost* GetBrowserHost() const;
 
   ParentShowInfo GetShowInfo();
+
+  // Get the content principal from the owner element.
+  already_AddRefed<nsIPrincipal> GetContentPrincipal() const;
 
   /**
    * Let managees query if Destroy() is already called so they don't send out
@@ -242,7 +242,6 @@ class BrowserParent final : public PBrowserParent,
     mBrowserDOMWindow = aBrowserDOMWindow;
   }
 
-  void SetHasContentOpener(bool aHasContentOpener);
 
   void SwapFrameScriptsFrom(nsTArray<FrameScriptInfo>& aFrameScripts) {
     aFrameScripts.SwapElements(mDelayedFrameScripts);
@@ -273,8 +272,6 @@ class BrowserParent final : public PBrowserParent,
 
   mozilla::ipc::IPCResult RecvAccessKeyNotHandled(
       const WidgetKeyboardEvent& aEvent);
-
-  mozilla::ipc::IPCResult RecvSetHasBeforeUnload(const bool& aHasBeforeUnload);
 
   mozilla::ipc::IPCResult RecvRegisterProtocolHandler(const nsString& aScheme,
                                                       nsIURI* aHandlerURI,
@@ -334,11 +331,6 @@ class BrowserParent final : public PBrowserParent,
       nsTArray<nsCString>&& aOrigins, nsTArray<nsString>&& aKeys,
       nsTArray<nsString>&& aValues, const bool aIsFullStorage,
       const uint32_t& aFlushId, const bool& aIsFinal, const uint32_t& aEpoch);
-
-  mozilla::ipc::IPCResult RecvBrowserFrameOpenWindow(
-      PBrowserParent* aOpener, const nsString& aURL, const nsString& aName,
-      bool aForceNoReferrer, const nsString& aFeatures,
-      BrowserFrameOpenWindowResolver&& aResolve);
 
   mozilla::ipc::IPCResult RecvSyncMessage(
       const nsString& aMessage, const ClonedMessageData& aData,
@@ -413,7 +405,8 @@ class BrowserParent final : public PBrowserParent,
       const bool& aIsVertical, const LayoutDeviceIntPoint& aPoint);
 
   mozilla::ipc::IPCResult RecvEnableDisableCommands(
-      const nsString& aAction, nsTArray<nsCString>&& aEnabledCommands,
+      const MaybeDiscarded<BrowsingContext>& aContext, const nsString& aAction,
+      nsTArray<nsCString>&& aEnabledCommands,
       nsTArray<nsCString>&& aDisabledCommands);
 
   mozilla::ipc::IPCResult RecvSetCursor(
@@ -450,6 +443,11 @@ class BrowserParent final : public PBrowserParent,
   mozilla::ipc::IPCResult RecvDispatchKeyboardEvent(
       const mozilla::WidgetKeyboardEvent& aEvent);
 
+  mozilla::ipc::IPCResult RecvScrollRectIntoView(
+      const nsRect& aRect, const ScrollAxis& aVertical,
+      const ScrollAxis& aHorizontal, const ScrollFlags& aScrollFlags,
+      const int32_t& aAppUnitsPerDevPixel);
+
   PColorPickerParent* AllocPColorPickerParent(const nsString& aTitle,
                                               const nsString& aInitialColor);
 
@@ -467,32 +465,19 @@ class BrowserParent final : public PBrowserParent,
       const IAccessibleHolder& aDocCOMProxy) override;
 #endif
 
-  PWindowGlobalParent* AllocPWindowGlobalParent(const WindowGlobalInit& aInit);
-
-  bool DeallocPWindowGlobalParent(PWindowGlobalParent* aActor);
-
-  virtual mozilla::ipc::IPCResult RecvPWindowGlobalConstructor(
-      PWindowGlobalParent* aActor, const WindowGlobalInit& aInit) override;
-
-  already_AddRefed<PBrowserBridgeParent> AllocPBrowserBridgeParent(
-      const nsCString& aRemoteType, BrowsingContext* aBrowsingContext,
-      const uint32_t& aChromeFlags);
-
-  virtual mozilla::ipc::IPCResult RecvPBrowserBridgeConstructor(
-      PBrowserBridgeParent* aActor, const nsCString& aRemoteType,
-      BrowsingContext* aBrowsingContext, const uint32_t& aChromeFlags) override;
+  mozilla::ipc::IPCResult RecvNewWindowGlobal(
+      ManagedEndpoint<PWindowGlobalParent>&& aEndpoint,
+      const WindowGlobalInit& aInit);
 
   void LoadURL(nsIURI* aURI);
 
   void ResumeLoad(uint64_t aPendingSwitchID);
 
   void InitRendering();
+  bool AttachLayerManager();
   void MaybeShowFrame();
 
-  // XXX/cjones: it's not clear what we gain by hiding these
-  // message-sending functions under a layer of indirection and
-  // eating the return values
-  void Show(const ScreenIntSize& aSize, bool aParentIsActive);
+  bool Show(const OwnerShowInfo&);
 
   void UpdateDimensions(const nsIntRect& aRect, const ScreenIntSize& aSize);
 
@@ -501,8 +486,6 @@ class BrowserParent final : public PBrowserParent,
   nsresult UpdatePosition();
 
   void SizeModeChanged(const nsSizeMode& aSizeMode);
-
-  void UIResolutionChanged();
 
   void ThemeChanged();
 
@@ -514,6 +497,8 @@ class BrowserParent final : public PBrowserParent,
   void Activate();
 
   void Deactivate(bool aWindowLowering);
+
+  void MouseEnterIntoWidget();
 
   bool MapEventCoordinatesForChildProcess(mozilla::WidgetEvent* aEvent);
 
@@ -672,11 +657,6 @@ class BrowserParent final : public PBrowserParent,
 
   void LayerTreeUpdate(const LayersObserverEpoch& aEpoch, bool aActive);
 
-  void RequestRootPaint(gfx::CrossProcessPaint* aPaint, IntRect aRect,
-                        float aScale, nscolor aBackgroundColor);
-  void RequestSubPaint(gfx::CrossProcessPaint* aPaint, float aScale,
-                       nscolor aBackgroundColor);
-
   mozilla::ipc::IPCResult RecvInvokeDragSession(
       nsTArray<IPCDataTransfer>&& aTransfers, const uint32_t& aAction,
       Maybe<Shmem>&& aVisualDnDData, const uint32_t& aStride,
@@ -701,9 +681,37 @@ class BrowserParent final : public PBrowserParent,
 
   void NavigateByKey(bool aForward, bool aForDocumentNavigation);
 
-  void SkipBrowsingContextDetach();
+  bool GetDocShellIsActive();
+  void SetDocShellIsActive(bool aDocShellIsActive);
+
+  bool GetHasPresented();
+  bool GetHasLayers();
+  bool GetRenderLayers();
+  void SetRenderLayers(bool aRenderLayers);
+  void PreserveLayers(bool aPreserveLayers);
+  void NotifyResolutionChanged();
+
+  void Deprioritize();
+
+  bool StartApzAutoscroll(float aAnchorX, float aAnchorY, nsViewID aScrollId,
+                          uint32_t aPresShellId);
+  void StopApzAutoscroll(nsViewID aScrollId, uint32_t aPresShellId);
+
+  // Suspend nsIWebProgressListener events until after the next STATE_START
+  // onStateChange. This is used to block STATE_STOP events from the old process
+  // when process switching away, as well as the initial about:blank and
+  // STATE_START from the new process.
+  void SuspendProgressEventsUntilAfterNextLoadStarts() {
+    mSuspendedProgressEvents = true;
+  }
 
  protected:
+  friend BrowserBridgeParent;
+  friend BrowserHost;
+
+  void SetBrowserBridgeParent(BrowserBridgeParent* aBrowser);
+  void SetBrowserHost(BrowserHost* aBrowser);
+
   bool ReceiveMessage(
       const nsString& aMessage, bool aSync, ipc::StructuredCloneData* aData,
       nsTArray<ipc::StructuredCloneData>* aJSONRetVal = nullptr);
@@ -741,12 +749,15 @@ class BrowserParent final : public PBrowserParent,
   mozilla::ipc::IPCResult RecvQueryVisitedState(
       const nsTArray<RefPtr<nsIURI>>&& aURIs);
 
+  mozilla::ipc::IPCResult RecvMaybeFireEmbedderLoadEvents(
+      bool aIsTrusted, bool aFireLoadAtEmbeddingElement);
+
  private:
   void SuppressDisplayport(bool aEnabled);
 
   void DestroyInternal();
 
-  void SetRenderLayersInternal(bool aEnabled, bool aForceRepaint);
+  void SetRenderLayersInternal(bool aEnabled);
 
   already_AddRefed<nsFrameLoader> GetFrameLoader(
       bool aUseCachedFrameLoaderAfterDestroy = false) const;
@@ -783,15 +794,36 @@ class BrowserParent final : public PBrowserParent,
 
   static void RemoveBrowserParentFromTable(layers::LayersId aLayersId);
 
-  // Keeps track of which BrowserParent has keyboard focus
-  static StaticAutoPtr<nsTArray<BrowserParent*>> sFocusStack;
+  // Keeps track of which BrowserParent has keyboard focus.
+  // If nullptr, the parent process has focus.
+  // Use UpdateFocus() to manage.
+  static BrowserParent* sFocus;
 
-  static void PushFocus(BrowserParent* aBrowserParent);
+  // Keeps track of which top-level BrowserParent the keyboard focus is under.
+  // If nullptr, the parent process has focus.
+  // Use SetTopLevelWebFocus and UnsetTopLevelWebFocus to manage.
+  static BrowserParent* sTopLevelWebFocus;
 
-  static void PopFocus(BrowserParent* aBrowserParent);
+  // Setter for sTopLevelWebFocus
+  static void SetTopLevelWebFocus(BrowserParent* aBrowserParent);
+
+  // Unsetter for sTopLevelWebFocus; only unsets if argument matches
+  // current sTopLevelWebFocus. Use UnsetTopLevelWebFocusAll() to
+  // unset regardless of current value.
+  static void UnsetTopLevelWebFocus(BrowserParent* aBrowserParent);
+
+  // Recomputes sFocus and returns it.
+  static BrowserParent* UpdateFocus();
+
+  void OnSubFrameCrashed();
 
  public:
-  static void PopFocusAll();
+  // Unsets sTopLevelWebFocus regardless of its current value.
+  static void UnsetTopLevelWebFocusAll();
+
+  // Recomputes focus when the BrowsingContext tree changes in a
+  // way that potentially invalidates the sFocus.
+  static void UpdateFocusFromBrowsingContext();
 
  private:
   TabId mTabId;
@@ -813,6 +845,10 @@ class BrowserParent final : public PBrowserParent,
   // by the BrowserBridgeParent instance, which has the strong reference
   // to this BrowserParent.
   BrowserBridgeParent* mBrowserBridgeParent;
+  // Pointer to the BrowserHost that owns us, if any. This is mutually
+  // exclusive with mBrowserBridgeParent, and one is guaranteed to be
+  // non-null.
+  BrowserHost* mBrowserHost;
 
   ContentCacheInParent mContentCache;
 
@@ -878,51 +914,51 @@ class BrowserParent final : public PBrowserParent,
 #endif
 
   // Cached value indicating the docshell active state of the remote browser.
-  bool mDocShellIsActive;
+  bool mDocShellIsActive : 1;
 
   // When true, we've initiated normal shutdown and notified our managing
   // PContent.
-  bool mMarkedDestroying;
+  bool mMarkedDestroying : 1;
   // When true, the BrowserParent is invalid and we should not send IPC messages
   // anymore.
-  bool mIsDestroyed;
+  bool mIsDestroyed : 1;
   // True if the cursor changes from the BrowserChild should change the widget
   // cursor.  This happens whenever the cursor is in the tab's region.
-  bool mTabSetsCursor;
-
-  bool mHasContentOpener;
+  bool mTabSetsCursor : 1;
 
   // If this flag is set, then the tab's layers will be preserved even when
   // the tab's docshell is inactive.
-  bool mPreserveLayers;
+  bool mPreserveLayers : 1;
 
   // Holds the most recent value passed to the RenderLayers function. This
   // does not necessarily mean that the layers have finished rendering
   // and have uploaded - for that, use mHasLayers.
-  bool mRenderLayers;
+  bool mRenderLayers : 1;
 
   // Whether this is active for the ProcessPriorityManager or not.
-  bool mActiveInPriorityManager;
+  bool mActiveInPriorityManager : 1;
 
   // True if the compositor has reported that the BrowserChild has uploaded
   // layers.
-  bool mHasLayers;
+  bool mHasLayers : 1;
 
   // True if this BrowserParent has had its layer tree sent to the compositor
   // at least once.
-  bool mHasPresented;
-
-  // True if at least one window hosted in the BrowserChild has added a
-  // beforeunload event listener.
-  bool mHasBeforeUnload;
+  bool mHasPresented : 1;
 
   // True when the remote browser is created and ready to handle input events.
-  bool mIsReadyToHandleInputEvents;
+  bool mIsReadyToHandleInputEvents : 1;
 
   // True if we suppress the eMouseEnterIntoWidget event due to the BrowserChild
   // was not ready to handle it. We will resend it when the next time we fire a
   // mouse event and the BrowserChild is ready.
-  bool mIsMouseEnterIntoWidgetEventSuppressed;
+  bool mIsMouseEnterIntoWidgetEventSuppressed : 1;
+
+  // Set to true if we're currently suspending nsIWebProgress events.
+  // We keep suspending until we get a STATE_START onStateChange event
+  // (for something that isn't the initial about:blank) and then start
+  // allowing future events.
+  bool mSuspendedProgressEvents : 1;
 };
 
 struct MOZ_STACK_CLASS BrowserParent::AutoUseNewTab final {

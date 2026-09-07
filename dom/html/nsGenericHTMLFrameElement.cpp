@@ -6,6 +6,7 @@
 
 #include "mozilla/dom/HTMLIFrameElement.h"
 #include "mozilla/dom/XULFrameElement.h"
+#include "mozilla/dom/BrowserBridgeChild.h"
 #include "mozilla/dom/WindowProxyHolder.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
@@ -31,7 +32,6 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(nsGenericHTMLFrameElement)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsGenericHTMLFrameElement,
                                                   nsGenericHTMLElement)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFrameLoader)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOpenerWindow)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mBrowserElementAPI)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
@@ -42,7 +42,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsGenericHTMLFrameElement,
   }
 
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFrameLoader)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mOpenerWindow)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mBrowserElementAPI)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
@@ -127,15 +126,29 @@ void nsGenericHTMLFrameElement::EnsureFrameLoader() {
 
   // Strangely enough, this method doesn't actually ensure that the
   // frameloader exists.  It's more of a best-effort kind of thing.
-  mFrameLoader = nsFrameLoader::Create(this, mOpenerWindow, mNetworkCreated);
+  mFrameLoader = nsFrameLoader::Create(this, mNetworkCreated);
 }
 
-nsresult nsGenericHTMLFrameElement::CreateRemoteFrameLoader(
-    nsIRemoteTab* aBrowserParent) {
+void nsGenericHTMLFrameElement::DisallowCreateFrameLoader() {
+  MOZ_ASSERT(!mFrameLoader);
+  MOZ_ASSERT(!mFrameLoaderCreationDisallowed);
+  mFrameLoaderCreationDisallowed = true;
+}
+
+void nsGenericHTMLFrameElement::AllowCreateFrameLoader() {
+  MOZ_ASSERT(!mFrameLoader);
+  MOZ_ASSERT(mFrameLoaderCreationDisallowed);
+  mFrameLoaderCreationDisallowed = false;
+}
+
+void nsGenericHTMLFrameElement::CreateRemoteFrameLoader(
+    BrowserParent* aBrowserParent) {
   MOZ_ASSERT(!mFrameLoader);
   EnsureFrameLoader();
-  NS_ENSURE_STATE(mFrameLoader);
-  mFrameLoader->SetRemoteBrowser(aBrowserParent);
+  if (NS_WARN_IF(!mFrameLoader)) {
+    return;
+  }
+  mFrameLoader->InitializeFromBrowserParent(aBrowserParent);
 
   if (nsSubDocumentFrame* subdocFrame = do_QueryFrame(GetPrimaryFrame())) {
     // The reflow for this element already happened while we were waiting
@@ -144,14 +157,6 @@ nsresult nsGenericHTMLFrameElement::CreateRemoteFrameLoader(
     // ReflowFinished, and we need to do it properly now.
     mFrameLoader->UpdatePositionAndSize(subdocFrame);
   }
-  return NS_OK;
-}
-
-void nsGenericHTMLFrameElement::PresetOpenerWindow(
-    const Nullable<WindowProxyHolder>& aOpenerWindow, ErrorResult& aRv) {
-  MOZ_ASSERT(!mFrameLoader);
-  mOpenerWindow =
-      aOpenerWindow.IsNull() ? nullptr : aOpenerWindow.Value().get();
 }
 
 void nsGenericHTMLFrameElement::SwapFrameLoaders(
@@ -265,9 +270,16 @@ nsresult nsGenericHTMLFrameElement::AfterSetAttr(
   if (aNameSpaceID == kNameSpaceID_None) {
     if (aName == nsGkAtoms::scrolling) {
       if (mFrameLoader) {
+        ScrollbarPreference pref = MapScrollingAttribute(aValue);
         if (nsIDocShell* docshell = mFrameLoader->GetExistingDocShell()) {
-          nsDocShell::Cast(docshell)->SetScrollbarPreference(
-              MapScrollingAttribute(aValue));
+          nsDocShell::Cast(docshell)->SetScrollbarPreference(pref);
+        } else if (auto* child = mFrameLoader->GetBrowserBridgeChild()) {
+          // NOTE(emilio): We intentionally don't deal with the
+          // GetBrowserParent() case, and only deal with the fission iframe
+          // case. We could make it work, but it's a bit of boilerplate for
+          // something that we don't use, and we'd need to think how it
+          // interacts with the scrollbar window flags...
+          child->SendScrollbarPreferenceChanged(pref);
         }
       }
     } else if (aName == nsGkAtoms::mozbrowser) {
@@ -331,7 +343,7 @@ nsresult nsGenericHTMLFrameElement::CopyInnerTo(Element* aDest) {
   if (doc->IsStaticDocument() && mFrameLoader) {
     nsGenericHTMLFrameElement* dest =
         static_cast<nsGenericHTMLFrameElement*>(aDest);
-    nsFrameLoader* fl = nsFrameLoader::Create(dest, nullptr, false);
+    RefPtr<nsFrameLoader> fl = nsFrameLoader::Create(dest, false);
     NS_ENSURE_STATE(fl);
     dest->mFrameLoader = fl;
     mFrameLoader->CreateStaticClone(fl);
@@ -365,22 +377,6 @@ bool nsGenericHTMLFrameElement::IsHTMLFocusable(bool aWithMouse,
 /* [infallible] */
 nsresult nsGenericHTMLFrameElement::GetReallyIsBrowser(bool* aOut) {
   *aOut = mReallyIsBrowser;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLFrameElement::DisallowCreateFrameLoader() {
-  MOZ_ASSERT(!mFrameLoader);
-  MOZ_ASSERT(!mFrameLoaderCreationDisallowed);
-  mFrameLoaderCreationDisallowed = true;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGenericHTMLFrameElement::AllowCreateFrameLoader() {
-  MOZ_ASSERT(!mFrameLoader);
-  MOZ_ASSERT(mFrameLoaderCreationDisallowed);
-  mFrameLoaderCreationDisallowed = false;
   return NS_OK;
 }
 

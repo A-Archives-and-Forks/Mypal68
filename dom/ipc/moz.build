@@ -6,6 +6,8 @@ with Files("**"):
     BUG_COMPONENT = ("Core", "DOM: Content Processes")
 
 XPIDL_SOURCES += [
+    'nsIContentChild.idl',
+    'nsIContentParent.idl',
     'nsIHangReport.idl',
     'nsIRemoteWebProgress.idl',
     'nsIRemoteWebProgressRequest.idl',
@@ -33,9 +35,12 @@ EXPORTS.mozilla.dom.ipc += [
 
 EXPORTS.mozilla.dom += [
     'BrowserBridgeChild.h',
+    'BrowserBridgeHost.h',
     'BrowserBridgeParent.h',
     'BrowserChild.h',
+    'BrowserHost.h',
     'BrowserParent.h',
+    'ClonedErrorHolder.h',
     'CoalescedInputData.h',
     'CoalescedMouseData.h',
     'CoalescedWheelData.h',
@@ -45,16 +50,20 @@ EXPORTS.mozilla.dom += [
     'ContentProcessManager.h',
     'CSPMessageUtils.h',
     'DocShellMessageUtils.h',
+    'EffectsInfo.h',
     'FilePickerParent.h',
     'JSWindowActor.h',
     'JSWindowActorChild.h',
     'JSWindowActorParent.h',
     'JSWindowActorService.h',
+    'MaybeDiscarded.h',
     'MemoryReportRequest.h',
     'NativeThreadId.h',
     'PermissionMessageUtils.h',
+    'PropertyBagUtils.h',
     'ReferrerInfoUtils.h',
     'RefMessageBodyService.h',
+    'RemoteBrowser.h',
     'RemoteWebProgress.h',
     'RemoteWebProgressRequest.h',
     'SharedMessageBody.h',
@@ -63,6 +72,7 @@ EXPORTS.mozilla.dom += [
     'TabMessageUtils.h',
     'URLClassifierChild.h',
     'URLClassifierParent.h',
+    'UserActivationIPCUtils.h',
     'WindowGlobalActor.h',
     'WindowGlobalChild.h',
     'WindowGlobalParent.h',
@@ -75,11 +85,18 @@ EXPORTS.mozilla += [
     'ProcessPriorityManager.h',
 ]
 
+EXPORTS += [
+    'nsQueryActor.h',
+]
+
 UNIFIED_SOURCES += [
     'BrowserBridgeChild.cpp',
+    'BrowserBridgeHost.cpp',
     'BrowserBridgeParent.cpp',
     'BrowserChild.cpp',
+    'BrowserHost.cpp',
     'BrowserParent.cpp',
+    'ClonedErrorHolder.cpp',
     'CoalescedMouseData.cpp',
     'CoalescedWheelData.cpp',
     'ColorPickerParent.cpp',
@@ -99,8 +116,10 @@ UNIFIED_SOURCES += [
     'PermissionMessageUtils.cpp',
     'PreallocatedProcessManager.cpp',
     'ProcessPriorityManager.cpp',
+    'PropertyBagUtils.cpp',
     'ReferrerInfoUtils.cpp',
     'RefMessageBodyService.cpp',
+    'RemoteBrowser.cpp',
     'RemoteWebProgress.cpp',
     'RemoteWebProgressRequest.cpp',
     'SharedMap.cpp',
@@ -123,13 +142,13 @@ SOURCES += [
 
 PREPROCESSED_IPDL_SOURCES += [
     'PBrowser.ipdl',
+    'PBrowserBridge.ipdl',
     'PContent.ipdl',
 ]
 
 IPDL_SOURCES += [
     'DOMTypes.ipdlh',
     'MemoryReportTypes.ipdlh',
-    'PBrowserBridge.ipdl',
     'PBrowserOrId.ipdlh',
     'PColorPicker.ipdl',
     'PContentPermission.ipdlh',

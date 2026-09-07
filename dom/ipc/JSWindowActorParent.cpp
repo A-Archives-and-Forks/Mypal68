@@ -4,6 +4,7 @@
 
 #include "mozilla/dom/JSWindowActorBinding.h"
 #include "mozilla/dom/JSWindowActorParent.h"
+#include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/dom/MessageManagerBinding.h"
 
@@ -11,6 +12,10 @@ namespace mozilla {
 namespace dom {
 
 JSWindowActorParent::~JSWindowActorParent() { MOZ_ASSERT(!mManager); }
+
+nsIGlobalObject* JSWindowActorParent::GetParentObject() const {
+  return xpc::NativeGlobal(xpc::PrivilegedJunkScope());
+}
 
 JSObject* JSWindowActorParent::WrapObject(JSContext* aCx,
                                           JS::Handle<JSObject*> aGivenProto) {
@@ -32,52 +37,66 @@ class AsyncMessageToChild : public Runnable {
  public:
   AsyncMessageToChild(const JSWindowActorMessageMeta& aMetadata,
                       ipc::StructuredCloneData&& aData,
-                      WindowGlobalChild* aChild)
+                      ipc::StructuredCloneData&& aStack,
+                      WindowGlobalParent* aManager)
       : mozilla::Runnable("WindowGlobalChild::HandleAsyncMessage"),
         mMetadata(aMetadata),
         mData(std::move(aData)),
-        mChild(aChild) {}
+        mStack(std::move(aStack)),
+        mManager(aManager) {}
 
   NS_IMETHOD Run() override {
     MOZ_ASSERT(NS_IsMainThread(), "Should be called on the main thread.");
-    mChild->ReceiveRawMessage(mMetadata, std::move(mData));
+    RefPtr<WindowGlobalChild> child = mManager->GetChildActor();
+    if (child) {
+      child->ReceiveRawMessage(mMetadata, std::move(mData), std::move(mStack));
+    }
     return NS_OK;
   }
 
  private:
   JSWindowActorMessageMeta mMetadata;
   ipc::StructuredCloneData mData;
-  RefPtr<WindowGlobalChild> mChild;
+  ipc::StructuredCloneData mStack;
+  RefPtr<WindowGlobalParent> mManager;
 };
 
 }  // anonymous namespace
 
 void JSWindowActorParent::SendRawMessage(const JSWindowActorMessageMeta& aMeta,
                                          ipc::StructuredCloneData&& aData,
+                                         ipc::StructuredCloneData&& aStack,
                                          ErrorResult& aRv) {
-  if (NS_WARN_IF(!mCanSend || !mManager || mManager->IsClosed())) {
+  if (NS_WARN_IF(!mCanSend || !mManager || !mManager->CanSend())) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
 
   if (mManager->IsInProcess()) {
-    RefPtr<WindowGlobalChild> wgc = mManager->GetChildActor();
-    nsCOMPtr<nsIRunnable> runnable =
-        new AsyncMessageToChild(aMeta, std::move(aData), wgc);
+    nsCOMPtr<nsIRunnable> runnable = new AsyncMessageToChild(
+        aMeta, std::move(aData), std::move(aStack), mManager);
     NS_DispatchToMainThread(runnable.forget());
+    return;
+  }
+
+  if (NS_WARN_IF(
+          !AllowMessage(aMeta, aData.DataLength() + aStack.DataLength()))) {
+    aRv.Throw(NS_ERROR_UNEXPECTED);
     return;
   }
 
   // Cross-process case - send data over WindowGlobalParent to other side.
   ClonedMessageData msgData;
-  RefPtr<BrowserParent> browserParent = mManager->GetRemoteTab();
+  ClonedMessageData stackData;
+  RefPtr<BrowserParent> browserParent = mManager->GetBrowserParent();
   ContentParent* cp = browserParent->Manager();
-  if (NS_WARN_IF(!aData.BuildClonedMessageDataForParent(cp, msgData))) {
+  if (NS_WARN_IF(!aData.BuildClonedMessageDataForParent(cp, msgData)) ||
+      NS_WARN_IF(!aStack.BuildClonedMessageDataForParent(cp, stackData))) {
     aRv.Throw(NS_ERROR_DOM_DATA_CLONE_ERR);
     return;
   }
 
-  if (NS_WARN_IF(!mManager->SendRawMessage(aMeta, msgData))) {
+  if (NS_WARN_IF(!mManager->SendRawMessage(aMeta, msgData, stackData))) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
     return;
   }

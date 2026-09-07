@@ -15,7 +15,6 @@
 
 #include "mozilla/ipc/BrowserProcessSubThread.h"
 #include "mozilla/plugins/PluginMessageUtils.h"
-#include "mozilla/Telemetry.h"
 #include "nsThreadUtils.h"
 
 using std::string;

@@ -64,8 +64,8 @@ class nsWindowRoot final : public nsPIWindowRoot {
 
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(nsWindowRoot)
 
-  void AddBrowser(mozilla::dom::BrowserParent* aBrowser) override;
-  void RemoveBrowser(mozilla::dom::BrowserParent* aBrowser) override;
+  void AddBrowser(nsIRemoteTab* aBrowser) override;
+  void RemoveBrowser(nsIRemoteTab* aBrowser) override;
   void EnumerateBrowsers(BrowserEnumerator aEnumFunc, void* aArg) override;
 
   bool ShowFocusRings() override { return mShowFocusRings; }

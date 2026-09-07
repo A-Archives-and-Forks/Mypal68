@@ -18,7 +18,6 @@
 #include "mozilla/Services.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/StaticPrefs_media.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/Telemetry.h"
 #include "nsContentUtils.h"
 #include "nsINetworkLinkService.h"
@@ -727,9 +726,11 @@ void MediaCache::FlushInternal(AutoLock& aLock) {
 void MediaCache::Flush() {
   MOZ_ASSERT(NS_IsMainThread());
   nsCOMPtr<nsIRunnable> r = NS_NewRunnableFunction(
-      "MediaCache::Flush", [self = RefPtr<MediaCache>(this)]() {
+      "MediaCache::Flush", [self = RefPtr<MediaCache>(this)]() mutable {
         AutoLock lock(self->mMonitor);
         self->FlushInternal(lock);
+        // Ensure MediaCache is deleted on the main thread.
+        NS_ReleaseOnMainThread("MediaCache::Flush", self.forget());
       });
   sThread->Dispatch(r.forget());
 }
@@ -738,7 +739,7 @@ void MediaCache::CloseStreamsForPrivateBrowsing() {
   MOZ_ASSERT(NS_IsMainThread());
   sThread->Dispatch(NS_NewRunnableFunction(
       "MediaCache::CloseStreamsForPrivateBrowsing",
-      [self = RefPtr<MediaCache>(this)]() {
+      [self = RefPtr<MediaCache>(this)]() mutable {
         AutoLock lock(self->mMonitor);
         // Copy mStreams since CloseInternal() will change the array.
         nsTArray<MediaCacheStream*> streams(self->mStreams);
@@ -747,6 +748,9 @@ void MediaCache::CloseStreamsForPrivateBrowsing() {
             s->CloseInternal(lock);
           }
         }
+        // Ensure MediaCache is deleted on the main thread.
+        NS_ReleaseOnMainThread("MediaCache::CloseStreamsForPrivateBrowsing",
+                               self.forget());
       }));
 }
 
@@ -1546,9 +1550,7 @@ class UpdateEvent : public Runnable {
   NS_IMETHOD Run() override {
     mMediaCache->Update();
     // Ensure MediaCache is deleted on the main thread.
-    NS_ProxyRelease("UpdateEvent::mMediaCache",
-                    SystemGroup::EventTargetFor(mozilla::TaskCategory::Other),
-                    mMediaCache.forget());
+    NS_ReleaseOnMainThread("UpdateEvent::mMediaCache", mMediaCache.forget());
     return NS_OK;
   }
 

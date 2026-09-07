@@ -148,36 +148,15 @@ static gfx::Size CalculateBoxSize(Element* aTarget,
   return CSSPixel::FromAppUnits(GetContentRectSize(*frame)).ToUnknownSize();
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(ResizeObservation)
-
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(ResizeObservation)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTarget);
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(ResizeObservation)
-  tmp->Unlink(RemoveFromObserver::Yes);
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-
+NS_IMPL_CYCLE_COLLECTION(ResizeObservation, mTarget)
 NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(ResizeObservation, AddRef)
 NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(ResizeObservation, Release)
 
 ResizeObservation::ResizeObservation(Element& aTarget,
-                                     ResizeObserver& aObserver,
                                      ResizeObserverBoxOptions aBox,
                                      WritingMode aWm)
-    : mTarget(&aTarget), mObserver(&aObserver), mObservedBox(aBox) {
-  aTarget.BindObject(mObserver);
-}
-
-void ResizeObservation::Unlink(RemoveFromObserver aRemoveFromObserver) {
-  ResizeObserver* observer = std::exchange(mObserver, nullptr);
-  nsCOMPtr<Element> target = std::move(mTarget);
-  if (observer && target) {
-    if (aRemoveFromObserver == RemoveFromObserver::Yes) {
-      observer->Unobserve(*target);
-    }
-    target->UnbindObject(observer);
-  }
+    : mTarget(&aTarget), mObservedBox(aBox) {
+  MOZ_ASSERT(mTarget, "Need a non-null target element");
 }
 
 bool ResizeObservation::IsActive() const {
@@ -288,9 +267,8 @@ void ResizeObserver::Observe(Element& aTarget,
   // FIXME(emilio): This should probably either flush or not look at the
   // writing-mode or something.
   nsIFrame* frame = aTarget.GetPrimaryFrame();
-  observation =
-      new ResizeObservation(aTarget, *this, aOptions.mBox,
-                            frame ? frame->GetWritingMode() : WritingMode());
+  observation = new ResizeObservation(
+      aTarget, aOptions.mBox, frame ? frame->GetWritingMode() : WritingMode());
   if (this == mDocument->GetLastRememberedSizeObserver()) {
     // Resize observations are initialized with a (0, 0) mLastReportedSize,
     // this means that the callback won't be called if the element is 0x0.
@@ -330,10 +308,7 @@ void ResizeObserver::Unobserve(Element& aTarget) {
 
 void ResizeObserver::Disconnect() {
   const bool registered = !mObservationList.isEmpty();
-  while (auto* observation = mObservationList.popFirst()) {
-    observation->Unlink(ResizeObservation::RemoveFromObserver::No);
-  }
-  MOZ_ASSERT(mObservationList.isEmpty());
+  mObservationList.clear();
   mObservationMap.Clear();
   mActiveTargets.Clear();
   if (registered && MOZ_LIKELY(mDocument)) {

@@ -11,7 +11,6 @@
 #include "GMPVideoEncodedFrameImpl.h"
 #include "GMPVideoi420FrameImpl.h"
 #include "mozilla/gmp/GMPTypes.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/Unused.h"
 #include "nsAutoRef.h"
 #include "nsThread.h"

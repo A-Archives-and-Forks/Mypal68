@@ -16,7 +16,7 @@
 #include "mozilla/dom/BodyExtractor.h"
 #include "mozilla/dom/FetchBinding.h"
 #include "mozilla/dom/File.h"
-#include "nsGeolocation.h"
+#include "Geolocation.h"
 #include "nsIClassOfService.h"
 #include "nsIHttpProtocolHandler.h"
 #include "nsIContentPolicy.h"
@@ -233,7 +233,7 @@ void Navigator::GetUserAgent(nsAString& aUserAgent, CallerType aCallerType,
     nsIDocShell* docshell = window->GetDocShell();
     nsString customUserAgent;
     if (docshell) {
-      docshell->GetCustomUserAgent(customUserAgent);
+      docshell->GetBrowsingContext()->GetCustomUserAgent(customUserAgent);
 
       if (!customUserAgent.IsEmpty()) {
         aUserAgent = customUserAgent;
@@ -766,6 +766,15 @@ bool Navigator::Vibrate(const nsTArray<uint32_t>& aPattern) {
 //*****************************************************************************
 
 uint32_t Navigator::MaxTouchPoints(CallerType aCallerType) {
+  nsIDocShell* docshell = GetDocShell();
+  BrowsingContext* bc = docshell ? docshell->GetBrowsingContext() : nullptr;
+
+  // Responsive Design Mode overrides the maxTouchPoints property when
+  // touch simulation is enabled.
+  if (bc && bc->InRDMPane()) {
+    return bc->GetMaxTouchPointsOverride();
+  }
+
   // The maxTouchPoints is going to reveal the detail of users' hardware. So,
   // we will spoof it into 0 if fingerprinting resistance is on.
   if (aCallerType != CallerType::System &&
@@ -786,6 +795,7 @@ uint32_t Navigator::MaxTouchPoints(CallerType aCallerType) {
 
 // This list should be kept up-to-date with the spec:
 // https://html.spec.whatwg.org/multipage/system-state.html#custom-handlers
+// If you change this list, please also update the copy in E10SUtils.jsm.
 static const char* const kSafeSchemes[] = {
     "bitcoin", "geo",  "im",   "irc",         "ircs", "magnet", "mailto",
     "mms",     "news", "nntp", "openpgp4fpr", "sip",  "sms",    "smsto",

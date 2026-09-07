@@ -73,6 +73,13 @@ ResizeObserverNotificationHelper::~ResizeObserverNotificationHelper() {
   MOZ_RELEASE_ASSERT(!mOwner, "Forgot to clear weak pointer?");
 }
 
+void ResizeObserverController::Traverse(
+    nsCycleCollectionTraversalCallback& aCb) {
+  ImplCycleCollectionTraverse(aCb, mResizeObservers, "mResizeObservers");
+}
+
+void ResizeObserverController::Unlink() { mResizeObservers.Clear(); }
+
 void ResizeObserverController::ShellDetachedFromDocument() {
   mResizeObserverNotificationHelper->Unregister();
 }
@@ -159,8 +166,7 @@ uint32_t ResizeObserverController::BroadcastAllActiveObservations() {
 
   // Copy the observers as this invokes the callbacks and could register and
   // unregister observers at will.
-  const auto observers =
-      ToTArray<nsTArray<RefPtr<ResizeObserver>>>(mResizeObservers);
+  const nsTArray<RefPtr<ResizeObserver>> observers(mResizeObservers);
   for (auto& observer : observers) {
     // MOZ_KnownLive because 'observers' is guaranteed to keep it
     // alive.

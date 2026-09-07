@@ -5,6 +5,7 @@
 #include "ServiceWorkerRegistrationProxy.h"
 
 #include "mozilla/ScopeExit.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "ServiceWorkerManager.h"
 #include "ServiceWorkerRegistrationParent.h"
@@ -31,6 +32,9 @@ class ServiceWorkerRegistrationProxy::DelayedUpdate final
   DelayedUpdate(RefPtr<ServiceWorkerRegistrationProxy>&& aProxy,
                 RefPtr<ServiceWorkerRegistrationPromise::Private>&& aPromise,
                 nsCString&& aNewestWorkerScriptUrl, uint32_t delay);
+
+  void ChainTo(RefPtr<ServiceWorkerRegistrationPromise::Private> aPromise);
+
   void Reject();
 
   void SetNewestWorkerScriptUrl(nsCString&& aNewestWorkerScriptUrl);
@@ -179,7 +183,8 @@ void ServiceWorkerRegistrationProxy::Init(
   nsCOMPtr<nsIRunnable> r =
       NewRunnableMethod("ServiceWorkerRegistrationProxy::Init", this,
                         &ServiceWorkerRegistrationProxy::InitOnMainThread);
-  MOZ_ALWAYS_SUCCEEDS(SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
+  MOZ_ALWAYS_SUCCEEDS(
+      SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
 }
 
 void ServiceWorkerRegistrationProxy::RevokeActor(
@@ -192,7 +197,8 @@ void ServiceWorkerRegistrationProxy::RevokeActor(
   nsCOMPtr<nsIRunnable> r = NewRunnableMethod(
       __func__, this,
       &ServiceWorkerRegistrationProxy::StopListeningOnMainThread);
-  MOZ_ALWAYS_SUCCEEDS(SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
+  MOZ_ALWAYS_SUCCEEDS(
+      SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
 }
 
 RefPtr<GenericPromise> ServiceWorkerRegistrationProxy::Unregister() {
@@ -221,7 +227,8 @@ RefPtr<GenericPromise> ServiceWorkerRegistrationProxy::Unregister() {
         scopeExit.release();
       });
 
-  MOZ_ALWAYS_SUCCEEDS(SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
+  MOZ_ALWAYS_SUCCEEDS(
+      SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
 
   return promise;
 }
@@ -266,10 +273,18 @@ ServiceWorkerRegistrationProxy::DelayedUpdate::DelayedUpdate(
   MOZ_ASSERT(!mNewestWorkerScriptUrl.IsEmpty());
   mProxy->mDelayedUpdate = this;
   Result<nsCOMPtr<nsITimer>, nsresult> result =
-      NS_NewTimerWithCallback(this, delay, nsITimer::TYPE_ONE_SHOT,
-                              SystemGroup::EventTargetFor(TaskCategory::Other));
+      NS_NewTimerWithCallback(this, delay, nsITimer::TYPE_ONE_SHOT);
   mTimer = result.unwrapOr(nullptr);
   MOZ_DIAGNOSTIC_ASSERT(mTimer);
+}
+
+void ServiceWorkerRegistrationProxy::DelayedUpdate::ChainTo(
+    RefPtr<ServiceWorkerRegistrationPromise::Private> aPromise) {
+  AssertIsOnMainThread();
+  MOZ_ASSERT(mProxy->mDelayedUpdate == this);
+  MOZ_ASSERT(mPromise);
+
+  mPromise->ChainTo(aPromise.forget(), __func__);
 }
 
 void ServiceWorkerRegistrationProxy::DelayedUpdate::Reject() {
@@ -289,9 +304,13 @@ void ServiceWorkerRegistrationProxy::DelayedUpdate::SetNewestWorkerScriptUrl(
 
 NS_IMETHODIMP
 ServiceWorkerRegistrationProxy::DelayedUpdate::Notify(nsITimer* aTimer) {
+  // Already shutting down.
+  if (mProxy->mDelayedUpdate != this) {
+    return NS_OK;
+  }
+
   auto scopeExit = MakeScopeExit(
       [&] { mPromise->Reject(NS_ERROR_DOM_INVALID_STATE_ERR, __func__); });
-  MOZ_DIAGNOSTIC_ASSERT((mProxy->mDelayedUpdate == this));
 
   NS_ENSURE_TRUE(mProxy->mReg, NS_ERROR_FAILURE);
 
@@ -325,15 +344,26 @@ RefPtr<ServiceWorkerRegistrationPromise> ServiceWorkerRegistrationProxy::Update(
 
         // Get the delay value for the update
         NS_ENSURE_TRUE_VOID(self->mReg);
-        uint32_t delay = self->mReg->GetUpdateDelay();
+        uint32_t delay = self->mReg->GetUpdateDelay(false);
 
         // If the delay value does not equal to 0, create a timer and a timer
         // callback to perform the delayed update. Otherwise, update directly.
         if (delay) {
-          RefPtr<ServiceWorkerRegistrationProxy::DelayedUpdate> du =
-              new ServiceWorkerRegistrationProxy::DelayedUpdate(
-                  std::move(self), std::move(promise),
-                  std::move(newestWorkerScriptUrl), delay);
+          if (self->mDelayedUpdate) {
+            // NOTE: if we `ChainTo(),` there will ultimately be a single
+            // update, and this update will resolve all promises that were
+            // issued while the update's timer was ticking down.
+            self->mDelayedUpdate->ChainTo(std::move(promise));
+
+            // Use the "newest newest worker"'s script URL.
+            self->mDelayedUpdate->SetNewestWorkerScriptUrl(
+                std::move(newestWorkerScriptUrl));
+          } else {
+            RefPtr<ServiceWorkerRegistrationProxy::DelayedUpdate> du =
+                new ServiceWorkerRegistrationProxy::DelayedUpdate(
+                    std::move(self), std::move(promise),
+                    std::move(newestWorkerScriptUrl), delay);
+          }
         } else {
           RefPtr<ServiceWorkerManager> swm =
               ServiceWorkerManager::GetInstance();
@@ -346,7 +376,8 @@ RefPtr<ServiceWorkerRegistrationPromise> ServiceWorkerRegistrationProxy::Update(
         scopeExit.release();
       });
 
-  MOZ_ALWAYS_SUCCEEDS(SystemGroup::Dispatch(TaskCategory::Other, r.forget()));
+  MOZ_ALWAYS_SUCCEEDS(
+      SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
 
   return promise;
 }

@@ -19,7 +19,7 @@ add_task(async function test() {
       );
     }
 
-    await ContentTask.spawn(browser, null, startTests);
+    await SpecialPowers.spawn(browser, [], startTests);
   });
 });
 

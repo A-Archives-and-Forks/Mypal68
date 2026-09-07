@@ -8,7 +8,7 @@
 #include "MediaInfo.h"
 #include "PDMFactory.h"
 #include "mozilla/ClearOnShutdown.h"
-#include "mozilla/SystemGroup.h"
+#include "mozilla/SchedulerGroup.h"
 #ifdef MOZ_WIDGET_ANDROID
 #  include "mozilla/jni/Utils.h"
 #endif
@@ -90,7 +90,7 @@ StaticMutex GlobalAllocPolicy::sMutex;
 NotNull<AllocPolicy*> GlobalAllocPolicy::Instance() {
   StaticMutexAutoLock lock(sMutex);
   static RefPtr<AllocPolicyImpl> sVideoPolicy = []() {
-    SystemGroup::Dispatch(
+    SchedulerGroup::Dispatch(
         TaskCategory::Other,
         NS_NewRunnableFunction(
             "GlobalAllocPolicy::GlobalAllocPolicy:Audio", []() {

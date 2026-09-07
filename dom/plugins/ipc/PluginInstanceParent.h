@@ -288,9 +288,6 @@ class PluginInstanceParent : public PPluginInstanceParent {
 
   void SetCurrentImage(layers::Image* aImage);
 
-  // Update Telemetry with the current drawing model.
-  void RecordDrawingModel();
-
  private:
   PluginModuleParent* mParent;
   NPP mNPP;
@@ -298,11 +295,6 @@ class PluginInstanceParent : public PPluginInstanceParent {
   nsCString mSrcAttribute;
   NPWindowType mWindowType;
   int16_t mDrawingModel;
-
-  // Since plugins may request different drawing models to find a compatible
-  // one, we only record the drawing model after a SetWindow call and if the
-  // drawing model has changed.
-  int mLastRecordedDrawingModel;
 
   nsTHashMap<nsPtrHashKey<NPObject>, PluginScriptableObjectParent*>
       mScriptableObjects;

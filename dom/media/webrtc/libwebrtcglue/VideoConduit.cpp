@@ -11,6 +11,7 @@
 #include "VideoConduit.h"
 #include "VideoStreamFactory.h"
 #include "common/YuvStamper.h"
+#include "modules/rtp_rtcp/source/rtp_packet_received.h"
 #include "mozilla/TemplateLib.h"
 #include "mozilla/media/MediaUtils.h"
 #include "mozilla/StaticPrefs_media.h"
@@ -1051,7 +1052,7 @@ bool WebrtcVideoConduit::SetRemoteSSRCLocked(uint32_t ssrc, uint32_t rtxSsrc) {
       "WebrtcVideoConduit::WaitingForInitialSsrcNoMore",
       [this, self = RefPtr<WebrtcVideoConduit>(this)]() mutable {
         mWaitingForInitialSsrc = false;
-        NS_ReleaseOnMainThreadSystemGroup(
+        NS_ReleaseOnMainThread(
             "WebrtcVideoConduit::WaitingForInitialSsrcNoMore", self.forget());
       }));
   // On the next StartReceiving() or ConfigureRecvMediaCodec, force
@@ -1164,8 +1165,8 @@ void WebrtcVideoConduit::PollStats() {
         for (const auto& runnable : runnables) {
           runnable->Run();
         }
-        NS_ReleaseOnMainThreadSystemGroup(
-            "WebrtcVideoConduit::UpdateStreamStatistics", self.forget());
+        NS_ReleaseOnMainThread("WebrtcVideoConduit::UpdateStreamStatistics",
+                               self.forget());
       }));
 }
 
@@ -1180,8 +1181,8 @@ void WebrtcVideoConduit::UpdateVideoStatsTimer() {
        receiving]() mutable {
         mSendStreamStats.SetActive(transmitting);
         mRecvStreamStats.SetActive(receiving);
-        NS_ReleaseOnMainThreadSystemGroup(
-            "WebrtcVideoConduit::SetSendStreamStatsActive", self.forget());
+        NS_ReleaseOnMainThread("WebrtcVideoConduit::SetSendStreamStatsActive",
+                               self.forget());
       }));
 
   bool shouldBeActive = transmitting || receiving;
@@ -1997,8 +1998,8 @@ MediaConduitErrorCode WebrtcVideoConduit::SendVideoFrame(
       "SendStreamStatistics::FrameDeliveredToEncoder",
       [self = RefPtr<WebrtcVideoConduit>(this), this]() mutable {
         mSendStreamStats.FrameDeliveredToEncoder();
-        NS_ReleaseOnMainThreadSystemGroup(
-            "SendStreamStatistics::FrameDeliveredToEncoder", self.forget());
+        NS_ReleaseOnMainThread("SendStreamStatistics::FrameDeliveredToEncoder",
+                               self.forget());
       }));
   return kMediaConduitNoError;
 }
@@ -2089,7 +2090,7 @@ MediaConduitErrorCode WebrtcVideoConduit::ReceivedRTPPacket(
                     return;
                   }
                   mRtpPacketQueue.DequeueAll(this);
-                  NS_ReleaseOnMainThreadSystemGroup(
+                  NS_ReleaseOnMainThread(
                       "WebrtcVideoConduit::QueuedPacketsHandler",
                       self.forget());
                 }));

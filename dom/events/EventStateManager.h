@@ -241,6 +241,15 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
                      const Maybe<gfx::IntPoint>& aHotspot, nsIWidget* aWidget,
                      bool aLockCursor);
 
+   /**
+   * Checks if the current mouse over element matches the given
+   * Element (which has a remote frame), and if so, notifies
+   * the BrowserParent of the mouse enter.
+   * Called when we reconstruct the BrowserParent and need to
+   * recompute state on the new object.
+   */
+  void RecomputeMouseEnterStateForRemoteFrame(dom::Element& aElement);
+
   nsPresContext* GetPresContext() { return mPresContext; }
 
   NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(EventStateManager, nsIObserver)
@@ -875,8 +884,7 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   void DoScrollHistory(int32_t direction);
   void DoScrollZoom(nsIFrame* aTargetFrame, int32_t adjustment);
   nsresult GetContentViewer(nsIContentViewer** aCv);
-  nsresult ChangeTextSize(int32_t change);
-  nsresult ChangeFullZoom(int32_t change);
+  nsresult ChangeZoom(int32_t change);
 
   /**
    * DeltaAccumulator class manages delta values for dispatching DOMMouseScroll

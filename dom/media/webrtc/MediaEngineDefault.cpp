@@ -11,10 +11,10 @@
 #include "MediaTrackListener.h"
 #include "MediaTrackConstraints.h"
 #include "mozilla/dom/File.h"
+#include "mozilla/MediaManager.h"
 #include "mozilla/UniquePtr.h"
 #include "nsCOMPtr.h"
 #include "nsContentUtils.h"
-#include "nsIFile.h"
 #include "SineWaveGenerator.h"
 #include "Tracing.h"
 
@@ -48,14 +48,12 @@ static nsString DefaultVideoName() {
   // InvokeAsync, instead of "soft" block, provided by sync dispatch which
   // allows the waiting thread to spin its event loop. The latter would allow
   // miltiple enumeration requests being processed out-of-order.
-  media::Await(
-      do_AddRef(SystemGroup::EventTargetFor(TaskCategory::Other)),
-      InvokeAsync(
-          SystemGroup::EventTargetFor(TaskCategory::Other), __func__, [&]() {
-            rv = Preferences::GetString("media.getusermedia.fake-camera-name",
-                                        cameraNameFromPref);
-            return GenericPromise::CreateAndResolve(true, __func__);
-          }));
+  media::Await(do_AddRef(GetMainThreadSerialEventTarget()),
+               InvokeAsync(GetMainThreadSerialEventTarget(), __func__, [&]() {
+                 rv = Preferences::GetString(
+                     "media.getusermedia.fake-camera-name", cameraNameFromPref);
+                 return GenericPromise::CreateAndResolve(true, __func__);
+               }));
 
   if (NS_SUCCEEDED(rv)) {
     return std::move(cameraNameFromPref);
@@ -129,8 +127,7 @@ void MediaEngineDefaultVideoSource::GetSettings(
 
 nsresult MediaEngineDefaultVideoSource::Allocate(
     const MediaTrackConstraints& aConstraints, const MediaEnginePrefs& aPrefs,
-    const mozilla::ipc::PrincipalInfo& aPrincipalInfo,
-    const char** aOutBadConstraint) {
+    uint64_t aWindowID, const char** aOutBadConstraint) {
   AssertIsOnOwningThread();
 
   MOZ_ASSERT(mState == kReleased);
@@ -408,8 +405,7 @@ void MediaEngineDefaultAudioSource::GetSettings(
 
 nsresult MediaEngineDefaultAudioSource::Allocate(
     const MediaTrackConstraints& aConstraints, const MediaEnginePrefs& aPrefs,
-    const mozilla::ipc::PrincipalInfo& aPrincipalInfo,
-    const char** aOutBadConstraint) {
+    uint64_t aWindowID, const char** aOutBadConstraint) {
   AssertIsOnOwningThread();
 
   MOZ_ASSERT(mState == kReleased);

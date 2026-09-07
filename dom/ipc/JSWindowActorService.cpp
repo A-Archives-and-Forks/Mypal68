@@ -14,9 +14,10 @@
 #include "mozilla/dom/PContent.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/WindowGlobalChild.h"
+#include "mozilla/Services.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/Logging.h"
-#include "nsIObserverService.h" //MY
+#include "nsIObserverService.h"
 
 namespace mozilla {
 namespace dom {
@@ -45,6 +46,7 @@ JSWindowActorProtocol::FromIPC(const JSWindowActorInfo& aInfo) {
   proto->mAllFrames = aInfo.allFrames();
   proto->mMatches = aInfo.matches();
   proto->mRemoteTypes = aInfo.remoteTypes();
+  proto->mMessageManagerGroups = aInfo.messageManagerGroups();
   proto->mChild.mModuleURI = aInfo.url();
 
   proto->mChild.mEvents.SetCapacity(aInfo.events().Length());
@@ -71,6 +73,7 @@ JSWindowActorInfo JSWindowActorProtocol::ToIPC() {
   info.allFrames() = mAllFrames;
   info.matches() = mMatches;
   info.remoteTypes() = mRemoteTypes;
+  info.messageManagerGroups() = mMessageManagerGroups;
   info.url() = mChild.mModuleURI;
 
   info.events().SetCapacity(mChild.mEvents.Length());
@@ -109,18 +112,29 @@ JSWindowActorProtocol::FromWebIDLOptions(const nsACString& aName,
     proto->mRemoteTypes = aOptions.mRemoteTypes.Value();
   }
 
-  if (aOptions.mParent.mModuleURI.WasPassed()) {
-    proto->mParent.mModuleURI.emplace(aOptions.mParent.mModuleURI.Value());
+  if (aOptions.mMessageManagerGroups.WasPassed()) {
+    proto->mMessageManagerGroups = aOptions.mMessageManagerGroups.Value();
   }
 
-  if (aOptions.mChild.mModuleURI.WasPassed()) {
-    proto->mChild.mModuleURI.emplace(aOptions.mChild.mModuleURI.Value());
+  if (aOptions.mParent.WasPassed()) {
+    proto->mParent.mModuleURI.emplace(aOptions.mParent.Value().mModuleURI);
+  }
+  if (aOptions.mChild.WasPassed()) {
+    proto->mChild.mModuleURI.emplace(aOptions.mChild.Value().mModuleURI);
+  }
+
+  if (!aOptions.mChild.WasPassed() && !aOptions.mParent.WasPassed()) {
+    aRv.ThrowNotSupportedError(
+        "No point registering an actor with neither child nor parent "
+        "specifications.");
+    return nullptr;
   }
 
   // For each event declared in the source dictionary, initialize the
-  // corresponding envent declaration entry in the JSWindowActorProtocol.
-  if (aOptions.mChild.mEvents.WasPassed()) {
-    auto& entries = aOptions.mChild.mEvents.Value().Entries();
+  // corresponding event declaration entry in the JSWindowActorProtocol.
+  if (aOptions.mChild.WasPassed() &&
+      aOptions.mChild.Value().mEvents.WasPassed()) {
+    auto& entries = aOptions.mChild.Value().mEvents.Value().Entries();
     proto->mChild.mEvents.SetCapacity(entries.Length());
 
     for (auto& entry : entries) {
@@ -146,8 +160,9 @@ JSWindowActorProtocol::FromWebIDLOptions(const nsACString& aName,
     }
   }
 
-  if (aOptions.mChild.mObservers.WasPassed()) {
-    proto->mChild.mObservers = aOptions.mChild.mObservers.Value();
+  if (aOptions.mChild.WasPassed() &&
+      aOptions.mChild.Value().mObservers.WasPassed()) {
+    proto->mChild.mObservers = aOptions.mChild.Value().mObservers.Value();
   }
 
   return proto.forget();
@@ -158,6 +173,8 @@ JSWindowActorProtocol::FromWebIDLOptions(const nsACString& aName,
  * This will work in both content and parent processes.
  */
 NS_IMETHODIMP JSWindowActorProtocol::HandleEvent(Event* aEvent) {
+  MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
+
   // Determine which inner window we're associated with, and get its
   // WindowGlobalChild actor.
   EventTarget* target = aEvent->GetOriginalTarget();
@@ -201,12 +218,21 @@ NS_IMETHODIMP JSWindowActorProtocol::HandleEvent(Event* aEvent) {
 NS_IMETHODIMP JSWindowActorProtocol::Observe(nsISupports* aSubject,
                                              const char* aTopic,
                                              const char16_t* aData) {
+  MOZ_ASSERT(nsContentUtils::IsSafeToRunScript());
+
   nsCOMPtr<nsPIDOMWindowInner> inner = do_QueryInterface(aSubject);
-  if (NS_WARN_IF(!inner)) {
-    return NS_ERROR_FAILURE;
+  RefPtr<WindowGlobalChild> wgc;
+
+  if (!inner) {
+    nsCOMPtr<nsPIDOMWindowOuter> outer = do_QueryInterface(aSubject);
+    if (NS_WARN_IF(!outer) || NS_WARN_IF(!outer->GetCurrentInnerWindow())) {
+      return NS_ERROR_FAILURE;
+    }
+    wgc = outer->GetCurrentInnerWindow()->GetWindowGlobalChild();
+  } else {
+    wgc = inner->GetWindowGlobalChild();
   }
 
-  RefPtr<WindowGlobalChild> wgc = inner->GetWindowGlobalChild();
   if (NS_WARN_IF(!wgc)) {
     return NS_ERROR_FAILURE;
   }
@@ -234,8 +260,8 @@ NS_IMETHODIMP JSWindowActorProtocol::Observe(nsISupports* aSubject,
   return NS_OK;
 }
 
-void JSWindowActorProtocol::RegisterListenersFor(EventTarget* aRoot) {
-  EventListenerManager* elm = aRoot->GetOrCreateListenerManager();
+void JSWindowActorProtocol::RegisterListenersFor(EventTarget* aTarget) {
+  EventListenerManager* elm = aTarget->GetOrCreateListenerManager();
 
   for (auto& event : mChild.mEvents) {
     elm->AddEventListenerByType(EventListenerHolder(this), event.mName,
@@ -243,8 +269,8 @@ void JSWindowActorProtocol::RegisterListenersFor(EventTarget* aRoot) {
   }
 }
 
-void JSWindowActorProtocol::UnregisterListenersFor(EventTarget* aRoot) {
-  EventListenerManager* elm = aRoot->GetOrCreateListenerManager();
+void JSWindowActorProtocol::UnregisterListenersFor(EventTarget* aTarget) {
+  EventListenerManager* elm = aTarget->GetOrCreateListenerManager();
 
   for (auto& event : mChild.mEvents) {
     elm->RemoveEventListenerByType(EventListenerHolder(this), event.mName,
@@ -297,21 +323,48 @@ extensions::MatchPatternSet* JSWindowActorProtocol::GetURIMatcher() {
   return mURIMatcher;
 }
 
+bool JSWindowActorProtocol::RemoteTypePrefixMatches(
+    const nsDependentCSubstring& aRemoteType) {
+  for (auto& remoteType : mRemoteTypes) {
+    if (StringBeginsWith(aRemoteType, remoteType)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool JSWindowActorProtocol::MessageManagerGroupMatches(
+    BrowsingContext* aBrowsingContext) {
+  BrowsingContext* top = aBrowsingContext->Top();
+  for (auto& group : mMessageManagerGroups) {
+    if (group == top->GetMessageManagerGroup()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool JSWindowActorProtocol::Matches(BrowsingContext* aBrowsingContext,
                                     nsIURI* aURI,
                                     const nsACString& aRemoteType) {
   MOZ_ASSERT(aBrowsingContext, "DocShell without a BrowsingContext!");
   MOZ_ASSERT(aURI, "Must have URI!");
 
-  if (!mRemoteTypes.IsEmpty() && !mRemoteTypes.Contains(aRemoteType)) {
-    return false;
-  }
-
   if (!mAllFrames && aBrowsingContext->GetParent()) {
     return false;
   }
 
   if (!mIncludeChrome && !aBrowsingContext->IsContent()) {
+    return false;
+  }
+
+  if (!mRemoteTypes.IsEmpty() &&
+      !RemoteTypePrefixMatches(RemoteTypePrefix(aRemoteType))) {
+    return false;
+  }
+
+  if (!mMessageManagerGroups.IsEmpty() &&
+      !MessageManagerGroupMatches(aBrowsingContext)) {
     return false;
   }
 
@@ -349,7 +402,9 @@ void JSWindowActorService::RegisterWindowActor(
   const auto proto = mDescriptors.WithEntryHandle(
       aName, [&](auto&& entry) -> RefPtr<JSWindowActorProtocol> {
         if (entry) {
-          aRv.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+          aRv.ThrowNotSupportedError(
+              nsPrintfCString("'%s' actor is already registered.",
+                              PromiseFlatCString(aName).get()));
           return nullptr;
         }
 
@@ -377,9 +432,9 @@ void JSWindowActorService::RegisterWindowActor(
     Unused << cp->SendInitJSWindowActorInfos(ipcInfos);
   }
 
-  // Register event listeners for any existing window roots.
-  for (EventTarget* root : mRoots) {
-    proto->RegisterListenersFor(root);
+  // Register event listeners for any existing chrome targets.
+  for (EventTarget* target : mChromeEventTargets) {
+    proto->RegisterListenersFor(target);
   }
 
   // Add observers to the protocol.
@@ -399,9 +454,9 @@ void JSWindowActorService::UnregisterWindowActor(const nsACString& aName) {
       }
     }
 
-    // Remove listeners for this actor from each of our window roots.
-    for (EventTarget* root : mRoots) {
-      proto->UnregisterListenersFor(root);
+    // Remove listeners for this actor from each of our chrome targets.
+    for (EventTarget* target : mChromeEventTargets) {
+      proto->UnregisterListenersFor(target);
     }
 
     // Remove observers for this actor from observer serivce.
@@ -420,9 +475,9 @@ void JSWindowActorService::LoadJSWindowActorInfos(
         JSWindowActorProtocol::FromIPC(aInfos[i]);
     mDescriptors.InsertOrUpdate(aInfos[i].name(), RefPtr{proto});
 
-    // Register listeners for each window root.
-    for (EventTarget* root : mRoots) {
-      proto->RegisterListenersFor(root);
+    // Register listeners for each chrome target.
+    for (EventTarget* target : mChromeEventTargets) {
+      proto->RegisterListenersFor(target);
     }
 
     // Add observers for each actor.
@@ -440,21 +495,24 @@ void JSWindowActorService::GetJSWindowActorInfos(
   }
 }
 
-void JSWindowActorService::RegisterWindowRoot(EventTarget* aRoot) {
-  MOZ_ASSERT(!mRoots.Contains(aRoot));
-  mRoots.AppendElement(aRoot);
+void JSWindowActorService::RegisterChromeEventTarget(EventTarget* aTarget) {
+  MOZ_ASSERT(!mChromeEventTargets.Contains(aTarget));
+  mChromeEventTargets.AppendElement(aTarget);
 
   // Register event listeners on the newly added Window Root.
   for (auto iter = mDescriptors.Iter(); !iter.Done(); iter.Next()) {
-    iter.Data()->RegisterListenersFor(aRoot);
+    iter.Data()->RegisterListenersFor(aTarget);
   }
+
+  nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
+  obs->NotifyObservers(aTarget, "chrome-event-target-created", nullptr);
 }
 
 /* static */
-void JSWindowActorService::UnregisterWindowRoot(EventTarget* aRoot) {
+void JSWindowActorService::UnregisterChromeEventTarget(EventTarget* aTarget) {
   if (gJSWindowActorService) {
-    // NOTE: No need to unregister listeners here, as the root is going away.
-    gJSWindowActorService->mRoots.RemoveElement(aRoot);
+    // NOTE: No need to unregister listeners here, as the target is going away.
+    gJSWindowActorService->mChromeEventTargets.RemoveElement(aTarget);
   }
 }
 

@@ -6,6 +6,7 @@
 
 #include "ClientOpPromise.h"
 #include "mozilla/dom/PClientHandleOpParent.h"
+#include "ClientHandleParent.h"
 
 namespace mozilla {
 namespace dom {
@@ -14,6 +15,7 @@ class ClientSourceParent;
 
 class ClientHandleOpParent final : public PClientHandleOpParent {
   MozPromiseRequestHolder<ClientOpPromise> mPromiseRequestHolder;
+  MozPromiseRequestHolder<SourcePromise> mSourcePromiseRequestHolder;
 
   ClientSourceParent* GetSource() const;
 

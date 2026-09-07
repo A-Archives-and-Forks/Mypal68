@@ -61,7 +61,6 @@
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/SerializedStackHolder.h"
 #include "mozilla/CycleCollectedJSRuntime.h"
-#include "mozilla/SystemGroup.h"
 #include "nsRefreshDriver.h"
 #include "nsJSPrincipals.h"
 #include "AccessCheck.h"

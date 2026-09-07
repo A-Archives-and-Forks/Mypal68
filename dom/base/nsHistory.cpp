@@ -14,8 +14,8 @@
 #include "nsReadableUtils.h"
 #include "nsContentUtils.h"
 #include "mozilla/dom/Location.h"
-#include "mozilla/Preferences.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/StaticPrefs_dom.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -136,9 +136,7 @@ void nsHistory::GetState(JSContext* aCx, JS::MutableHandle<JS::Value> aResult,
 void nsHistory::Go(int32_t aDelta, ErrorResult& aRv) {
   nsCOMPtr<nsPIDOMWindowInner> win(do_QueryReferent(mInnerWindow));
   if (!win || !win->HasActiveDocument()) {
-    aRv.Throw(NS_ERROR_DOM_SECURITY_ERR);
-
-    return;
+    return aRv.Throw(NS_ERROR_DOM_SECURITY_ERR);
   }
 
   if (!aDelta) {
@@ -146,23 +144,22 @@ void nsHistory::Go(int32_t aDelta, ErrorResult& aRv) {
     // "When the go(delta) method is invoked, if delta is zero, the user agent
     // must act as if the location.reload() method was called instead."
     RefPtr<Location> location = win->Location();
-    nsresult rv = location->Reload(false);
-    if (NS_FAILED(rv)) {
-      aRv.Throw(NS_ERROR_FAILURE);
-    }
-    return;
+    return location->Reload(false, aRv);
   }
 
   RefPtr<ChildSHistory> session_history = GetSessionHistory();
   if (!session_history) {
     aRv.Throw(NS_ERROR_FAILURE);
-
     return;
   }
 
   // Ignore the return value from Go(), since returning errors from Go() can
   // lead to exceptions and a possible leak of history length
-  session_history->Go(aDelta, IgnoreErrors());
+  if (StaticPrefs::dom_window_history_async()) {
+    session_history->AsyncGo(aDelta);
+  } else {
+    session_history->Go(aDelta, IgnoreErrors());
+  }
 }
 
 void nsHistory::Back(ErrorResult& aRv) {
@@ -180,7 +177,11 @@ void nsHistory::Back(ErrorResult& aRv) {
     return;
   }
 
-  sHistory->Go(-1, IgnoreErrors());
+  if (StaticPrefs::dom_window_history_async()) {
+    sHistory->AsyncGo(-1);
+  } else {
+    sHistory->Go(-1, IgnoreErrors());
+  }
 }
 
 void nsHistory::Forward(ErrorResult& aRv) {
@@ -198,7 +199,11 @@ void nsHistory::Forward(ErrorResult& aRv) {
     return;
   }
 
-  sHistory->Go(1, IgnoreErrors());
+  if (StaticPrefs::dom_window_history_async()) {
+    sHistory->AsyncGo(1);
+  } else {
+    sHistory->Go(1, IgnoreErrors());
+  }
 }
 
 void nsHistory::PushState(JSContext* aCx, JS::Handle<JS::Value> aData,

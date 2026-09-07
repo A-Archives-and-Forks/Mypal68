@@ -6,7 +6,6 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Logging.h"
 #include "mozilla/MathAlgorithms.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/ErrorNames.h"
 
 using mozilla::media::TimeUnit;

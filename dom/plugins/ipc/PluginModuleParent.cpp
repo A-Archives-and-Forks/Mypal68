@@ -5,6 +5,10 @@
 #include "mozilla/plugins/PluginModuleParent.h"
 
 #include "base/process_util.h"
+#undef GetFirstChild
+#undef GetNextSibling
+#undef GetPrevSibling
+
 #include "mozilla/Attributes.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/BackgroundHangMonitor.h"
@@ -22,7 +26,6 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/ProcessHangMonitor.h"
 #include "mozilla/Services.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/Unused.h"
 #include "mozilla/UniquePtr.h"
 #include "nsCRT.h"
@@ -1384,7 +1387,6 @@ nsresult PluginModuleParent::GetRunID(uint32_t* aRunID) {
 void PluginModuleChromeParent::ActorDestroy(ActorDestroyReason why) {
   if (why == AbnormalShutdown) {
     ProcessFirstMinidump();
-    Telemetry::Accumulate(Telemetry::SUBPROCESS_ABNORMAL_ABORT, "plugin"_ns, 1);
   }
 
   // We can't broadcast settings changes anymore.
@@ -2161,9 +2163,6 @@ nsresult PluginModuleParent::NPP_NewInternal(
     NPP_Destroy(instance, 0);
     return NS_ERROR_FAILURE;
   }
-
-  Telemetry::ScalarAdd(Telemetry::ScalarID::BROWSER_USAGE_PLUGIN_INSTANTIATED,
-                       1);
 
   UpdatePluginTimeout();
 

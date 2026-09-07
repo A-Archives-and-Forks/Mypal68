@@ -7,7 +7,6 @@
 
 #include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/RefPtr.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/TimeStamp.h"
 

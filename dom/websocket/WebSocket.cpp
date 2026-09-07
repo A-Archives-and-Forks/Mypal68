@@ -575,10 +575,8 @@ void WebSocketImpl::Disconnect() {
     rv.SuppressException();
   }
 
-  NS_ReleaseOnMainThreadSystemGroup("WebSocketImpl::mChannel",
-                                    mChannel.forget());
-  NS_ReleaseOnMainThreadSystemGroup("WebSocketImpl::mService",
-                                    mService.forget());
+  NS_ReleaseOnMainThread("WebSocketImpl::mChannel", mChannel.forget());
+  NS_ReleaseOnMainThread("WebSocketImpl::mService", mService.forget());
 
   mWebSocket->DontKeepAliveAnyMore();
   mWebSocket->mImpl = nullptr;
@@ -1715,7 +1713,7 @@ nsresult WebSocketImpl::InitializeConnection(
       doc, doc ? doc->NodePrincipal() : aPrincipal, aPrincipal,
       aCookieJarSettings,
       nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
-      nsIContentPolicy::TYPE_WEBSOCKET);
+      nsIContentPolicy::TYPE_WEBSOCKET, 0);
   MOZ_ASSERT(NS_SUCCEEDED(rv));
 
   if (!mRequestedProtocolList.IsEmpty()) {
@@ -2682,14 +2680,8 @@ nsresult WebSocketImpl::GetLoadingPrincipal(nsIPrincipal** aPrincipal) {
 
     // We are at the top. Let's see if we have an opener window.
     if (innerWindow == currentInnerWindow) {
-      ErrorResult error;
-      parentWindow =
-          nsGlobalWindowInner::Cast(innerWindow)->GetOpenerWindow(error);
-      if (NS_WARN_IF(error.Failed())) {
-        error.SuppressException();
-        return NS_ERROR_DOM_SECURITY_ERR;
-      }
-
+      parentWindow = nsGlobalWindowOuter::Cast(innerWindow->GetOuterWindow())
+                         ->GetSameProcessOpener();
       if (!parentWindow) {
         break;
       }

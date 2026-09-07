@@ -9,6 +9,7 @@
 #include "mozilla/AbstractThread.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/PodOperations.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/SharedThreadPool.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
@@ -131,7 +132,7 @@ OggDemuxer::~OggDemuxer() {
           Telemetry::Accumulate(
               Telemetry::HistogramID::MEDIA_OGG_LOADED_IS_CHAINED, isChained);
         });
-    SystemGroup::Dispatch(TaskCategory::Other, task.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, task.forget());
   }
 }
 

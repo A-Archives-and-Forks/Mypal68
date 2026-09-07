@@ -15,7 +15,6 @@
 #include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/WorkerRef.h"
 #include "mozilla/HoldDropJSObjects.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/TaskCategory.h"
 #include "nsContentUtils.h"
 #include "nsDebug.h"

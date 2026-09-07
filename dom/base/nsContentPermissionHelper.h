@@ -70,7 +70,8 @@ class nsContentPermissionUtils {
   static PContentPermissionRequestParent* CreateContentPermissionRequestParent(
       const nsTArray<PermissionRequest>& aRequests, Element* aElement,
       nsIPrincipal* aPrincipal, nsIPrincipal* aTopLevelPrincipal,
-      const bool aIsHandlingUserInput, const TabId& aTabId);
+      const bool aIsHandlingUserInput,
+      const bool aMaybeUnsafePermissionDelegate, const TabId& aTabId);
 
   static nsresult AskPermission(nsIContentPermissionRequest* aRequest,
                                 nsPIDOMWindowInner* aWindow);
@@ -115,10 +116,14 @@ class ContentPermissionRequestBase : public nsIContentPermissionRequest {
 
   NS_IMETHOD GetTypes(nsIArray** aTypes) override;
   NS_IMETHOD GetPrincipal(nsIPrincipal** aPrincipal) override;
+  NS_IMETHOD GetDelegatePrincipal(const nsACString& aType,
+                                  nsIPrincipal** aPrincipal) override;
   NS_IMETHOD GetTopLevelPrincipal(nsIPrincipal** aTopLevelPrincipal) override;
   NS_IMETHOD GetWindow(mozIDOMWindow** aWindow) override;
   NS_IMETHOD GetElement(mozilla::dom::Element** aElement) override;
   NS_IMETHOD GetIsHandlingUserInput(bool* aIsHandlingUserInput) override;
+  NS_IMETHOD GetMaybeUnsafePermissionDelegate(
+      bool* aMaybeUnsafePermissionDelegate) override;
   NS_IMETHOD GetRequester(nsIContentPermissionRequester** aRequester) override;
   // Overrides for Allow() and Cancel() aren't provided by this class.
   // That is the responsibility of the subclasses.
@@ -157,6 +162,7 @@ class ContentPermissionRequestBase : public nsIContentPermissionRequest {
   nsCString mPrefName;
   nsCString mType;
   bool mIsHandlingUserInput;
+  bool mMaybeUnsafePermissionDelegate;
 };
 
 }  // namespace dom

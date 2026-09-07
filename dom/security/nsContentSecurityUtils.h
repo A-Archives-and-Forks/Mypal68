@@ -10,6 +10,8 @@
 #include "nsStringFwd.h"
 
 struct JSContext;
+class nsIChannel;
+class nsIHttpChannel;
 class nsIPrincipal;
 class NS_ConvertUTF8toUTF16;
 
@@ -36,9 +38,22 @@ class nsContentSecurityUtils {
                               uint64_t aWindowID, uint32_t aLineNumber,
                               uint32_t aColumnNumber);
 
+  // Helper function to query the HTTP Channel of a potential
+  // multi-part channel. Mostly used for querying response headers
+  static nsresult GetHttpChannelFromPotentialMultiPart(
+      nsIChannel* aChannel, nsIHttpChannel** aHttpChannel);
+
+  // Helper function which performs the following framing checks
+  // * CSP frame-ancestors
+  // * x-frame-options
+  // If any of the two disallows framing, the channel will be cancelled.
+  static void PerformCSPFrameAncestorAndXFOCheck(nsIChannel* aChannel);
+
 #if defined(DEBUG)
   static void AssertAboutPageHasCSP(mozilla::dom::Document* aDocument);
 #endif
+
+  static bool ValidateScriptFilename(JSContext* cx, const char* aFilename);
 };
 
 #endif /* nsContentSecurityUtils_h___ */

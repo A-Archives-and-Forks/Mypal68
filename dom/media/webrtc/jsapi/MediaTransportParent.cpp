@@ -38,7 +38,6 @@ class MediaTransportParent::Impl : public sigslot::has_slots<> {
 
   virtual ~Impl() {
     disconnect_all();
-    mHandler->Destroy();
     mHandler = nullptr;
   }
 

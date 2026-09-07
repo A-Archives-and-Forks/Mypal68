@@ -4,15 +4,21 @@
  */
 
 dictionary RemotenessOptions {
-  UTF8String? remoteType;
-  FrameLoader? sameProcessAsFrameLoader;
-  WindowProxy? opener;
+  required UTF8String? remoteType;
+
+  // Used to indicate that there is an error condition that needs to
+  // be handled.
+  unsigned long error;
 
   // Used to resume a given channel load within the target process. If present,
   // it will be used rather than the `src` & `srcdoc` attributes on the
   // frameloader to control the load behaviour.
   unsigned long long pendingSwitchID;
   boolean replaceBrowsingContext = false;
+
+  // True if we have an existing channel that we will resume in the
+  // target process, either via pendingSwitchID or using messageManager.
+  boolean switchingInProgressLoad = false;
 };
 
 /**
@@ -33,14 +39,11 @@ interface mixin MozFrameLoaderOwner {
   readonly attribute BrowsingContext? browsingContext;
 
   [ChromeOnly, Throws]
-  undefined presetOpenerWindow(WindowProxy? window);
-
-  [ChromeOnly, Throws]
   undefined swapFrameLoaders(XULFrameElement aOtherLoaderOwner);
 
   [ChromeOnly, Throws]
   undefined swapFrameLoaders(HTMLIFrameElement aOtherLoaderOwner);
 
   [ChromeOnly, Throws]
-  undefined changeRemoteness(optional RemotenessOptions aOptions = {});
+  undefined changeRemoteness(RemotenessOptions aOptions);
 };

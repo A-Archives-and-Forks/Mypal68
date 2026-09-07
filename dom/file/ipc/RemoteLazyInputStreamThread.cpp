@@ -4,8 +4,8 @@
 
 #include "RemoteLazyInputStreamThread.h"
 
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticMutex.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/TaskCategory.h"
 #include "mozilla/ipc/BackgroundChild.h"
 #include "mozilla/ipc/PBackgroundChild.h"
@@ -127,7 +127,7 @@ bool RemoteLazyInputStreamThread::Initialize() {
 
   if (!NS_IsMainThread()) {
     RefPtr<Runnable> runnable = new ThreadInitializeRunnable();
-    SystemGroup::Dispatch(TaskCategory::Other, runnable.forget());
+    SchedulerGroup::Dispatch(TaskCategory::Other, runnable.forget());
     return true;
   }
 

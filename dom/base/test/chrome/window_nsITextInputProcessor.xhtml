@@ -23,8 +23,9 @@
 <script class="testbody" type="application/javascript">
 <![CDATA[
 
-var SpecialPowers = window.opener.wrappedJSObject.SpecialPowers;
-var SimpleTest = window.opener.wrappedJSObject.SimpleTest;
+const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+
+var SimpleTest = window.arguments[0].SimpleTest;
 
 SimpleTest.waitForFocus(runTests, window);
 
@@ -78,7 +79,7 @@ var iframe = document.getElementById("iframe");
 var childWindow = iframe.contentWindow;
 var textareaInFrame;
 var input = document.getElementById("input");
-var otherWindow = window.opener;
+var otherWindow = window.arguments[0];
 var otherDocument = otherWindow.document;
 var inputInChildWindow = otherDocument.getElementById("input");
 
@@ -1619,7 +1620,7 @@ function runReleaseTests()
   // Release the TIP
   TIP = null;
   // Needs to run GC forcibly for testing this.
-  SpecialPowers.gc();
+  Cu.forceGC();
 
   is(input.value, "",
      description + "the input should be empty because the composition should be canceled");
@@ -1909,7 +1910,7 @@ function runCompositionWithKeyEventTests()
   var convertKeyEvent = new KeyboardEvent("", { key: "Convert", code: "Convert", keyCode: KeyboardEvent.DOM_VK_CONVERT });
   var backspaceKeyEvent = new KeyboardEvent("", { key: "Backspace", code: "Backspace", keyCode: KeyboardEvent.DOM_VK_BACK_SPACE });
 
-  SpecialPowers.setBoolPref("dom.keyboardevent.dispatch_during_composition", false);
+  Services.prefs.setBoolPref("dom.keyboardevent.dispatch_during_composition", false);
 
   // nsITextInputProcessor.startComposition()
   reset();
@@ -2143,7 +2144,7 @@ function runCompositionWithKeyEventTests()
   is(input.value, "FOobarbuzzboo!",
      description + "committing text directly should append the committing text to the focused editor");
 
-  SpecialPowers.setBoolPref("dom.keyboardevent.dispatch_during_composition", true);
+  Services.prefs.setBoolPref("dom.keyboardevent.dispatch_during_composition", true);
 
   // Even if "dom.keyboardevent.dispatch_during_composition" is true, keypress event shouldn't be fired during composition
   reset();
@@ -2247,7 +2248,7 @@ function runCompositionWithKeyEventTests()
   is(events[1].type, "compositionend",
      description + "TIP.cancelComposition(escKeydownEvent) should cause compositionend (keyup event shouldn't be fired)");
 
-  SpecialPowers.clearUserPref("dom.keyboardevent.dispatch_during_composition");
+  Services.prefs.clearUserPref("dom.keyboardevent.dispatch_during_composition");
 
   window.removeEventListener("compositionstart", handler, false);
   window.removeEventListener("compositionupdate", handler, false);
@@ -2294,7 +2295,7 @@ function runConsumingKeydownBeforeCompositionTests()
   var enterKeyEvent = new KeyboardEvent("", { key: "Enter", code: "Enter", keyCode: KeyboardEvent.DOM_VK_RETURN });
   var escKeyEvent = new KeyboardEvent("", { key: "Escape", code: "Escape", keyCode: KeyboardEvent.DOM_VK_ESCAPE });
 
-  SpecialPowers.setBoolPref("dom.keyboardevent.dispatch_during_composition", false);
+  Services.prefs.setBoolPref("dom.keyboardevent.dispatch_during_composition", false);
 
   // If keydown before compositionstart is consumed, composition shouldn't be started.
   reset();
@@ -2344,7 +2345,7 @@ function runConsumingKeydownBeforeCompositionTests()
   is(input.value, "",
      description + "TIP.commitCompositionWith(\"foo\", printableKeyEvent) shouldn't cause inserting text");
 
-  SpecialPowers.setBoolPref("dom.keyboardevent.dispatch_during_composition", true);
+  Services.prefs.setBoolPref("dom.keyboardevent.dispatch_during_composition", true);
 
   // If composition is already started, TIP.flushPendingComposition(printableKeyEvent) shouldn't be canceled.
   TIP.startComposition();
@@ -2412,7 +2413,7 @@ function runConsumingKeydownBeforeCompositionTests()
   is(input.value, "",
      description + "TIP.cancelComposition(escKeyEvent) should cancel composition even if preceding keydown is consumed because there was a composition already");
 
-  SpecialPowers.clearUserPref("dom.keyboardevent.dispatch_during_composition");
+  Services.prefs.clearUserPref("dom.keyboardevent.dispatch_during_composition");
 
   window.removeEventListener("compositionstart", handler, false);
   window.removeEventListener("compositionupdate", handler, false);
@@ -2733,7 +2734,7 @@ function runKeyTests()
 
   // key events during composition
   try {
-    SpecialPowers.setBoolPref("dom.keyboardevent.dispatch_during_composition", false);
+    Services.prefs.setBoolPref("dom.keyboardevent.dispatch_during_composition", false);
 
     ok(TIP.startComposition(), "TIP.startComposition() should start composition");
 
@@ -2747,7 +2748,7 @@ function runKeyTests()
     is(events.length, 0,
        description + "TIP.keyup(keyA) shouldn't cause key events during composition if it's disabled by the pref");
 
-    SpecialPowers.setBoolPref("dom.keyboardevent.dispatch_during_composition", true);
+    Services.prefs.setBoolPref("dom.keyboardevent.dispatch_during_composition", true);
     reset();
     TIP.keydown(keyA);
     is(events.length, 1,
@@ -2763,7 +2764,7 @@ function runKeyTests()
 
   } finally {
     TIP.cancelComposition();
-    SpecialPowers.clearUserPref("dom.keyboardevent.dispatch_during_composition");
+    Services.prefs.clearUserPref("dom.keyboardevent.dispatch_during_composition");
   }
 
   // Test .location computation

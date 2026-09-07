@@ -35,6 +35,9 @@ class RTCStatsTimestampMaker {
   TimeStamp mStartMonotonic = TimeStamp::NowUnfuzzed();
 };
 
+// TODO(bug 1588303): If we ever get move semantics for webidl dictionaries, we
+// can stop wrapping these in UniquePtr, which will allow us to simplify code
+// in several places.
 typedef MozPromise<UniquePtr<RTCStatsCollection>, nsresult, true>
     RTCStatsPromise;
 

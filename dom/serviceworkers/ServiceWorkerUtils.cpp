@@ -4,12 +4,15 @@
 
 #include "ServiceWorkerUtils.h"
 
+#include "mozilla/BasePrincipal.h"
+#include "mozilla/ErrorResult.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/ClientInfo.h"
 #include "mozilla/dom/ServiceWorkerRegistrarTypes.h"
 #include "nsCOMPtr.h"
 #include "nsIPrincipal.h"
 #include "nsIURL.h"
+#include "nsPrintfCString.h"  //MY
 
 namespace mozilla {
 namespace dom {

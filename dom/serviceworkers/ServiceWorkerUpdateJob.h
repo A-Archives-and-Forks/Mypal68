@@ -8,6 +8,8 @@
 #include "ServiceWorkerJob.h"
 #include "ServiceWorkerRegistration.h"
 
+#include "nsIRequest.h"
+
 namespace mozilla {
 namespace dom {
 

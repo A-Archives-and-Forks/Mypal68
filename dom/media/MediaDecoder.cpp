@@ -136,7 +136,7 @@ class MediaMemoryTracker : public nsIMemoryReporter {
     }
 
     return resourceSizes->Promise()->Then(
-        SystemGroup::AbstractMainThreadFor(TaskCategory::Performance), __func__,
+        AbstractThread::MainThread(), __func__,
         [videoSize, audioSize](size_t resourceSize) {
           return MediaMemoryPromise::CreateAndResolve(
               MediaMemoryInfo(videoSize, audioSize, resourceSize), __func__);
@@ -1232,8 +1232,6 @@ MediaMemoryTracker::CollectReports(nsIHandleReportCallback* aHandleReport,
   nsCOMPtr<nsISupports> data = aData;
 
   resourceSizes->Promise()->Then(
-      // Don't use SystemGroup::AbstractMainThreadFor() for
-      // handleReport->Callback() will run scripts.
       AbstractThread::MainThread(), __func__,
       [handleReport, data](size_t size) {
         handleReport->Callback(
@@ -1314,7 +1312,7 @@ RefPtr<GenericPromise> MediaDecoder::DumpDebugInfo() {
   }
 
   return GetStateMachine()->RequestDebugInfo()->Then(
-      SystemGroup::AbstractMainThreadFor(TaskCategory::Other), __func__,
+      AbstractThread::MainThread(), __func__,
       [str](const nsACString& aString) {
         DUMP("%s", str.get());
         DUMP("%s", aString.Data());
@@ -1335,7 +1333,7 @@ RefPtr<MediaDecoder::DebugInfoPromise> MediaDecoder::RequestDebugInfo() {
   }
 
   return GetStateMachine()->RequestDebugInfo()->Then(
-      SystemGroup::AbstractMainThreadFor(TaskCategory::Other), __func__,
+      AbstractThread::MainThread(), __func__,
       [str](const nsACString& aString) {
         nsCString result = str + nsCString("\n") + aString;
         return DebugInfoPromise::CreateAndResolve(result, __func__);

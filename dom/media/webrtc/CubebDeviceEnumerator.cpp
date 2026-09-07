@@ -5,7 +5,7 @@
 #include "CubebDeviceEnumerator.h"
 
 #include "mozilla/ClearOnShutdown.h"
-#include "mozilla/SystemGroup.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/StaticPtr.h"
 #include "nsThreadUtils.h"
@@ -33,7 +33,7 @@ CubebDeviceEnumerator* CubebDeviceEnumerator::GetInstance() {
       if (NS_IsMainThread()) {
         setClearOnShutdown();
       } else {
-        SystemGroup::Dispatch(
+        SchedulerGroup::Dispatch(
             TaskCategory::Other,
             NS_NewRunnableFunction("CubebDeviceEnumerator::::GetInstance()",
                                    std::move(setClearOnShutdown)));

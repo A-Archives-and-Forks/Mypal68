@@ -12,13 +12,16 @@
 #include "mozilla/AutoRestore.h"
 #include "base/condition_variable.h"
 #include "mozilla/DOMEventTargetHelper.h"
+#include "mozilla/MozPromise.h"
 #include "mozilla/PerformanceCounter.h"
 #include "mozilla/RelativeTimeline.h"
 #include "mozilla/StorageAccess.h"
 #include "mozilla/ThreadBound.h"
+#include "mozilla/ThreadSafeWeakPtr.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/dom/ClientSource.h"
 #include "mozilla/dom/FlippedOnce.h"
+#include "mozilla/dom/RemoteWorkerChild.h"
 #include "mozilla/dom/Timeout.h"
 #include "mozilla/dom/JSExecutionManager.h" //MY
 #include "mozilla/dom/quota/CheckedUnsafePtr.h"
@@ -51,7 +54,6 @@ class JSExecutionManager;
 class MessagePort;
 class UniqueMessagePortId;
 class PerformanceStorage;
-class RemoteWorkerChild;
 class TimeoutHandler;
 class WorkerControlRunnable;
 class WorkerCSPEventListener;
@@ -839,6 +841,13 @@ class WorkerPrivate final
 
   void SetRemoteWorkerController(RemoteWorkerChild* aController);
 
+  void SetRemoteWorkerControllerWeakRef(
+      ThreadSafeWeakPtr<RemoteWorkerChild> aWeakRef);
+
+  ThreadSafeWeakPtr<RemoteWorkerChild> GetRemoteWorkerControllerWeakRef();
+
+  RefPtr<GenericPromise> SetServiceWorkerSkipWaitingFlag();
+
   // We can assume that an nsPIDOMWindow will be available for Freeze, Thaw
   // as these are only used for globals going in and out of the bfcache.
   bool Freeze(const nsPIDOMWindowInner* aWindow);
@@ -1120,6 +1129,9 @@ class WorkerPrivate final
 
   // Only touched on the parent thread. This is set only if IsSharedWorker().
   RefPtr<RemoteWorkerChild> mRemoteWorkerController;
+
+  // This is set only if IsServiceWorker().
+  ThreadSafeWeakPtr<RemoteWorkerChild> mRemoteWorkerControllerWeakRef;
 
   JS::UniqueChars mDefaultLocale;  // nulled during worker JSContext init
   TimeStamp mKillTime;

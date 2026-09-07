@@ -17,6 +17,7 @@
 #include "mozilla/Base64.h"
 #include "mozilla/MozPromise.h"
 #include "mozilla/NullPrincipal.h"
+#include "mozilla/PermissionDelegateHandler.h"
 #include "mozilla/PeerIdentity.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_media.h"
@@ -660,6 +661,13 @@ class GetUserMediaWindowListener {
     return result;
   }
 
+  void GetDevices(
+      const RefPtr<MediaManager::MediaDeviceSetRefCnt>& aOutDevices) {
+    for (auto& l : mActiveListeners) {
+      aOutDevices->AppendElement(l->GetDevice());
+    }
+  }
+
   uint64_t WindowID() const { return mWindowID; }
 
   PrincipalHandle GetPrincipalHandle() const { return mPrincipalHandle; }
@@ -1039,7 +1047,7 @@ MediaDevice::GetMediaSource(nsAString& aMediaSource) {
 
 nsresult MediaDevice::Allocate(const MediaTrackConstraints& aConstraints,
                                const MediaEnginePrefs& aPrefs,
-                               const ipc::PrincipalInfo& aPrincipalInfo,
+                               uint64_t aWindowID,
                                const char** aOutBadConstraint) {
   MOZ_ASSERT(MediaManager::IsInMediaThread());
   MOZ_ASSERT(mSource);
@@ -1051,8 +1059,7 @@ nsresult MediaDevice::Allocate(const MediaTrackConstraints& aConstraints,
     return NS_ERROR_FAILURE;
   }
 
-  return mSource->Allocate(aConstraints, aPrefs, aPrincipalInfo,
-                           aOutBadConstraint);
+  return mSource->Allocate(aConstraints, aPrefs, aWindowID, aOutBadConstraint);
 }
 
 void MediaDevice::SetTrack(const RefPtr<MediaTrack>& aTrack,
@@ -1357,7 +1364,7 @@ class GetUserMediaStreamTask final : public GetUserMediaTask {
 
     if (mAudioDevice) {
       auto& constraints = GetInvariant(mConstraints.mAudio);
-      rv = mAudioDevice->Allocate(constraints, mPrefs, mPrincipalInfo,
+      rv = mAudioDevice->Allocate(constraints, mPrefs, mWindowID,
                                   &badConstraint);
       if (NS_FAILED(rv)) {
         errorMsg = "Failed to allocate audiosource";
@@ -1371,7 +1378,7 @@ class GetUserMediaStreamTask final : public GetUserMediaTask {
     }
     if (!errorMsg && mVideoDevice) {
       auto& constraints = GetInvariant(mConstraints.mVideo);
-      rv = mVideoDevice->Allocate(constraints, mPrefs, mPrincipalInfo,
+      rv = mVideoDevice->Allocate(constraints, mPrefs, mWindowID,
                                   &badConstraint);
       if (NS_FAILED(rv)) {
         errorMsg = "Failed to allocate videosource";
@@ -2171,6 +2178,7 @@ nsresult MediaManager::NotifyRecordingStatusChange(
   NS_ConvertUTF8toUTF16 requestURL(pageURL);
 
   props->SetPropertyAsAString(u"requestURL"_ns, requestURL);
+  props->SetPropertyAsInterface(u"window"_ns, aWindow);
 
   obs->NotifyObservers(static_cast<nsIPropertyBag2*>(props),
                        "recording-device-events", nullptr);
@@ -2585,55 +2593,37 @@ RefPtr<MediaManager::StreamPromise> MediaManager::GetUserMedia(
 
   if (!privileged) {
     // Check if this site has had persistent permissions denied.
-    nsCOMPtr<nsIPermissionManager> permManager =
-        do_GetService(NS_PERMISSIONMANAGER_CONTRACTID, &rv);
-    MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
+    RefPtr<PermissionDelegateHandler> permDelegate =
+        doc->GetPermissionDelegateHandler();
+    MOZ_RELEASE_ASSERT(permDelegate);
 
     uint32_t audioPerm = nsIPermissionManager::UNKNOWN_ACTION;
     if (IsOn(c.mAudio)) {
       if (audioType == MediaSourceEnum::Microphone) {
-        if (Preferences::GetBool("media.getusermedia.microphone.deny", false) ||
-            !FeaturePolicyUtils::IsFeatureAllowed(
-                doc, u"microphone"_ns)) {
+        if (Preferences::GetBool("media.getusermedia.microphone.deny", false)) {
           audioPerm = nsIPermissionManager::DENY_ACTION;
         } else {
-          rv = permManager->TestExactPermissionFromPrincipal(
-              principal, "microphone"_ns, &audioPerm);
+          rv = permDelegate->GetPermission("microphone"_ns, &audioPerm, true);
           MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
         }
       } else {
-        if (!FeaturePolicyUtils::IsFeatureAllowed(
-                doc, u"display-capture"_ns)) {
-          audioPerm = nsIPermissionManager::DENY_ACTION;
-        } else {
-          rv = permManager->TestExactPermissionFromPrincipal(
-              principal, "screen"_ns, &audioPerm);
-          MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
-        }
+        rv = permDelegate->GetPermission("screen"_ns, &audioPerm, true);
+        MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
       }
     }
 
     uint32_t videoPerm = nsIPermissionManager::UNKNOWN_ACTION;
     if (IsOn(c.mVideo)) {
       if (videoType == MediaSourceEnum::Camera) {
-        if (Preferences::GetBool("media.getusermedia.camera.deny", false) ||
-            !FeaturePolicyUtils::IsFeatureAllowed(
-                doc, u"camera"_ns)) {
+        if (Preferences::GetBool("media.getusermedia.camera.deny", false)) {
           videoPerm = nsIPermissionManager::DENY_ACTION;
         } else {
-          rv = permManager->TestExactPermissionFromPrincipal(
-              principal, "camera"_ns, &videoPerm);
+          rv = permDelegate->GetPermission("camera"_ns, &videoPerm, true);
           MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
         }
       } else {
-        if (!FeaturePolicyUtils::IsFeatureAllowed(
-                doc, u"display-capture"_ns)) {
-          videoPerm = nsIPermissionManager::DENY_ACTION;
-        } else {
-          rv = permManager->TestExactPermissionFromPrincipal(
-              principal, "screen"_ns, &videoPerm);
-          MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
-        }
+        rv = permDelegate->GetPermission("screen"_ns, &videoPerm, true);
+        MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
       }
     }
 
@@ -3867,10 +3857,10 @@ struct CaptureWindowStateData {
 };
 
 NS_IMETHODIMP
-MediaManager::MediaCaptureWindowState(nsIDOMWindow* aCapturedWindow,
-                                      uint16_t* aCamera, uint16_t* aMicrophone,
-                                      uint16_t* aScreen, uint16_t* aWindow,
-                                      uint16_t* aBrowser) {
+MediaManager::MediaCaptureWindowState(
+    nsIDOMWindow* aCapturedWindow, uint16_t* aCamera, uint16_t* aMicrophone,
+    uint16_t* aScreen, uint16_t* aWindow, uint16_t* aBrowser,
+    nsTArray<RefPtr<nsIMediaDevice>>& aDevices) {
   MOZ_ASSERT(NS_IsMainThread());
 
   CaptureState camera = CaptureState::Off;
@@ -3878,6 +3868,7 @@ MediaManager::MediaCaptureWindowState(nsIDOMWindow* aCapturedWindow,
   CaptureState screen = CaptureState::Off;
   CaptureState window = CaptureState::Off;
   CaptureState browser = CaptureState::Off;
+  auto devices = MakeRefPtr<MediaDeviceSetRefCnt>();
 
   nsCOMPtr<nsPIDOMWindowInner> piWin = do_QueryInterface(aCapturedWindow);
   if (piWin) {
@@ -3888,6 +3879,7 @@ MediaManager::MediaCaptureWindowState(nsIDOMWindow* aCapturedWindow,
       screen = listener->CapturingSource(MediaSourceEnum::Screen);
       window = listener->CapturingSource(MediaSourceEnum::Window);
       browser = listener->CapturingSource(MediaSourceEnum::Browser);
+      listener->GetDevices(devices);
     }
   }
 
@@ -3896,6 +3888,9 @@ MediaManager::MediaCaptureWindowState(nsIDOMWindow* aCapturedWindow,
   *aScreen = FromCaptureState(screen);
   *aWindow = FromCaptureState(window);
   *aBrowser = FromCaptureState(browser);
+  for (auto& device : *devices) {
+    aDevices.AppendElement(device);
+  }
 
   LOG("%s: window %" PRIu64 " capturing %s %s %s %s %s", __FUNCTION__,
       piWin ? piWin->WindowID() : -1,
@@ -3968,35 +3963,22 @@ bool MediaManager::IsActivelyCapturingOrHasAPermission(uint64_t aWindowId) {
 
   // Check if this site has persistent permissions.
   nsresult rv;
-  nsCOMPtr<nsIPermissionManager> mgr =
-      do_GetService(NS_PERMISSIONMANAGER_CONTRACTID, &rv);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return false;  // no permission manager no permissions!
+  RefPtr<PermissionDelegateHandler> permDelegate =
+      doc->GetPermissionDelegateHandler();
+  if (NS_WARN_IF(!permDelegate)) {
+    return false;
   }
 
   uint32_t audio = nsIPermissionManager::UNKNOWN_ACTION;
   uint32_t video = nsIPermissionManager::UNKNOWN_ACTION;
   {
-    if (!FeaturePolicyUtils::IsFeatureAllowed(
-            doc, u"microphone"_ns)) {
-      audio = nsIPermissionManager::DENY_ACTION;
-    } else {
-      rv = mgr->TestExactPermissionFromPrincipal(
-          principal, "microphone"_ns, &audio);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return false;
-      }
+    rv = permDelegate->GetPermission("microphone"_ns, &audio, true);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return false;
     }
-
-    if (!FeaturePolicyUtils::IsFeatureAllowed(doc,
-                                              u"camera"_ns)) {
-      video = nsIPermissionManager::DENY_ACTION;
-    } else {
-      rv = mgr->TestExactPermissionFromPrincipal(
-          principal, "camera"_ns, &video);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return false;
-      }
+    rv = permDelegate->GetPermission("camera"_ns, &video, true);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return false;
     }
   }
   return audio == nsIPermissionManager::ALLOW_ACTION ||

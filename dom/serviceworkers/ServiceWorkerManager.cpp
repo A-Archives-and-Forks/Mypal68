@@ -19,6 +19,7 @@
 #include "nsIUploadChannel2.h"
 #include "nsServiceManagerUtils.h"
 #include "nsDebug.h"
+#include "nsXULAppAPI.h"
 
 #include "jsapi.h"
 
@@ -29,7 +30,6 @@
 #include "mozilla/MozPromise.h"
 #include "mozilla/Result.h"
 #include "mozilla/ResultExtensions.h"
-#include "mozilla/SystemGroup.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/ClientHandle.h"
 #include "mozilla/dom/ClientManager.h"
@@ -75,6 +75,7 @@
 #include "ServiceWorkerRegistrar.h"
 #include "ServiceWorkerRegistration.h"
 #include "ServiceWorkerScriptCache.h"
+#include "ServiceWorkerShutdownBlocker.h"
 #include "ServiceWorkerEvents.h"
 #include "ServiceWorkerUnregisterJob.h"
 #include "ServiceWorkerUpdateJob.h"
@@ -341,6 +342,38 @@ class TeardownRunnable final : public Runnable {
   RefPtr<ServiceWorkerManagerChild> mActor;
 };
 
+bool ServiceWorkersAreCrossProcess() {
+  return ServiceWorkerParentInterceptEnabled() && XRE_IsE10sParentProcess();
+}
+
+const char* GetStartShutdownTopic() {
+  if (ServiceWorkersAreCrossProcess()) {
+    return "profile-change-teardown";
+  }
+
+  return NS_XPCOM_SHUTDOWN_OBSERVER_ID;
+}
+
+constexpr char kFinishShutdownTopic[] = "profile-before-change-qm";
+
+already_AddRefed<nsIAsyncShutdownClient> GetAsyncShutdownBarrier() {
+  AssertIsOnMainThread();
+
+  if (!ServiceWorkersAreCrossProcess()) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsIAsyncShutdownService> svc = services::GetAsyncShutdownService();
+  MOZ_ASSERT(svc);
+
+  nsCOMPtr<nsIAsyncShutdownClient> barrier;
+  DebugOnly<nsresult> rv =
+      svc->GetProfileChangeTeardown(getter_AddRefs(barrier));
+  MOZ_ASSERT(NS_SUCCEEDED(rv));
+
+  return barrier.forget();
+}
+
 Result<nsCOMPtr<nsIPrincipal>, nsresult> ScopeToPrincipal(
     nsIURI* aScopeURI, const OriginAttributes& aOriginAttributes) {
   MOZ_ASSERT(aScopeURI);
@@ -385,15 +418,50 @@ ServiceWorkerManager::ServiceWorkerManager()
 ServiceWorkerManager::~ServiceWorkerManager() {
   // The map will assert if it is not empty when destroyed.
   mRegistrationInfos.Clear();
-  MOZ_ASSERT(!mActor);
+
+  if (!ServiceWorkersAreCrossProcess()) {
+    MOZ_ASSERT(!mActor);
+  }
+
+  // This can happen if the browser is started up in ProfileManager mode, in
+  // which case XPCOM will startup and shutdown, but there won't be any
+  // profile-* topic notifications. The shutdown blocker expects to be in a
+  // NotAcceptingPromises state when it's destroyed, and this transition
+  // normally happens in the "profile-change-teardown" notification callback
+  // (which won't be called in ProfileManager mode).
+  if (!mShuttingDown && mShutdownBlocker) {
+    mShutdownBlocker->StopAcceptingPromises();
+  }
+}
+
+void ServiceWorkerManager::BlockShutdownOn(GenericNonExclusivePromise* aPromise,
+                                           uint32_t aShutdownStateId) {
+  AssertIsOnMainThread();
+
+  // This may be called when in non-e10s mode with parent-intercept enabled.
+  if (!ServiceWorkersAreCrossProcess()) {
+    return;
+  }
+
+  MOZ_ASSERT(mShutdownBlocker);
+  MOZ_ASSERT(aPromise);
+
+  mShutdownBlocker->WaitOnPromise(aPromise, aShutdownStateId);
 }
 
 void ServiceWorkerManager::Init(ServiceWorkerRegistrar* aRegistrar) {
+  nsCOMPtr<nsIAsyncShutdownClient> shutdownBarrier = GetAsyncShutdownBarrier();
+
+  if (shutdownBarrier) {
+    mShutdownBlocker =
+        ServiceWorkerShutdownBlocker::CreateAndRegisterOn(shutdownBarrier);
+    MOZ_ASSERT(mShutdownBlocker);
+  }
+
   nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
   if (obs) {
     DebugOnly<nsresult> rv;
-    rv = obs->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID,
-                          false /* ownsWeak */);
+    rv = obs->AddObserver(this, GetStartShutdownTopic(), false /* ownsWeak */);
     MOZ_ASSERT(NS_SUCCEEDED(rv));
   }
 
@@ -459,7 +527,7 @@ RefPtr<GenericErrorResultPromise> ServiceWorkerManager::StartControllingClient(
           // Always check to see if we failed to actually control the client. In
           // that case removed the client from our list of controlled clients.
           return promise->Then(
-              SystemGroup::EventTargetFor(TaskCategory::Other), __func__,
+              GetMainThreadSerialEventTarget(), __func__,
               [](bool) {
                 // do nothing on success
                 return GenericErrorResultPromise::CreateAndResolve(true,
@@ -474,7 +542,7 @@ RefPtr<GenericErrorResultPromise> ServiceWorkerManager::StartControllingClient(
         }
 
         RefPtr<ClientHandle> clientHandle = ClientManager::CreateHandle(
-            aClientInfo, SystemGroup::EventTargetFor(TaskCategory::Other));
+            aClientInfo, GetMainThreadSerialEventTarget());
 
         const RefPtr<GenericErrorResultPromise> promise =
             aControlClientHandle
@@ -487,13 +555,13 @@ RefPtr<GenericErrorResultPromise> ServiceWorkerManager::StartControllingClient(
             MakeUnique<ControlledClientData>(clientHandle, aRegistrationInfo));
 
         clientHandle->OnDetach()->Then(
-            SystemGroup::EventTargetFor(TaskCategory::Other), __func__,
+            GetMainThreadSerialEventTarget(), __func__,
             [self, aClientInfo] { self->StopControllingClient(aClientInfo); });
 
         // Always check to see if we failed to actually control the client.  In
         // that case removed the client from our list of controlled clients.
         return promise->Then(
-            SystemGroup::EventTargetFor(TaskCategory::Other), __func__,
+            GetMainThreadSerialEventTarget(), __func__,
             [](bool) {
               // do nothing on success
               return GenericErrorResultPromise::CreateAndResolve(true,
@@ -531,31 +599,56 @@ void ServiceWorkerManager::MaybeStartShutdown() {
 
   mShuttingDown = true;
 
-  for (auto it1 = mRegistrationInfos.Iter(); !it1.Done(); it1.Next()) {
-    for (auto it2 = it1.UserData()->mUpdateTimers.Iter(); !it2.Done();
-         it2.Next()) {
-      nsCOMPtr<nsITimer> timer = it2.UserData();
-      timer->Cancel();
-    }
-    it1.UserData()->mUpdateTimers.Clear();
+  for (auto& entry : mRegistrationInfos) {
+    auto& dataPtr = entry.GetData();
 
-    for (auto it2 = it1.UserData()->mJobQueues.Iter(); !it2.Done();
-         it2.Next()) {
-      RefPtr<ServiceWorkerJobQueue> queue = it2.UserData();
-      queue->CancelAll();
+    for (auto& timerEntry : dataPtr->mUpdateTimers) {
+      timerEntry.GetData()->Cancel();
     }
-    it1.UserData()->mJobQueues.Clear();
+    dataPtr->mUpdateTimers.Clear();
 
-    for (auto it2 = it1.UserData()->mInfos.Iter(); !it2.Done(); it2.Next()) {
-      RefPtr<ServiceWorkerRegistrationInfo> regInfo = it2.UserData();
-      regInfo->Clear();
+    for (auto& queueEntry : dataPtr->mJobQueues) {
+      queueEntry.GetData()->CancelAll();
     }
-    it1.UserData()->mInfos.Clear();
+    dataPtr->mJobQueues.Clear();
+
+    for (auto& registrationEntry : dataPtr->mInfos) {
+      registrationEntry.GetData()->ShutdownWorkers();
+    }
+
+    // ServiceWorkerCleanup may try to unregister registrations, so don't clear
+    // mInfos.
+  }
+
+  for (auto& entry : mControlledClients) {
+    entry.GetData()->mRegistrationInfo->ShutdownWorkers();
+  }
+
+  for (auto iter = mOrphanedRegistrations.iter(); !iter.done(); iter.next()) {
+    iter.get()->ShutdownWorkers();
+  }
+
+  if (mShutdownBlocker) {
+    mShutdownBlocker->StopAcceptingPromises();
   }
 
   nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
   if (obs) {
-    obs->RemoveObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID);
+    obs->RemoveObserver(this, GetStartShutdownTopic());
+
+    if (ServiceWorkersAreCrossProcess()) {
+      obs->AddObserver(this, kFinishShutdownTopic, false);
+      return;
+    }
+  }
+
+  MaybeFinishShutdown();
+}
+
+void ServiceWorkerManager::MaybeFinishShutdown() {
+  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  if (obs) {
+    obs->RemoveObserver(this, kFinishShutdownTopic);
   }
 
   if (!mActor) {
@@ -1202,8 +1295,7 @@ RefPtr<ServiceWorkerRegistrationPromise> ServiceWorkerManager::WhenReady(
                                                               __func__);
   }
 
-  nsCOMPtr<nsISerialEventTarget> target =
-      SystemGroup::EventTargetFor(TaskCategory::Other);
+  nsCOMPtr<nsISerialEventTarget> target = GetMainThreadSerialEventTarget();
 
   RefPtr<ClientHandle> handle =
       ClientManager::CreateHandle(aClientInfo, target);
@@ -2156,7 +2248,7 @@ void ServiceWorkerManager::DispatchFetchEvent(nsIInterceptedChannel* aChannel,
 
           nsCOMPtr<nsISerialEventTarget> target =
               reservedClient ? reservedClient->EventTarget()
-                             : SystemGroup::EventTargetFor(TaskCategory::Other);
+                             : GetMainThreadSerialEventTarget();
 
           reservedClient.reset();
           reservedClient = ClientManager::CreateSource(ClientType::Window,
@@ -2623,7 +2715,7 @@ void ServiceWorkerManager::UpdateClientControllers(
     // If we fail to control the client, then automatically remove it
     // from our list of controlled clients.
     p->Then(
-        SystemGroup::EventTargetFor(TaskCategory::Other), __func__,
+        GetMainThreadSerialEventTarget(), __func__,
         [](bool) {
           // do nothing on success
         },
@@ -2920,8 +3012,13 @@ ServiceWorkerManager::RemoveListener(
 NS_IMETHODIMP
 ServiceWorkerManager::Observe(nsISupports* aSubject, const char* aTopic,
                               const char16_t* aData) {
-  if (strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID) == 0) {
+  if (strcmp(aTopic, GetStartShutdownTopic()) == 0) {
     MaybeStartShutdown();
+    return NS_OK;
+  }
+
+  if (strcmp(aTopic, kFinishShutdownTopic) == 0) {
+    MaybeFinishShutdown();
     return NS_OK;
   }
 
@@ -3089,12 +3186,9 @@ void ServiceWorkerManager::ScheduleUpdateTimer(nsIPrincipal* aPrincipal,
 
         nsCOMPtr<nsITimer> timer;
 
-        // Label with SystemGroup because UpdateTimerCallback only sends an IPC
-        // message (PServiceWorkerUpdaterConstructor) without touching any web
-        // contents.
-        const nsresult rv = NS_NewTimerWithCallback(
-            getter_AddRefs(timer), callback, UPDATE_DELAY_MS, nsITimer::TYPE_ONE_SHOT,
-            SystemGroup::EventTargetFor(TaskCategory::Other));
+        const nsresult rv =
+            NS_NewTimerWithCallback(getter_AddRefs(timer), callback,
+                                    UPDATE_DELAY_MS, nsITimer::TYPE_ONE_SHOT);
 
         if (NS_WARN_IF(NS_FAILED(rv))) {
           return;
@@ -3171,6 +3265,45 @@ ServiceWorkerManager::IsParentInterceptEnabled(bool* aIsEnabled) {
   MOZ_ASSERT(NS_IsMainThread());
   *aIsEnabled = ServiceWorkerParentInterceptEnabled();
   return NS_OK;
+}
+
+void ServiceWorkerManager::AddOrphanedRegistration(
+    ServiceWorkerRegistrationInfo* aRegistration) {
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(aRegistration);
+  MOZ_ASSERT(aRegistration->IsUnregistered());
+  MOZ_ASSERT(!aRegistration->IsControllingClients());
+  MOZ_ASSERT(!aRegistration->IsIdle());
+  MOZ_ASSERT(!mOrphanedRegistrations.has(aRegistration));
+
+  MOZ_ALWAYS_TRUE(mOrphanedRegistrations.putNew(aRegistration));
+}
+
+void ServiceWorkerManager::RemoveOrphanedRegistration(
+    ServiceWorkerRegistrationInfo* aRegistration) {
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(aRegistration);
+  MOZ_ASSERT(aRegistration->IsUnregistered());
+  MOZ_ASSERT(!aRegistration->IsControllingClients());
+  MOZ_ASSERT(aRegistration->IsIdle());
+  MOZ_ASSERT(mOrphanedRegistrations.has(aRegistration));
+
+  mOrphanedRegistrations.remove(aRegistration);
+}
+
+uint32_t ServiceWorkerManager::MaybeInitServiceWorkerShutdownProgress() const {
+  if (!mShutdownBlocker) {
+    return ServiceWorkerShutdownBlocker::kInvalidShutdownStateId;
+  }
+
+  return mShutdownBlocker->CreateShutdownState();
+}
+
+void ServiceWorkerManager::ReportServiceWorkerShutdownProgress(
+    uint32_t aShutdownStateId,
+    ServiceWorkerShutdownState::Progress aProgress) const {
+  MOZ_ASSERT(mShutdownBlocker);
+  mShutdownBlocker->ReportShutdownProgress(aShutdownStateId, aProgress);
 }
 
 }  // namespace dom

@@ -33,7 +33,7 @@
 using mozilla::Unused;  // <snicker>
 using namespace mozilla::dom;
 using namespace mozilla;
-
+using DelegateInfo = PermissionDelegateHandler::PermissionDelegateInfo;
 #define kVisibilityChange u"visibilitychange"
 
 class VisibilityChangeListener final : public nsIDOMEventListener {
@@ -120,7 +120,8 @@ class ContentPermissionRequestParent : public PContentPermissionRequestParent {
   ContentPermissionRequestParent(const nsTArray<PermissionRequest>& aRequests,
                                  Element* aElement, nsIPrincipal* aPrincipal,
                                  nsIPrincipal* aTopLevelPrincipal,
-                                 const bool aIsHandlingUserInput);
+                                 const bool aIsHandlingUserInput,
+                                 const bool aMaybeUnsafePermissionDelegate);
   virtual ~ContentPermissionRequestParent();
 
   bool IsBeingDestroyed();
@@ -129,6 +130,7 @@ class ContentPermissionRequestParent : public PContentPermissionRequestParent {
   nsCOMPtr<nsIPrincipal> mTopLevelPrincipal;
   nsCOMPtr<Element> mElement;
   bool mIsHandlingUserInput;
+  bool mMaybeUnsafePermissionDelegate;
   RefPtr<nsContentPermissionRequestProxy> mProxy;
   nsTArray<PermissionRequest> mRequests;
 
@@ -145,7 +147,8 @@ class ContentPermissionRequestParent : public PContentPermissionRequestParent {
 ContentPermissionRequestParent::ContentPermissionRequestParent(
     const nsTArray<PermissionRequest>& aRequests, Element* aElement,
     nsIPrincipal* aPrincipal, nsIPrincipal* aTopLevelPrincipal,
-    const bool aIsHandlingUserInput) {
+    const bool aIsHandlingUserInput,
+    const bool aMaybeUnsafePermissionDelegate) {
   MOZ_COUNT_CTOR(ContentPermissionRequestParent);
 
   mPrincipal = aPrincipal;
@@ -153,6 +156,7 @@ ContentPermissionRequestParent::ContentPermissionRequestParent(
   mElement = aElement;
   mRequests = aRequests;
   mIsHandlingUserInput = aIsHandlingUserInput;
+  mMaybeUnsafePermissionDelegate = aMaybeUnsafePermissionDelegate;
 }
 
 ContentPermissionRequestParent::~ContentPermissionRequestParent() {
@@ -319,10 +323,11 @@ PContentPermissionRequestParent*
 nsContentPermissionUtils::CreateContentPermissionRequestParent(
     const nsTArray<PermissionRequest>& aRequests, Element* aElement,
     nsIPrincipal* aPrincipal, nsIPrincipal* aTopLevelPrincipal,
-    const bool aIsHandlingUserInput, const TabId& aTabId) {
+    const bool aIsHandlingUserInput, const bool aMaybeUnsafePermissionDelegate,
+    const TabId& aTabId) {
   PContentPermissionRequestParent* parent = new ContentPermissionRequestParent(
-      aRequests, aElement, aPrincipal, aTopLevelPrincipal,
-      aIsHandlingUserInput);
+      aRequests, aElement, aPrincipal, aTopLevelPrincipal, aIsHandlingUserInput,
+      aMaybeUnsafePermissionDelegate);
   ContentPermissionRequestParentMap()[parent] = aTabId;
 
   return parent;
@@ -362,6 +367,11 @@ nsresult nsContentPermissionUtils::AskPermission(
     rv = aRequest->GetIsHandlingUserInput(&isHandlingUserInput);
     NS_ENSURE_SUCCESS(rv, rv);
 
+    bool maybeUnsafePermissionDelegate;
+    rv = aRequest->GetMaybeUnsafePermissionDelegate(
+        &maybeUnsafePermissionDelegate);
+    NS_ENSURE_SUCCESS(rv, rv);
+
     ContentChild::GetSingleton()->SetEventTargetForActor(
         req, aWindow->EventTargetFor(TaskCategory::Other));
 
@@ -369,7 +379,7 @@ nsresult nsContentPermissionUtils::AskPermission(
     ContentChild::GetSingleton()->SendPContentPermissionRequestConstructor(
         req, permArray, IPC::Principal(principal),
         IPC::Principal(topLevelPrincipal), isHandlingUserInput,
-        child->GetTabId());
+        maybeUnsafePermissionDelegate, child->GetTabId());
     ContentPermissionRequestChildMap()[req.get()] = child->GetTabId();
 
     req->Sendprompt();
@@ -525,7 +535,8 @@ ContentPermissionRequestBase::ContentPermissionRequestBase(
       mRequester(aWindow ? new nsContentPermissionRequester(aWindow) : nullptr),
       mPrefName(aPrefName),
       mType(aType),
-      mIsHandlingUserInput(UserActivation::IsHandlingUserInput()) {
+      mIsHandlingUserInput(UserActivation::IsHandlingUserInput()),
+      mMaybeUnsafePermissionDelegate(false) {
   if (!aWindow) {
     return;
   }
@@ -536,6 +547,12 @@ ContentPermissionRequestBase::ContentPermissionRequestBase(
   }
 
   mPermissionHandler = doc->GetPermissionDelegateHandler();
+  if (mPermissionHandler) {
+    nsTArray<nsCString> types;
+    types.AppendElement(mType);
+    mPermissionHandler->MaybeUnsafePermissionDelegate(
+        types, &mMaybeUnsafePermissionDelegate);
+  }
 }
 
 NS_IMETHODIMP
@@ -546,8 +563,27 @@ ContentPermissionRequestBase::GetPrincipal(
 }
 
 NS_IMETHODIMP
+ContentPermissionRequestBase::GetDelegatePrincipal(
+    const nsACString& aType, nsIPrincipal** aRequestingPrincipal) {
+  return PermissionDelegateHandler::GetDelegatePrincipal(aType, this,
+                                                         aRequestingPrincipal);
+}
+
+NS_IMETHODIMP
+ContentPermissionRequestBase::GetMaybeUnsafePermissionDelegate(
+    bool* aMaybeUnsafePermissionDelegate) {
+  *aMaybeUnsafePermissionDelegate = mMaybeUnsafePermissionDelegate;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 ContentPermissionRequestBase::GetTopLevelPrincipal(
     nsIPrincipal** aRequestingPrincipal) {
+  if (!mTopLevelPrincipal) {
+    *aRequestingPrincipal = nullptr;
+    return NS_OK;
+  }
+
   NS_IF_ADDREF(*aRequestingPrincipal = mTopLevelPrincipal);
   return NS_OK;
 }
@@ -860,8 +896,25 @@ nsContentPermissionRequestProxy::GetTopLevelPrincipal(
     return NS_ERROR_FAILURE;
   }
 
+  if (!mParent->mTopLevelPrincipal) {
+    *aRequestingPrincipal = nullptr;
+    return NS_OK;
+  }
+
   NS_ADDREF(*aRequestingPrincipal = mParent->mTopLevelPrincipal);
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsContentPermissionRequestProxy::GetDelegatePrincipal(
+    const nsACString& aType, nsIPrincipal** aRequestingPrincipal) {
+  NS_ENSURE_ARG_POINTER(aRequestingPrincipal);
+  if (mParent == nullptr) {
+    return NS_ERROR_FAILURE;
+  }
+
+  return PermissionDelegateHandler::GetDelegatePrincipal(aType, this,
+                                                         aRequestingPrincipal);
 }
 
 NS_IMETHODIMP
@@ -884,6 +937,17 @@ nsContentPermissionRequestProxy::GetIsHandlingUserInput(
     return NS_ERROR_FAILURE;
   }
   *aIsHandlingUserInput = mParent->mIsHandlingUserInput;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsContentPermissionRequestProxy::GetMaybeUnsafePermissionDelegate(
+    bool* aMaybeUnsafePermissionDelegate) {
+  NS_ENSURE_ARG_POINTER(aMaybeUnsafePermissionDelegate);
+  if (mParent == nullptr) {
+    return NS_ERROR_FAILURE;
+  }
+  *aMaybeUnsafePermissionDelegate = mParent->mMaybeUnsafePermissionDelegate;
   return NS_OK;
 }
 

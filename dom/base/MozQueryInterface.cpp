@@ -10,6 +10,7 @@
 
 #include "jsapi.h"
 
+#include "mozilla/ErrorResult.h"
 #include "xpcpublic.h"
 
 namespace mozilla::dom {

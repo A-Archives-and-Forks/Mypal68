@@ -9,25 +9,45 @@ interface RemoteTab;
 interface nsITransportSecurityInfo;
 
 [Exposed=Window, ChromeOnly]
-interface WindowGlobalParent {
+interface WindowContext {
+  readonly attribute unsigned long long innerWindowId;
+};
+
+[Exposed=Window, ChromeOnly]
+interface WindowGlobalParent : WindowContext {
   readonly attribute boolean isClosed;
   readonly attribute boolean isInProcess;
   readonly attribute CanonicalBrowsingContext browsingContext;
 
   readonly attribute boolean isCurrentGlobal;
 
-  readonly attribute unsigned long long innerWindowId;
   readonly attribute unsigned long long outerWindowId;
+  readonly attribute unsigned long long contentParentId;
+
+  // A WindowGlobalParent is the root in its process if it has no parent, or its
+  // embedder is in a different process.
+  readonly attribute boolean isProcessRoot;
+
+  // True if this window has registered a "beforeunload" event handler.
+  readonly attribute boolean hasBeforeUnload;
+
+  // Is the document loaded in this WindowGlobalParent the initial document
+  // implicitly created while "creating a new browsing context".
+  // https://html.spec.whatwg.org/multipage/browsers.html#creating-a-new-browsing-context
+  readonly attribute boolean isInitialDocument;
 
   readonly attribute FrameLoader? rootFrameLoader; // Embedded (browser) only
 
   readonly attribute WindowGlobalChild? childActor; // in-process only
 
-  readonly attribute RemoteTab? remoteTab; // out-of-process only
-
   // Information about the currently loaded document.
   readonly attribute Principal documentPrincipal;
+  readonly attribute Principal? contentBlockingAllowListPrincipal;
   readonly attribute URI? documentURI;
+
+  // ContentParent of the process this window is loaded in.
+  // Will be `null` for windows loaded in the parent process.
+  readonly attribute nsIContentParent? contentParent;
 
   static WindowGlobalParent? getByInnerWindowId(unsigned long long innerWindowId);
 
@@ -40,10 +60,24 @@ interface WindowGlobalParent {
   [Throws]
   JSWindowActorParent getActor(UTF8String name);
 
+  /**
+   * Renders a region of the frame into an image bitmap.
+   *
+   * @param rect Specify the area of the window to render, in CSS pixels. This
+   * is relative to the current scroll position. If null, the entire viewport
+   * is rendered.
+   * @param scale The scale to render the window at. Use devicePixelRatio
+   * to have comparable rendering to the OS.
+   * @param backgroundColor The background color to use.
+   *
+   * This API can only be used in the parent process, as content processes
+   * cannot access the rendering of out of process iframes. This API works
+   * with remote and local frames.
+   */
   [NewObject]
-  Promise<RemoteTab> changeFrameRemoteness(
-    BrowsingContext? bc, UTF8String remoteType,
-    unsigned long long pendingSwitchId);
+  Promise<ImageBitmap> drawSnapshot(DOMRect? rect,
+                                    double scale,
+                                    UTF8String backgroundColor);
 
   /**
    * Fetches the securityInfo object for this window. This function will
@@ -63,11 +97,17 @@ interface WindowGlobalChild {
   readonly attribute boolean isClosed;
   readonly attribute boolean isInProcess;
   readonly attribute BrowsingContext browsingContext;
+  readonly attribute WindowContext windowContext;
 
   readonly attribute boolean isCurrentGlobal;
 
   readonly attribute unsigned long long innerWindowId;
   readonly attribute unsigned long long outerWindowId;
+  readonly attribute unsigned long long contentParentId;
+
+  // A WindowGlobalChild is the root in its process if it has no parent, or its
+  // embedder is in a different process.
+  readonly attribute boolean isProcessRoot;
 
   readonly attribute WindowGlobalParent? parentActor; // in-process only
 

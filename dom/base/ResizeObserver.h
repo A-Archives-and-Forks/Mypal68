@@ -69,8 +69,7 @@ class ResizeObservation final : public LinkedListElement<ResizeObservation> {
   NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(ResizeObservation)
   NS_DECL_CYCLE_COLLECTION_NATIVE_CLASS(ResizeObservation)
 
-  ResizeObservation(Element&, ResizeObserver&, ResizeObserverBoxOptions,
-                    WritingMode);
+  ResizeObservation(Element&, ResizeObserverBoxOptions, WritingMode);
 
   Element* Target() const { return mTarget; }
 
@@ -87,16 +86,10 @@ class ResizeObservation final : public LinkedListElement<ResizeObservation> {
    */
   void UpdateLastReportedSize(const gfx::Size& aSize);
 
-  enum class RemoveFromObserver : bool { No, Yes };
-  void Unlink(RemoveFromObserver);
-
  protected:
-  ~ResizeObservation() { Unlink(RemoveFromObserver::No); };
+  ~ResizeObservation() = default;
 
   nsCOMPtr<Element> mTarget;
-
-  // Weak, observer always outlives us.
-  ResizeObserver* mObserver;
 
   const ResizeObserverBoxOptions mObservedBox;
 
@@ -182,7 +175,7 @@ class ResizeObserver final : public nsISupports, public nsWrapperCache {
       Document&);
 
  protected:
-  ~ResizeObserver() { Disconnect(); }
+  ~ResizeObserver() { mObservationList.clear(); }
 
   nsCOMPtr<nsPIDOMWindowInner> mOwner;
   // The window's document at the time of ResizeObserver creation.

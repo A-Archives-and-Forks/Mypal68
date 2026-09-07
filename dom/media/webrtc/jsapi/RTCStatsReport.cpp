@@ -7,8 +7,7 @@
 #include "mozilla/dom/PerformanceService.h"
 #include "nsRFPService.h"
 
-namespace mozilla {
-namespace dom {
+namespace mozilla::dom {
 
 RTCStatsTimestampMaker::RTCStatsTimestampMaker(const GlobalObject* aGlobal) {
   nsCOMPtr<nsPIDOMWindowInner> window;
@@ -83,5 +82,4 @@ void RTCStatsReport::Set(const nsAString& aKey, JS::Handle<JSObject*> aValue,
   RTCStatsReport_Binding::MaplikeHelpers::Set(this, aKey, aValue, aRv);
 }
 
-}  // namespace dom
-}  // namespace mozilla
+}  // namespace mozilla::dom

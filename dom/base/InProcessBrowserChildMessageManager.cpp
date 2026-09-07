@@ -20,11 +20,30 @@
 #include "mozilla/dom/SameProcessMessageQueue.h"
 #include "mozilla/dom/ScriptLoader.h"
 #include "mozilla/dom/WindowProxyHolder.h"
+#include "mozilla/dom/JSWindowActorService.h"
 #include "mozilla/HoldDropJSObjects.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::dom::ipc;
+
+/* static */
+already_AddRefed<InProcessBrowserChildMessageManager>
+InProcessBrowserChildMessageManager::Create(nsDocShell* aShell,
+                                            nsIContent* aOwner,
+                                            nsFrameMessageManager* aChrome) {
+  RefPtr<InProcessBrowserChildMessageManager> mm =
+      new InProcessBrowserChildMessageManager(aShell, aOwner, aChrome);
+
+  NS_ENSURE_TRUE(mm->Init(), nullptr);
+
+  if (XRE_IsParentProcess()) {
+    RefPtr<JSWindowActorService> wasvc = JSWindowActorService::GetSingleton();
+    wasvc->RegisterChromeEventTarget(mm);
+  }
+
+  return mm.forget();
+}
 
 bool InProcessBrowserChildMessageManager::DoSendBlockingMessage(
     const nsAString& aMessage, StructuredCloneData& aData,
@@ -92,6 +111,10 @@ InProcessBrowserChildMessageManager::InProcessBrowserChildMessageManager(
 }
 
 InProcessBrowserChildMessageManager::~InProcessBrowserChildMessageManager() {
+  if (XRE_IsParentProcess()) {
+    JSWindowActorService::UnregisterChromeEventTarget(this);
+  }
+
   mozilla::DropJSObjects(this);
 }
 
@@ -120,6 +143,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mMessageManager)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocShell)
   tmp->nsMessageManagerScriptExecutor::Unlink();
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_REFERENCE
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(InProcessBrowserChildMessageManager)

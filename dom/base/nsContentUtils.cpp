@@ -133,7 +133,8 @@
 #include "mozilla/dom/BlobImpl.h"
 #include "mozilla/dom/BlobURLProtocolHandler.h"
 #include "mozilla/dom/BorrowedAttrInfo.h"
-#include "mozilla/dom/BrowserBridgeChild.h" // MY
+#include "mozilla/dom/BrowsingContext.h"
+#include "mozilla/dom/BrowsingContextGroup.h"
 #include "mozilla/dom/BrowserBridgeParent.h"
 #include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/CallbackFunction.h"
@@ -184,7 +185,6 @@
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/ShadowRoot.h"
-#include "mozilla/dom/TabGroup.h"
 #include "mozilla/dom/Text.h"
 #include "mozilla/dom/UserActivation.h"
 #include "mozilla/dom/WorkerCommon.h"
@@ -671,6 +671,47 @@ class SameOriginCheckerImpl final : public nsIChannelEventSink,
 };
 
 }  // namespace
+
+AutoSuppressEventHandlingAndSuspend::AutoSuppressEventHandlingAndSuspend(
+    BrowsingContextGroup* aGroup) {
+  for (const auto& bc : aGroup->Toplevels()) {
+    SuppressBrowsingContext(bc);
+  }
+}
+
+void AutoSuppressEventHandlingAndSuspend::SuppressBrowsingContext(
+    BrowsingContext* aBC) {
+  if (nsCOMPtr<nsPIDOMWindowOuter> win = aBC->GetDOMWindow()) {
+    if (RefPtr<Document> doc = win->GetExtantDoc()) {
+      mDocuments.AppendElement(doc);
+      mWindows.AppendElement(win->GetCurrentInnerWindow());
+      // Note: Document::SuppressEventHandling will also automatically suppress
+      // event handling for any in-process sub-documents. However, since we need
+      // to deal with cases where remote BrowsingContexts may be interleaved
+      // with in-process ones, we still need to walk the entire tree ourselves.
+      // This may be slightly redundant in some cases, but since event handling
+      // suppressions maintain a count of current blockers, it does not cause
+      // any problems.
+      doc->SuppressEventHandling();
+      win->GetCurrentInnerWindow()->Suspend();
+    }
+  }
+
+  BrowsingContext::Children children;
+  aBC->GetChildren(children);
+  for (const auto& bc : children) {
+    SuppressBrowsingContext(bc);
+  }
+}
+
+AutoSuppressEventHandlingAndSuspend::~AutoSuppressEventHandlingAndSuspend() {
+  for (const auto& win : mWindows) {
+    win->Resume();
+  }
+  for (const auto& doc : mDocuments) {
+    doc->UnsuppressEventHandlingAndFireEvents(true);
+  }
+}
 
 /**
  * This class is used to determine whether or not the user is currently
@@ -4725,13 +4766,21 @@ void nsContentUtils::MaybeFireNodeRemoved(nsINode* aChild, nsINode* aParent) {
     // that is a know case when we'd normally fire a mutation event, but can't
     // make that safe and so we suppress it at this time. Ideally this should
     // go away eventually.
-    if (!(aChild->IsContent() &&
-          aChild->AsContent()->IsInNativeAnonymousSubtree()) &&
+    if (!aChild->IsInNativeAnonymousSubtree() &&
         !sDOMNodeRemovedSuppressCount) {
       NS_ERROR("Want to fire DOMNodeRemoved event, but it's not safe");
       WarnScriptWasIgnored(aChild->OwnerDoc());
     }
     return;
+  }
+
+  {
+    Document* doc = aParent->OwnerDoc();
+    if (MOZ_UNLIKELY(doc->DevToolsWatchingDOMMutations()) &&
+        aChild->IsInComposedDoc() && !aChild->ChromeOnlyAccess()) {
+      DispatchChromeEvent(doc, aChild, u"devtoolschildremoved"_ns,
+                          CanBubble::eNo, Cancelable::eNo);
+    }
   }
 
   if (HasMutationListeners(aChild, NS_EVENT_BITS_MUTATION_NODEREMOVED,
@@ -6876,9 +6925,10 @@ bool nsContentUtils::ChannelShouldInheritPrincipal(
 }
 
 /* static */
-bool nsContentUtils::IsCutCopyAllowed(nsIPrincipal& aSubjectPrincipal) {
-  if (StaticPrefs::dom_allow_cut_copy() &&
-      UserActivation::IsHandlingUserInput()) {
+bool nsContentUtils::IsCutCopyAllowed(Document* aDocument,
+                                      nsIPrincipal& aSubjectPrincipal) {
+  if (StaticPrefs::dom_allow_cut_copy() && aDocument &&
+      aDocument->HasValidTransientUserGestureActivation()) {
     return true;
   }
 
@@ -9253,6 +9303,38 @@ bool nsContentUtils::HttpsStateIsModern(Document* aDocument) {
 }
 
 /* static */
+bool nsContentUtils::ComputeIsSecureContext(nsIChannel* aChannel) {
+  MOZ_ASSERT(aChannel);
+
+  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
+  // The assertion would be relaxed due to COEP support.
+  MOZ_ASSERT(loadInfo->GetExternalContentPolicyType() ==
+             nsIContentPolicy::TYPE_DOCUMENT);
+
+  nsCOMPtr<nsIScriptSecurityManager> ssm = nsContentUtils::GetSecurityManager();
+  nsCOMPtr<nsIPrincipal> principal;
+  nsresult rv = ssm->GetChannelResultPrincipalIfNotSandboxed(
+      aChannel, getter_AddRefs(principal));
+  if (NS_FAILED(rv)) {
+    return false;
+  }
+
+  if (principal->IsSystemPrincipal()) {
+    // If the load would've been sandboxed, treat this load as an untrusted
+    // load, as system code considers sandboxed resources insecure.
+    return !loadInfo->GetLoadingSandboxed();
+  }
+
+  if (principal->GetIsNullPrincipal()) {
+    return false;
+  }
+
+  bool isTrustworthyOrigin = false;
+  principal->GetIsOriginPotentiallyTrustworthy(&isTrustworthyOrigin);
+  return isTrustworthyOrigin;
+}
+
+/* static */
 void nsContentUtils::TryToUpgradeElement(Element* aElement) {
   NodeInfo* nodeInfo = aElement->NodeInfo();
   RefPtr<nsAtom> typeAtom =
@@ -9638,7 +9720,11 @@ bool nsContentUtils::AttemptLargeAllocationLoad(nsIHttpChannel* aChannel) {
   }
 
   nsIDocShell* docShell = outer->GetDocShell();
-  if (!docShell->GetIsOnlyToplevelInTabGroup()) {
+  BrowsingContext* browsingContext = docShell->GetBrowsingContext();
+  bool isOnlyToplevelBrowsingContext =
+      browsingContext->IsTop() &&
+      browsingContext->Group()->Toplevels().Length() == 1;
+  if (!isOnlyToplevelBrowsingContext) {
     outer->SetLargeAllocStatus(LargeAllocStatus::NOT_ONLY_TOPLEVEL_IN_TABGROUP);
     return false;
   }
@@ -10109,21 +10195,7 @@ already_AddRefed<nsISerialEventTarget> nsContentUtils::GetEventTargetByLoadInfo(
       target = group->EventTargetFor(aCategory);
     }
   } else {
-    // There's no document yet, but this might be a top-level load where we can
-    // find a TabGroup.
-    uint64_t outerWindowId;
-    if (NS_FAILED(aLoadInfo->GetOuterWindowID(&outerWindowId))) {
-      // No window. This might be an add-on XHR, a service worker request, or
-      // something else.
-      return nullptr;
-    }
-    RefPtr<nsGlobalWindowOuter> window =
-        nsGlobalWindowOuter::GetOuterWindowWithId(outerWindowId);
-    if (!window) {
-      return nullptr;
-    }
-
-    target = window->TabGroup()->EventTargetFor(aCategory);
+    target = GetMainThreadSerialEventTarget();
   }
 
   return target.forget();
@@ -10134,10 +10206,15 @@ bool nsContentUtils::IsLocalRefURL(const nsString& aString) {
   return !aString.IsEmpty() && aString[0] == '#';
 }
 
-static const uint64_t kIdProcessBits = 32;
-static const uint64_t kIdBits = 64 - kIdProcessBits;
+// We use only 53 bits for the ID so that it can be converted to and from a JS
+// value without loss of precision. The upper bits of the ID hold the process
+// ID. The lower bits identify the object itself.
+static constexpr uint64_t kIdTotalBits = 53;
+static constexpr uint64_t kIdProcessBits = 22;
+static constexpr uint64_t kIdBits = kIdTotalBits - kIdProcessBits;
 
-/* static */ uint64_t GenerateProcessSpecificId(uint64_t aId) {
+/* static */
+uint64_t nsContentUtils::GenerateProcessSpecificId(uint64_t aId) {
   uint64_t processId = 0;
   if (XRE_IsContentProcess()) {
     ContentChild* cc = ContentChild::GetSingleton();
@@ -10154,7 +10231,7 @@ static const uint64_t kIdBits = 64 - kIdProcessBits;
   return (processBits << kIdBits) | bits;
 }
 
-// Tab ID is composed in a similar manner of Window ID.
+// Next process-local Tab ID.
 static uint64_t gNextTabId = 0;
 
 /* static */
@@ -10162,12 +10239,20 @@ uint64_t nsContentUtils::GenerateTabId() {
   return GenerateProcessSpecificId(++gNextTabId);
 }
 
-// Browsing context ID is composed in a similar manner of Window ID.
+// Next process-local Browsing Context ID.
 static uint64_t gNextBrowsingContextId = 0;
 
 /* static */
 uint64_t nsContentUtils::GenerateBrowsingContextId() {
   return GenerateProcessSpecificId(++gNextBrowsingContextId);
+}
+
+// Next process-local Window ID.
+static uint64_t gNextWindowId = 0;
+
+/* static */
+uint64_t nsContentUtils::GenerateWindowId() {
+  return GenerateProcessSpecificId(++gNextWindowId);
 }
 
 /* static */

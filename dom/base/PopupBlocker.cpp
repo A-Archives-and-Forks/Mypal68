@@ -30,6 +30,8 @@ static TimeStamp sLastAllowedExternalProtocolIFrameTimeStamp;
 // is set to true.
 static bool sUnusedPopupToken = false;
 
+static uint32_t sOpenPopupSpamCount = 0;
+
 void PopupAllowedEventsChanged() {
   if (sPopupAllowedEvents) {
     free(sPopupAllowedEvents);
@@ -406,6 +408,8 @@ void PopupBlocker::Initialize() {
 
 /* static */
 void PopupBlocker::Shutdown() {
+  MOZ_ASSERT(sOpenPopupSpamCount == 0);
+
   if (sPopupAllowedEvents) {
     free(sPopupAllowedEvents);
   }
@@ -440,6 +444,18 @@ TimeStamp PopupBlocker::WhenLastExternalProtocolIframeAllowed() {
 void PopupBlocker::ResetLastExternalProtocolIframeAllowed() {
   sLastAllowedExternalProtocolIFrameTimeStamp = TimeStamp();
 }
+
+/* static */
+void PopupBlocker::RegisterOpenPopupSpam() { sOpenPopupSpamCount++; }
+
+/* static */
+void PopupBlocker::UnregisterOpenPopupSpam() {
+  MOZ_ASSERT(sOpenPopupSpamCount);
+  sOpenPopupSpamCount--;
+}
+
+/* static */
+uint32_t PopupBlocker::GetOpenPopupSpamCount() { return sOpenPopupSpamCount; }
 
 }  // namespace mozilla::dom
 

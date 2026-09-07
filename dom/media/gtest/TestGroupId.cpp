@@ -32,9 +32,9 @@ class MockMediaEngineSource : public MediaEngineSource {
   MOCK_CONST_METHOD0(GetUUID, nsCString());
   MOCK_CONST_METHOD0(GetGroupId, nsString());
   MOCK_CONST_METHOD1(GetSettings, void(dom::MediaTrackSettings&));
-  MOCK_METHOD4(Allocate, nsresult(const dom::MediaTrackConstraints&,
-                                  const MediaEnginePrefs&,
-                                  const ipc::PrincipalInfo&, const char**));
+  MOCK_METHOD4(Allocate,
+               nsresult(const dom::MediaTrackConstraints&,
+                        const MediaEnginePrefs&, uint64_t, const char**));
   MOCK_METHOD2(SetTrack,
                void(const RefPtr<MediaTrack>&, const PrincipalHandle&));
   MOCK_METHOD0(Start, nsresult());

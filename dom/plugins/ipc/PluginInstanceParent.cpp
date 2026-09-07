@@ -8,7 +8,6 @@
 #include "mozilla/BasicEvents.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_dom.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/dom/Element.h"
 #include "PluginInstanceParent.h"
 #include "BrowserStreamParent.h"
@@ -112,7 +111,6 @@ PluginInstanceParent::PluginInstanceParent(PluginModuleParent* parent, NPP npp,
       mNPNIface(npniface),
       mWindowType(NPWindowTypeWindow),
       mDrawingModel(kDefaultDrawingModel),
-      mLastRecordedDrawingModel(-1),
       mFrameID(0)
 #if defined(OS_WIN)
       ,
@@ -717,8 +715,6 @@ void PluginInstanceParent::SetCurrentImage(Image* aImage) {
   NPRect nprect = {uint16_t(rect.x), uint16_t(rect.y), uint16_t(rect.width),
                    uint16_t(rect.height)};
   RecvNPN_InvalidateRect(nprect);
-
-  RecordDrawingModel();
 }
 
 mozilla::ipc::IPCResult PluginInstanceParent::RecvShowDirectDXGISurface(
@@ -881,7 +877,6 @@ mozilla::ipc::IPCResult PluginInstanceParent::RecvShow(
   PLUGIN_LOG_DEBUG(
       ("   (RecvShow invalidated for surface %p)", mFrontSurface.get()));
 
-  RecordDrawingModel();
   return IPC_OK();
 }
 
@@ -1276,7 +1271,6 @@ NPError PluginInstanceParent::NPP_SetWindow(const NPWindow* aWindow) {
     return NPERR_GENERIC_ERROR;
   }
 
-  RecordDrawingModel();
   return NPERR_NO_ERROR;
 }
 
@@ -2157,28 +2151,4 @@ mozilla::ipc::IPCResult PluginInstanceParent::RecvOnWindowedPluginKeyEvent(
   }
   owner->OnWindowedPluginKeyEvent(aKeyEventData);
   return IPC_OK();
-}
-
-void PluginInstanceParent::RecordDrawingModel() {
-  int mode = -1;
-  switch (mWindowType) {
-    case NPWindowTypeWindow:
-      // We use 0=windowed since there is no specific NPDrawingModel value.
-      mode = 0;
-      break;
-    case NPWindowTypeDrawable:
-      mode = mDrawingModel + 1;
-      break;
-    default:
-      MOZ_ASSERT_UNREACHABLE("bad window type");
-      return;
-  }
-
-  if (mode == mLastRecordedDrawingModel) {
-    return;
-  }
-  MOZ_ASSERT(mode >= 0);
-
-  Telemetry::Accumulate(Telemetry::PLUGIN_DRAWING_MODEL, mode);
-  mLastRecordedDrawingModel = mode;
 }

@@ -37,6 +37,7 @@
 #include "mozilla/dom/RemoteWorkerTypes.h"
 #include "mozilla/dom/RootedDictionary.h"
 #include "mozilla/dom/ServiceWorkerManager.h"
+#include "mozilla/dom/ServiceWorkerUtils.h"
 #include "mozilla/dom/SimpleGlobalObject.h"
 #include "mozilla/dom/Worker.h"
 #include "mozilla/dom/WorkerCommon.h"
@@ -113,15 +114,28 @@ class ReportErrorRunnable final : public WorkerDebuggeeRunnable {
       // worker error reporting will crash.  Instead, pass the error to
       // the ServiceWorkerManager to report on any controlled documents.
       if (aWorkerPrivate->IsServiceWorker()) {
-        RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
-        if (swm) {
-          swm->HandleError(aCx, aWorkerPrivate->GetPrincipal(),
-                           aWorkerPrivate->ServiceWorkerScope(),
-                           aWorkerPrivate->ScriptURL(), mReport->mMessage,
-                           mReport->mFilename, mReport->mLine,
-                           mReport->mLineNumber, mReport->mColumnNumber,
-                           mReport->mIsWarning, mReport->mExnType);
+        if (ServiceWorkerParentInterceptEnabled()) {
+          RefPtr<RemoteWorkerChild> actor(
+              aWorkerPrivate->GetRemoteWorkerControllerWeakRef());
+
+          Unused << NS_WARN_IF(!actor);
+
+          if (actor) {
+            actor->ErrorPropagationOnMainThread(nullptr, false);
+          }
+
+        } else {
+          RefPtr<ServiceWorkerManager> swm =
+              ServiceWorkerManager::GetInstance();
+          if (swm) {
+            swm->HandleError(aCx, aWorkerPrivate->GetPrincipal(),
+                             aWorkerPrivate->ServiceWorkerScope(),
+                             aWorkerPrivate->ScriptURL(), u""_ns, u""_ns,
+                             u""_ns, 0, 0, nsIScriptError::errorFlag,
+                             JSEXN_ERR);
+          }
         }
+
         return true;
       }
 
@@ -192,14 +206,26 @@ class ReportGenericErrorRunnable final : public WorkerDebuggeeRunnable {
     }
 
     if (aWorkerPrivate->IsServiceWorker()) {
-      RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
-      if (swm) {
-        swm->HandleError(aCx, aWorkerPrivate->GetPrincipal(),
-                         aWorkerPrivate->ServiceWorkerScope(),
-                         aWorkerPrivate->ScriptURL(), EmptyString(),
-                         EmptyString(), EmptyString(), 0, 0,
-                         nsIScriptError::errorFlag, JSEXN_ERR);
+      if (ServiceWorkerParentInterceptEnabled()) {
+        RefPtr<RemoteWorkerChild> actor(
+            aWorkerPrivate->GetRemoteWorkerControllerWeakRef());
+
+        Unused << NS_WARN_IF(!actor);
+
+        if (actor) {
+          actor->ErrorPropagationOnMainThread(nullptr, false);
+        }
+
+      } else {
+        RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
+        if (swm) {
+          swm->HandleError(aCx, aWorkerPrivate->GetPrincipal(),
+                           aWorkerPrivate->ServiceWorkerScope(),
+                           aWorkerPrivate->ScriptURL(), u""_ns, u""_ns, u""_ns,
+                           0, 0, nsIScriptError::errorFlag, JSEXN_ERR);
+        }
       }
+
       return true;
     }
 

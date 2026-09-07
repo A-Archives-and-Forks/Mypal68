@@ -2,105 +2,67 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#ifdef ACCESSIBILITY
+#  ifdef XP_WIN
+#    include "mozilla/a11y/ProxyAccessible.h"
+#    include "mozilla/a11y/ProxyWrappers.h"
+#  endif
+#  include "mozilla/a11y/DocAccessible.h"
+#  include "mozilla/a11y/DocManager.h"
+#  include "mozilla/a11y/OuterDocAccessible.h"
+#endif
 #include "mozilla/dom/BrowserBridgeChild.h"
+#include "mozilla/dom/BrowserBridgeHost.h"
 #include "mozilla/dom/BrowsingContext.h"
+#include "mozilla/dom/MozFrameLoaderOwnerBinding.h"
+#include "mozilla/PresShell.h"
 #include "nsFocusManager.h"
 #include "nsFrameLoader.h"
 #include "nsFrameLoaderOwner.h"
-#include "nsQueryObject.h"
 #include "nsIDocShellTreeOwner.h"
+#include "nsQueryObject.h"
+#include "nsSubDocumentFrame.h"
+#include "nsView.h"
 
 using namespace mozilla::ipc;
 
 namespace mozilla::dom {
 
-BrowserBridgeChild::BrowserBridgeChild(nsFrameLoader* aFrameLoader,
-                                       BrowsingContext* aBrowsingContext)
-    : mLayersId{0},
-      mIPCOpen(true),
-      mFrameLoader(aFrameLoader),
-      mBrowsingContext(aBrowsingContext) {}
+BrowserBridgeChild::BrowserBridgeChild(BrowsingContext* aBrowsingContext,
+                                       TabId aId)
+    : mId{aId}, mLayersId{0}, mBrowsingContext(aBrowsingContext) {}
 
-BrowserBridgeChild::~BrowserBridgeChild() {}
+BrowserBridgeChild::~BrowserBridgeChild() {
+#if defined(ACCESSIBILITY) && defined(XP_WIN)
+  if (mEmbeddedDocAccessible) {
+    mEmbeddedDocAccessible->Shutdown();
+  }
+#endif
+}
 
-already_AddRefed<BrowserBridgeChild> BrowserBridgeChild::Create(
-    nsFrameLoader* aFrameLoader, const TabContext& aContext,
-    const nsCString& aRemoteType, BrowsingContext* aBrowsingContext) {
-  MOZ_ASSERT(XRE_IsContentProcess());
+already_AddRefed<BrowserBridgeHost> BrowserBridgeChild::FinishInit(
+    nsFrameLoader* aFrameLoader) {
+  MOZ_DIAGNOSTIC_ASSERT(!mFrameLoader);
+  mFrameLoader = aFrameLoader;
 
-  // Determine our embedder's BrowserChild actor.
-  RefPtr<Element> owner = aFrameLoader->GetOwnerContent();
-  MOZ_DIAGNOSTIC_ASSERT(owner);
-
+  RefPtr<Element> owner = mFrameLoader->GetOwnerContent();
   nsCOMPtr<nsIDocShell> docShell = do_GetInterface(owner->GetOwnerGlobal());
   MOZ_DIAGNOSTIC_ASSERT(docShell);
 
-  RefPtr<BrowserChild> browserChild = BrowserChild::GetFrom(docShell);
-  MOZ_DIAGNOSTIC_ASSERT(browserChild);
+  nsDocShell::Cast(docShell)->OOPChildLoadStarted(this);
 
-  uint32_t chromeFlags = 0;
-
-  nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
-  if (docShell) {
-    docShell->GetTreeOwner(getter_AddRefs(treeOwner));
-  }
-  if (treeOwner) {
-    nsCOMPtr<nsIWebBrowserChrome> wbc = do_GetInterface(treeOwner);
-    if (wbc) {
-      wbc->GetChromeFlags(&chromeFlags);
+#if defined(ACCESSIBILITY)
+  if (a11y::DocAccessible* docAcc =
+          a11y::GetExistingDocAccessible(owner->OwnerDoc())) {
+    if (a11y::Accessible* ownerAcc = docAcc->GetAccessible(owner)) {
+      if (a11y::OuterDocAccessible* outerAcc = ownerAcc->AsOuterDoc()) {
+        outerAcc->SendEmbedderAccessible(this);
+      }
     }
   }
+#endif  // defined(ACCESSIBILITY)
 
-  // Checking that this actually does something useful is
-  // https://bugzilla.mozilla.org/show_bug.cgi?id=1542710
-  nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(docShell);
-  if (loadContext && loadContext->UsePrivateBrowsing()) {
-    chromeFlags |= nsIWebBrowserChrome::CHROME_PRIVATE_WINDOW;
-  }
-  if (docShell->GetAffectPrivateSessionLifetime()) {
-    chromeFlags |= nsIWebBrowserChrome::CHROME_PRIVATE_LIFETIME;
-  }
-
-  RefPtr<BrowserBridgeChild> browserBridge =
-      new BrowserBridgeChild(aFrameLoader, aBrowsingContext);
-  browserChild->SendPBrowserBridgeConstructor(
-      browserBridge, aRemoteType,
-      aBrowsingContext, chromeFlags);
-  browserBridge->mIPCOpen = true;
-
-  return browserBridge.forget();
-}
-
-void BrowserBridgeChild::UpdateDimensions(const nsIntRect& aRect,
-                                          const mozilla::ScreenIntSize& aSize) {
-  MOZ_DIAGNOSTIC_ASSERT(mIPCOpen);
-
-  RefPtr<Element> owner = mFrameLoader->GetOwnerContent();
-  nsCOMPtr<nsIWidget> widget = nsContentUtils::WidgetForContent(owner);
-  if (!widget) {
-    widget = nsContentUtils::WidgetForDocument(owner->OwnerDoc());
-  }
-  MOZ_DIAGNOSTIC_ASSERT(widget);
-
-  CSSToLayoutDeviceScale widgetScale = widget->GetDefaultScale();
-
-  LayoutDeviceIntRect devicePixelRect = ViewAs<LayoutDevicePixel>(
-      aRect, PixelCastJustification::LayoutDeviceIsScreenForTabDims);
-  LayoutDeviceIntSize devicePixelSize = ViewAs<LayoutDevicePixel>(
-      aSize, PixelCastJustification::LayoutDeviceIsScreenForTabDims);
-
-  // XXX What are clientOffset and chromeOffset used for? Are they meaningful
-  // for nested iframes with transforms?
-  LayoutDeviceIntPoint clientOffset;
-  LayoutDeviceIntPoint chromeOffset;
-
-  CSSRect unscaledRect = devicePixelRect / widgetScale;
-  CSSSize unscaledSize = devicePixelSize / widgetScale;
-  hal::ScreenOrientation orientation = hal::eScreenOrientation_Default;
-  DimensionInfo di(unscaledRect, unscaledSize, orientation, clientOffset,
-                   chromeOffset);
-
-  Unused << SendUpdateDimensions(di);
+  return MakeAndAddRef<BrowserBridgeHost>(this);
 }
 
 void BrowserBridgeChild::NavigateByKey(bool aForward,
@@ -192,8 +154,116 @@ mozilla::ipc::IPCResult BrowserBridgeChild::RecvMoveFocus(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult
+BrowserBridgeChild::RecvSetEmbeddedDocAccessibleCOMProxy(
+    const a11y::IDispatchHolder& aCOMProxy) {
+#if defined(ACCESSIBILITY) && defined(XP_WIN)
+  MOZ_ASSERT(!aCOMProxy.IsNull());
+  if (mEmbeddedDocAccessible) {
+    mEmbeddedDocAccessible->Shutdown();
+  }
+  RefPtr<IDispatch> comProxy(aCOMProxy.Get());
+  mEmbeddedDocAccessible =
+      new a11y::RemoteIframeDocProxyAccessibleWrap(comProxy);
+#endif
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserBridgeChild::RecvMaybeFireEmbedderLoadEvents(
+    bool aIsTrusted, bool aFireLoadAtEmbeddingElement) {
+  RefPtr<Element> owner = mFrameLoader->GetOwnerContent();
+  if (!owner) {
+    return IPC_OK();
+  }
+
+  if (aFireLoadAtEmbeddingElement) {
+    nsEventStatus status = nsEventStatus_eIgnore;
+    WidgetEvent event(aIsTrusted, eLoad);
+    event.mFlags.mBubbles = false;
+    event.mFlags.mCancelable = false;
+    EventDispatcher::Dispatch(owner, nullptr, &event, nullptr, &status);
+  }
+
+  UnblockOwnerDocsLoadEvent();
+
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserBridgeChild::RecvScrollRectIntoView(
+    const nsRect& aRect, const ScrollAxis& aVertical,
+    const ScrollAxis& aHorizontal, const ScrollFlags& aScrollFlags,
+    const int32_t& aAppUnitsPerDevPixel) {
+  RefPtr<Element> owner = mFrameLoader->GetOwnerContent();
+  if (!owner) {
+    return IPC_OK();
+  }
+
+  nsIFrame* frame = owner->GetPrimaryFrame();
+  if (!frame) {
+    return IPC_OK();
+  }
+
+  nsSubDocumentFrame* subdocumentFrame = do_QueryFrame(frame);
+  if (!subdocumentFrame) {
+    return IPC_OK();
+  }
+
+  nsPoint extraOffset = subdocumentFrame->GetExtraOffset();
+
+  int32_t parentAPD = frame->PresContext()->AppUnitsPerDevPixel();
+  nsRect rect =
+      aRect.ScaleToOtherAppUnitsRoundOut(aAppUnitsPerDevPixel, parentAPD);
+  rect += extraOffset;
+  RefPtr<PresShell> presShell = frame->PresShell();
+  presShell->ScrollFrameRectIntoView(frame, rect, aVertical, aHorizontal,
+                                     aScrollFlags);
+
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserBridgeChild::RecvSubFrameCrashed(
+    const MaybeDiscarded<BrowsingContext>& aContext) {
+  if (aContext.IsNullOrDiscarded()) {
+    return IPC_OK();
+  }
+
+  RefPtr<nsFrameLoaderOwner> frameLoaderOwner =
+      do_QueryObject(aContext.get()->GetEmbedderElement());
+  if (!frameLoaderOwner) {
+    return IPC_OK();
+  }
+
+  IgnoredErrorResult rv;
+  RemotenessOptions options;
+  options.mError.Construct(static_cast<uint32_t>(NS_ERROR_FRAME_CRASHED));
+  frameLoaderOwner->ChangeRemoteness(options, rv);
+
+  if (NS_WARN_IF(rv.Failed())) {
+    return IPC_FAIL(this, "Remoteness change failed");
+  }
+
+  return IPC_OK();
+}
+
 void BrowserBridgeChild::ActorDestroy(ActorDestroyReason aWhy) {
-  mIPCOpen = false;
+  if (!mBrowsingContext) {
+    // This BBC was never valid, skip teardown.
+    return;
+  }
+
+  // Ensure we unblock our document's 'load' event (in case the OOP-iframe has
+  // been removed before it finished loading, or its subprocess crashed):
+  UnblockOwnerDocsLoadEvent();
+}
+
+void BrowserBridgeChild::UnblockOwnerDocsLoadEvent() {
+  if (!mHadInitialLoad) {
+    mHadInitialLoad = true;
+    if (auto* docShell =
+            nsDocShell::Cast(mBrowsingContext->GetParent()->GetDocShell())) {
+      docShell->OOPChildLoadDone(this);
+    }
+  }
 }
 
 }  // namespace mozilla::dom

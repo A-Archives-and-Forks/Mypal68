@@ -8,8 +8,8 @@
 #include "mozilla/dom/SharedWorkerManager.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "mozilla/ClearOnShutdown.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticMutex.h"
-#include "mozilla/SystemGroup.h"
 #include "nsIPrincipal.h"
 #include "nsProxyRelease.h"
 
@@ -121,7 +121,7 @@ already_AddRefed<SharedWorkerService> SharedWorkerService::GetOrCreate() {
   if (!sSharedWorkerService) {
     sSharedWorkerService = new SharedWorkerService();
     // ClearOnShutdown can only be called on main thread
-    nsresult rv = SystemGroup::Dispatch(
+    nsresult rv = SchedulerGroup::Dispatch(
         TaskCategory::Other,
         NS_NewRunnableFunction("RegisterSharedWorkerServiceClearOnShutdown",
                                []() {
@@ -154,9 +154,7 @@ void SharedWorkerService::GetOrCreateWorkerManager(
       new GetOrCreateWorkerManagerRunnable(this, aActor, aData, aWindowID,
                                            aPortIdentifier);
 
-  nsCOMPtr<nsIEventTarget> target =
-      SystemGroup::EventTargetFor(TaskCategory::Other);
-  nsresult rv = target->Dispatch(r.forget(), NS_DISPATCH_NORMAL);
+  nsresult rv = SchedulerGroup::Dispatch(TaskCategory::Other, r.forget());
   Unused << NS_WARN_IF(NS_FAILED(rv));
 }
 

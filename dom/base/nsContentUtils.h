@@ -158,6 +158,8 @@ class StaticRefPtr;
 
 namespace dom {
 struct AutocompleteInfo;
+class BrowsingContext;
+class BrowsingContextGroup;
 class BrowserChild;
 class BrowserParent;
 class ContentChild;
@@ -2408,7 +2410,8 @@ class nsContentUtils {
    * allowed for the given subject principal. These are only allowed if the user
    * initiated them (like with a mouse-click or key press).
    */
-  static bool IsCutCopyAllowed(nsIPrincipal& aSubjectPrincipal);
+  static bool IsCutCopyAllowed(Document* aDocument,
+                               nsIPrincipal& aSubjectPrincipal);
 
   /*
    * Returns true if the browser should attempt to prevent the given caller type
@@ -3002,6 +3005,13 @@ class nsContentUtils {
   static bool HttpsStateIsModern(Document* aDocument);
 
   /**
+   * Returns true if the channel is for top-level window and is over secure
+   * context.
+   * https://github.com/whatwg/html/issues/4930 tracks the spec side of this.
+   */
+  static bool ComputeIsSecureContext(nsIChannel* aChannel);
+
+  /**
    * Try to upgrade an element.
    * https://html.spec.whatwg.org/multipage/custom-elements.html#concept-try-upgrade
    */
@@ -3161,6 +3171,19 @@ class nsContentUtils {
    * numbers reserved for the current process.
    */
   static uint64_t GenerateBrowsingContextId();
+
+  /**
+   * Generate an id using a range of serial numbers reserved for the current
+   * process. aId should be a counter that's incremented every time
+   * GenerateProcessSpecificId is called.
+   */
+  static uint64_t GenerateProcessSpecificId(uint64_t aId);
+
+  /**
+   * Generate a window ID which is unique across processes and will never be
+   * recycled.
+   */
+  static uint64_t GenerateWindowId();
 
   /**
    * Determine whether or not the user is currently interacting with the web
@@ -3448,6 +3471,26 @@ class MOZ_STACK_CLASS nsAutoScriptBlockerSuppressNodeRemoved
 
 namespace mozilla {
 namespace dom {
+
+/**
+ * Suppresses event handling and suspends the active inner window for all
+ * in-process documents in a BrowsingContextGroup. This should be used while
+ * spinning the event loop for a synchronous operation (like `window.open()`)
+ * which affects operations in any other window in the same BrowsingContext
+ * group.
+ */
+
+class MOZ_RAII AutoSuppressEventHandlingAndSuspend {
+ public:
+  explicit AutoSuppressEventHandlingAndSuspend(BrowsingContextGroup* aGroup);
+  ~AutoSuppressEventHandlingAndSuspend();
+
+ private:
+  void SuppressBrowsingContext(BrowsingContext* aBC);
+
+  AutoTArray<RefPtr<Document>, 16> mDocuments;
+  AutoTArray<nsCOMPtr<nsPIDOMWindowInner>, 16> mWindows;
+};
 
 class TreeOrderComparator {
  public:

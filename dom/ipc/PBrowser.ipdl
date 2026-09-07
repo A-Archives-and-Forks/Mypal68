@@ -34,7 +34,6 @@ include "mozilla/layers/LayersMessageUtils.h";
 include "mozilla/ipc/TransportSecurityInfoUtils.h";
 include "mozilla/ipc/URIUtils.h";
 
-using moveonly mozilla::gfx::PaintFragment from "mozilla/gfx/CrossProcessPaint.h";
 using mozilla::gfx::Matrix4x4 from "mozilla/gfx/Matrix.h";
 using mozilla::gfx::MaybeMatrix4x4 from "mozilla/gfx/Matrix.h";
 using mozilla::gfx::SurfaceFormat from "mozilla/gfx/Types.h";
@@ -51,7 +50,6 @@ using mozilla::layers::GeckoContentController_TapType from "mozilla/layers/Gecko
 using ScrollableLayerGuid::ViewID from "mozilla/layers/ScrollableLayerGuid.h";
 using struct mozilla::void_t from "mozilla/ipc/IPCCore.h";
 using mozilla::WindowsHandle from "mozilla/ipc/IPCTypes.h";
-using nscolor from "nsColor.h";
 using class mozilla::WidgetCompositionEvent from "ipc/nsGUIEventIPC.h";
 using struct mozilla::widget::IMENotification from "mozilla/widget/IMEData.h";
 using struct mozilla::widget::IMENotificationRequests from "mozilla/widget/IMEData.h";
@@ -60,7 +58,6 @@ using struct mozilla::widget::InputContext from "mozilla/widget/IMEData.h";
 using struct mozilla::widget::InputContextAction from "mozilla/widget/IMEData.h";
 using mozilla::gfx::IntSize from "mozilla/gfx/Point.h";
 using mozilla::gfx::IntPoint from "mozilla/gfx/Point.h";
-using mozilla::gfx::IntRect from "mozilla/gfx/Rect.h";
 using class mozilla::ContentCache from "ipc/nsGUIEventIPC.h";
 using class mozilla::WidgetKeyboardEvent from "ipc/nsGUIEventIPC.h";
 using class mozilla::WidgetMouseEvent from "ipc/nsGUIEventIPC.h";
@@ -88,7 +85,10 @@ using class mozilla::NativeEventData from "ipc/nsGUIEventIPC.h";
 using struct mozilla::FontRange from "ipc/nsGUIEventIPC.h";
 using mozilla::a11y::IAccessibleHolder from "mozilla/a11y/IPCTypes.h";
 using mozilla::OriginAttributes from "mozilla/ipc/BackgroundUtils.h";
-using refcounted class mozilla::dom::BrowsingContext from "mozilla/dom/BrowsingContext.h";
+using mozilla::dom::EffectsInfo from "mozilla/dom/TabMessageUtils.h";
+using mozilla::dom::TabId from "mozilla/dom/ipc/IdType.h";
+using mozilla::ScrollAxis from "mozilla/PresShellForwards.h";
+using mozilla::ScrollFlags from "mozilla/PresShellForwards.h";
 using refcounted class nsITransportSecurityInfo from "nsITransportSecurityInfo.h";
 using nsContentPolicyType from "nsIContentPolicy.h";
 using struct InputFormData from "mozilla/dom/SessionStoreMessageUtils.h";
@@ -144,7 +144,6 @@ struct WebProgressLocationChangeData
   nsIURI documentURI;
   nsIPrincipal contentPrincipal;
   nsIPrincipal contentStoragePrincipal;
-  nsIPrincipal contentBlockingAllowListPrincipal;
   nsIContentSecurityPolicy csp;
   nsIReferrerInfo referrerInfo;
   uint64_t? requestContextID;
@@ -201,18 +200,6 @@ parent:
      * to windowed plugin creation.
      */
     sync PPluginWidget();
-
-    /**
-     * Construct a new WindowGlobal actor for a window global in the given
-     * BrowsingContext and with the given principal.
-     */
-    async PWindowGlobal(WindowGlobalInit init);
-
-    /**
-     * Construct a new Remote iframe actor.
-     */
-    async PBrowserBridge(nsCString aRemoteType, BrowsingContext aBrowsingContext, 
-                         uint32_t aChromeFlags);
 
     /**
      * Sends an NS_NATIVE_CHILD_OF_SHAREABLE_WINDOW to be adopted by the
@@ -408,7 +395,8 @@ parent:
      * Indicate, based on the current state, that some commands are enabled and
      * some are disabled.
      */
-    async EnableDisableCommands(nsString action,
+    async EnableDisableCommands(MaybeDiscardedBrowsingContext bc,
+                                nsString action,
                                 nsCString[] enabledCommands,
                                 nsCString[] disabledCommands);
 
@@ -474,22 +462,6 @@ parent:
     async PColorPicker(nsString title, nsString initialColor);
 
     async PFilePicker(nsString aTitle, int16_t aMode);
-
-    /**
-     * window.open from inside <iframe mozbrowser> is special.  When the child
-     * process calls window.open, it creates a new PBrowser (in its own
-     * process), then calls BrowserFrameOpenWindow on it.
-     *
-     * The parent process gets a chance to accept or reject the window.open
-     * call, and windowOpened is set to true if we ended up going through with
-     * the window.open.
-     *
-     * @param opener the PBrowser whose content called window.open.
-     */
-    async BrowserFrameOpenWindow(PBrowser opener,
-                                 nsString aURL, nsString aName,
-                                 bool aForceNoReferrer, nsString aFeatures)
-        returns (CreatedWindowInfo window);
 
     /**
      * Tells the containing widget whether the given input block results in a
@@ -566,8 +538,6 @@ parent:
 
     async AccessKeyNotHandled(WidgetKeyboardEvent event);
 
-    async SetHasBeforeUnload(bool aHasBeforeUnload);
-
     async RegisterProtocolHandler(nsString scheme, nsIURI handlerURI, nsString title,
                                   nsIURI documentURI);
 
@@ -640,6 +610,15 @@ parent:
      */
     async PaintWhileInterruptingJSNoOp(LayersObserverEpoch aEpoch);
 
+child:
+    /**
+     * Parent informs the child of graphical effects that are being applied
+     * to the child browser.
+     */
+    async UpdateEffects(EffectsInfo aEffects);
+
+parent:
+
     /**
      * Sent by the child to the parent to inform it that an update to the
      * dimensions has been requested, likely through win.moveTo or resizeTo
@@ -676,12 +655,25 @@ parent:
     sync SetSystemFont(nsCString aFontName);
     sync GetSystemFont() returns (nsCString retval);
 
+    /**
+     * Called once this PBrowser's OOP subdoc no longer blocks its
+     * embedding element's and embedding doc's 'load' events.
+     */
+    async MaybeFireEmbedderLoadEvents(bool aIsTrusted,
+                                      bool aFireLoadAtEmbeddingElement);
+
+    async ScrollRectIntoView(nsRect aRect, ScrollAxis aVertical,
+                             ScrollAxis aHorizontal, ScrollFlags aScrollFlags,
+                             int32_t aAppUnitsPerDevPixel);
+
 child:
     /**
      * Notify the remote browser that it has been Show()n on this side. This
      * message is expected to trigger creation of the remote browser's "widget".
      */
     async Show(ParentShowInfo parentInfo, OwnerShowInfo childInfo);
+
+    async ScrollbarPreferenceChanged(ScrollbarPreference pref);
 
     async InitRendering(TextureFactoryIdentifier textureFactoryIdentifier,
                         LayersId layersId,
@@ -849,18 +841,12 @@ child:
      * @param aEnabled
      *        True if the child should render and upload layers, false if the
      *        child should clear layers.
-     * @param aForceRepaint
-     *        True if the child should force a paint even if it's already
-     *        visible.
      * @param aEpoch
      *        The layer observer epoch for this activation. This message should be
      *        ignored if this epoch has already been observed (via
      *        PaintWhileInterruptingJS).
      */
-    async RenderLayers(bool aEnabled, bool aForceRepaint, LayersObserverEpoch aEpoch);
-
-    async RequestRootPaint(IntRect aRect, float aScale, nscolor aBackgroundColor) returns (PaintFragment retval);
-    async RequestSubPaint(float aScale, nscolor aBackgroundColor) returns (PaintFragment retval);
+    async RenderLayers(bool aEnabled, LayersObserverEpoch aEpoch);
 child:
     /**
      * Notify the child that it shouldn't paint the offscreen displayport.
@@ -961,20 +947,9 @@ child:
     async AwaitLargeAlloc();
 
     /**
-     * Tell the BrowserChild to set the name of its toplevel docshell to the given name.
-     */
-    async SetWindowName(nsString aName);
-
-    /**
      * Tell the BrowserChild to allow scripts in the docshell to close the window.
      */
     async AllowScriptsToClose();
-
-    /**
-     * Tell the BrowserChild what OriginAttributes it should inherit from. This must
-     * be called before the first non-blank document is loaded in the BrowserChild.
-     */
-    async SetOriginAttributes(OriginAttributes aOriginAttributes);
 
     /**
      * Pass the current handle for the current native widget to the content
@@ -987,7 +962,8 @@ child:
      */
     async GetContentBlockingLog() returns(nsCString log, bool success);
 
-    async SkipBrowsingContextDetach();
+    async WillChangeProcess() returns (bool success);
+
 parent:
     /** Records a history visit. */
     async VisitURI(nsIURI aURI, nsIURI aLastVisitedURI,
@@ -995,6 +971,12 @@ parent:
 
     /** Fetches the visited status for an array of URIs (Android-only). */
     async QueryVisitedState(nsIURI[] aURIs);
+
+    /**
+     * Construct a new WindowGlobal for an existing global in the content process
+     */
+    async NewWindowGlobal(ManagedEndpoint<PWindowGlobalParent> aEndpoint,
+                          WindowGlobalInit aInit);
 
 /*
  * FIXME: write protocol!

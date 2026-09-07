@@ -8,8 +8,8 @@
 
 namespace mozilla::dom {
 
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(PlacesWeakCallbackWrapper, mParent,
-                                      mCallback)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_WEAK_PTR(PlacesWeakCallbackWrapper,
+                                               mParent, mCallback)
 NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(PlacesWeakCallbackWrapper, AddRef)
 NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(PlacesWeakCallbackWrapper, Release)
 

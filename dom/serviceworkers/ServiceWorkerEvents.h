@@ -25,6 +25,7 @@ namespace dom {
 
 class Blob;
 class Client;
+class FetchEventOp;
 class MessagePort;
 struct PushEventInit;
 class Request;
@@ -47,6 +48,15 @@ class CancelChannelRunnable final : public Runnable {
       nsresult aStatus);
 
   NS_IMETHOD Run() override;
+};
+
+enum ExtendableEventResult { Rejected = 0, Resolved };
+
+class ExtendableEventCallback {
+ public:
+  virtual void FinishedWithResult(ExtendableEventResult aResult) = 0;
+
+  NS_INLINE_DECL_PURE_VIRTUAL_REFCOUNTING
 };
 
 class ExtendableEvent : public Event {
@@ -122,6 +132,7 @@ class ExtendableEvent : public Event {
 };
 
 class FetchEvent final : public ExtendableEvent {
+  RefPtr<FetchEventOp> mRespondWithHandler;
   nsMainThreadPtrHandle<nsIInterceptedChannel> mChannel;
   nsMainThreadPtrHandle<ServiceWorkerRegistrationInfo> mRegistration;
   RefPtr<Request> mRequest;
@@ -152,6 +163,9 @@ class FetchEvent final : public ExtendableEvent {
       nsMainThreadPtrHandle<ServiceWorkerRegistrationInfo>& aRegistration,
       const nsACString& aScriptSpec);
 
+  void PostInit(const nsACString& aScriptSpec,
+                RefPtr<FetchEventOp> aRespondWithHandler);
+
   static already_AddRefed<FetchEvent> Constructor(
       const GlobalObject& aGlobal, const nsAString& aType,
       const FetchEventInit& aOptions);
@@ -172,10 +186,6 @@ class FetchEvent final : public ExtendableEvent {
   Promise* Handled() const { return mHandled; }
 
   void RespondWith(JSContext* aCx, Promise& aArg, ErrorResult& aRv);
-
-  already_AddRefed<Promise> ForwardTo(const nsAString& aUrl);
-
-  already_AddRefed<Promise> Default();
 
   // Pull in the Event version of PreventDefault so we don't get
   // shadowing warnings.
@@ -219,7 +229,7 @@ class PushEvent final : public ExtendableEvent {
 
  protected:
   explicit PushEvent(mozilla::dom::EventTarget* aOwner);
-  ~PushEvent() {}
+  ~PushEvent() = default;
 
  public:
   NS_DECL_ISUPPORTS_INHERITED

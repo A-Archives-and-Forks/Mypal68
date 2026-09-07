@@ -13,7 +13,6 @@
 #include "mozilla/Services.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/StaticPtr.h"
-#include "mozilla/SystemGroup.h"
 #include "nsIObserverService.h"
 #include "nsIThread.h"
 #include "nsThreadUtils.h"
@@ -145,9 +144,7 @@ void RemoteWorkerService::ShutdownOnTargetThread() {
         self->mThread = nullptr;
       });
 
-  nsCOMPtr<nsIEventTarget> target =
-      SystemGroup::EventTargetFor(TaskCategory::Other);
-  target->Dispatch(r.forget(), NS_DISPATCH_NORMAL);
+  SchedulerGroup::Dispatch(TaskCategory::Other, r.forget());
 }
 
 NS_IMETHODIMP

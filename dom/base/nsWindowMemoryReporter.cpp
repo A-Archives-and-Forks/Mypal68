@@ -5,13 +5,14 @@
 #include "nsWindowMemoryReporter.h"
 #include "nsWindowSizes.h"
 #include "nsGlobalWindow.h"
+#include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/Document.h"
-#include "nsDOMWindowList.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/ResultExtensions.h"
 #include "nsNetCID.h"
 #include "nsPrintfCString.h"
 #include "XPCJSMemoryReporter.h"
@@ -59,19 +60,16 @@ static nsresult AddNonJSSizeOfWindowAndItsDescendents(
 
   windowSizes.addToTabSizes(aSizes);
 
-  nsDOMWindowList* frames = aWindow->GetFrames();
-
-  uint32_t length = frames->GetLength();
+  BrowsingContext* bc = aWindow->GetBrowsingContext();
+  if (!bc) {
+    return NS_OK;
+  }
 
   // Measure this window's descendents.
-  for (uint32_t i = 0; i < length; i++) {
-    nsCOMPtr<nsPIDOMWindowOuter> child = frames->IndexedGetter(i);
-    NS_ENSURE_STATE(child);
-
-    nsGlobalWindowOuter* childWin = nsGlobalWindowOuter::Cast(child);
-
-    nsresult rv = AddNonJSSizeOfWindowAndItsDescendents(childWin, aSizes);
-    NS_ENSURE_SUCCESS(rv, rv);
+  for (const auto& frame : bc->GetChildren()) {
+    if (auto* childWin = nsGlobalWindowOuter::Cast(frame->GetDOMWindow())) {
+      MOZ_TRY(AddNonJSSizeOfWindowAndItsDescendents(childWin, aSizes));
+    }
   }
   return NS_OK;
 }
@@ -554,7 +552,7 @@ nsWindowMemoryReporter::CollectReports(nsIHandleReportCallback* aHandleReport,
     "ghost-windows", KIND_OTHER, UNITS_COUNT, ghostWindows.Count(),
 "The number of ghost windows present (the number of nodes underneath "
 "explicit/window-objects/top(none)/ghost, modulo race conditions).  A ghost "
-"window is not shown in any tab, is not in a tab group with any "
+"window is not shown in any tab, is not in a browsing context group with any "
 "non-detached windows, and has met these criteria for at least "
 "memory.ghost_window_timeout_seconds, or has survived a round of "
 "about:memory's minimize memory usage button.\n\n"
@@ -818,19 +816,23 @@ void nsWindowMemoryReporter::CheckForGhostWindows(
   mLastCheckForGhostWindows = TimeStamp::NowLoRes();
   KillCheckTimer();
 
-  nsTHashSet<nsPtrHashKey<TabGroup>> nonDetachedTabGroups;
+  nsTHashSet<nsPtrHashKey<BrowsingContextGroup>>
+      nonDetachedBrowsingContextGroups;
 
-  // Populate nonDetachedTabGroups.
+  // Populate nonDetachedBrowsingContextGroups.
   for (const auto& entry : *windowsById) {
     // Null outer window implies null top, but calling GetInProcessTop() when
     // there's no outer window causes us to spew debug warnings.
     nsGlobalWindowInner* window = entry.GetWeak();
-    if (!window->GetOuterWindow() || !window->GetInProcessTopInternal()) {
-      // This window is detached, so we don't care about its tab group.
+    if (!window->GetOuterWindow() || !window->GetInProcessTopInternal() ||
+        !window->GetBrowsingContextGroup()) {
+      // This window is detached, so we don't care about its browsing
+      // context group.
       continue;
     }
 
-    nonDetachedTabGroups.Insert(window->TabGroup());
+    nonDetachedBrowsingContextGroups.Insert(
+        window->GetBrowsingContextGroup());
   }
 
   // Update mDetachedWindows and write the ghost window IDs into aOutGhostIDs,
@@ -865,13 +867,15 @@ void nsWindowMemoryReporter::CheckForGhostWindows(
     }
 
     TimeStamp& timeStamp = iter.Data();
-    TabGroup* tabGroup = window->MaybeTabGroup();
-    if (tabGroup && nonDetachedTabGroups.Contains(tabGroup)) {
-      // This window is in the same tab group as a non-detached
+    BrowsingContextGroup* browsingContextGroup =
+        window->GetBrowsingContextGroup();
+    if (browsingContextGroup &&
+        nonDetachedBrowsingContextGroups.Contains(browsingContextGroup)) {
+      // This window is in the same browsing context group as a non-detached
       // window, so reset its clock.
       timeStamp = TimeStamp();
     } else {
-      // This window is not in the same tab group as a non-detached
+      // This window is not in the same browsing context group as a non-detached
       // window, so it meets ghost criterion (2).
       if (timeStamp.IsNull()) {
         // This may become a ghost window later; start its clock.

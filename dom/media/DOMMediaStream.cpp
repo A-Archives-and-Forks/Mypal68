@@ -99,6 +99,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(DOMMediaStream,
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mWindow)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mTracks)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mConsumersToKeepAlive)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_PTR
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(DOMMediaStream,
@@ -255,7 +256,7 @@ already_AddRefed<Promise> DOMMediaStream::CountUnderlyingStreams(
     // In case of shutdown, Run() does not run, so we dispatch mPromise to be
     // released on main thread here.
     void RunDuringShutdown() override {
-      NS_ReleaseOnMainThreadSystemGroup(
+      NS_ReleaseOnMainThread(
           "DOMMediaStream::CountUnderlyingStreams::Counter::RunDuringShutdown",
           mPromise.forget());
     }

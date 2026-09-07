@@ -17,10 +17,10 @@ namespace mozilla {
 namespace dom {
 
 // Common base class for WindowGlobal{Parent, Child}.
-class WindowGlobalActor : public nsISupports, public nsWrapperCache {
+class WindowGlobalActor : public nsISupports {
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(WindowGlobalActor)
+  static WindowGlobalInit AboutBlankInitializer(
+      dom::BrowsingContext* aBrowsingContext, nsIPrincipal* aPrincipal);
 
  protected:
   virtual ~WindowGlobalActor() = default;

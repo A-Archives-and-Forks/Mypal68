@@ -45,6 +45,7 @@
 #include "nsIJARURI.h"
 #include "nsLayoutCID.h"
 #include "nsReadableUtils.h"
+#include "nsSandboxFlags.h"
 
 #include "nsIURI.h"
 #include "nsIURIMutator.h"
@@ -2314,14 +2315,14 @@ void XMLHttpRequestMainThread::ChangeStateToDone(bool aWasSync) {
     mChannel->GetLoadFlags(&loadFlags);
     if (loadFlags & nsIRequest::LOAD_BACKGROUND) {
       nsPIDOMWindowInner* owner = GetOwner();
-      nsPIDOMWindowInner* topWin =
-          owner ? owner->GetWindowForDeprioritizedLoadRunner() : nullptr;
-      if (topWin) {
+      BrowsingContext* bc = owner ? owner->GetBrowsingContext() : nullptr;
+      bc = bc ? bc->Top() : nullptr;
+      if (bc && bc->IsLoading()) {
         MOZ_ASSERT(!mDelayedDoneNotifier);
         RefPtr<XMLHttpRequestDoneNotifier> notifier =
             new XMLHttpRequestDoneNotifier(this);
         mDelayedDoneNotifier = notifier;
-        topWin->AddDeprioritizedLoadRunner(notifier);
+        bc->AddDeprioritizedLoadRunner(notifier);
         return;
       }
     }
@@ -2388,11 +2389,12 @@ nsresult XMLHttpRequestMainThread::CreateChannel() {
 
   nsSecurityFlags secFlags;
   nsLoadFlags loadFlags = nsIRequest::LOAD_BACKGROUND;
+  uint32_t sandboxFlags = 0;
   if (mPrincipal->IsSystemPrincipal()) {
     // When chrome is loading we want to make sure to sandbox any potential
     // result document. We also want to allow cross-origin loads.
-    secFlags = nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL |
-               nsILoadInfo::SEC_SANDBOXED;
+    secFlags = nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL;
+    sandboxFlags = SANDBOXED_ORIGIN;
   } else if (IsSystemXHR()) {
     // For pages that have appropriate permissions, we want to still allow
     // cross-origin loads, but make sure that the any potential result
@@ -2423,7 +2425,7 @@ nsresult XMLHttpRequestMainThread::CreateChannel() {
                        nullptr,  // aPerformanceStorage
                        loadGroup,
                        nullptr,  // aCallbacks
-                       loadFlags);
+                       loadFlags, nullptr, sandboxFlags);
   } else if (mClientInfo.isSome()) {
     rv = NS_NewChannel(getter_AddRefs(mChannel), mRequestURL, mPrincipal,
                        mClientInfo.ref(), mController, secFlags,
@@ -2432,7 +2434,7 @@ nsresult XMLHttpRequestMainThread::CreateChannel() {
                        mPerformanceStorage,  // aPerformanceStorage
                        loadGroup,
                        nullptr,  // aCallbacks
-                       loadFlags);
+                       loadFlags, nullptr, sandboxFlags);
   } else {
     // Otherwise use the principal.
     rv = NS_NewChannel(getter_AddRefs(mChannel), mRequestURL, mPrincipal,
@@ -2441,7 +2443,7 @@ nsresult XMLHttpRequestMainThread::CreateChannel() {
                        mPerformanceStorage,  // aPerformanceStorage
                        loadGroup,
                        nullptr,  // aCallbacks
-                       loadFlags);
+                       loadFlags, nullptr, sandboxFlags);
   }
   NS_ENSURE_SUCCESS(rv, rv);
 

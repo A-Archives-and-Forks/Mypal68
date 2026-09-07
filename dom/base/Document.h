@@ -40,7 +40,6 @@
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/WeakPtr.h"
-#include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/DispatcherTrait.h"
 #include "mozilla/dom/DocumentOrShadowRoot.h"
 #include "mozilla/dom/Element.h"
@@ -126,6 +125,7 @@ class PLDHashTable;
 class gfxUserFontSet;
 class mozIDOMWindowProxy;
 class nsCachableElementsByNameNodeList;
+class nsCommandManager;
 class nsContentList;
 class nsCycleCollectionTraversalCallback;
 class nsDOMCaretPosition;
@@ -158,6 +158,7 @@ class nsIHTMLCollection;
 class nsIInputStream;
 class nsILayoutHistoryState;
 class nsIObjectLoadingContent;
+class nsIPermissionDelegateHandler;
 class nsIRadioVisitor;
 class nsIRequest;
 class nsIRunnable;
@@ -270,6 +271,7 @@ class XPathEvaluator;
 class XPathExpression;
 class XPathNSResolver;
 class XPathResult;
+class BrowsingContext;
 class nsDocumentOnStack;
 class nsUnblockOnloadEvent;
 
@@ -1030,9 +1032,7 @@ class Document : public nsINode,
    * Tell this document that it's the initial document in its window.  See
    * comments on mIsInitialDocumentInWindow for when this should be called.
    */
-  void SetIsInitialDocument(bool aIsInitialDocument) {
-    mIsInitialDocumentInWindow = aIsInitialDocument;
-  }
+  void SetIsInitialDocument(bool aIsInitialDocument);
 
   void SetLoadedAsData(bool aLoadedAsData, bool aConsiderForMemoryReporting);
 
@@ -1379,6 +1379,9 @@ class Document : public nsINode,
     mParentDocument = aParent;
     if (aParent) {
       mIgnoreDocGroupMismatches = aParent->mIgnoreDocGroupMismatches;
+      if (!mIsDevToolsDocument) {
+        mIsDevToolsDocument = mParentDocument->IsDevToolsDocument();
+      }
     }
   }
 
@@ -1559,8 +1562,15 @@ class Document : public nsINode,
   // flag.
   bool StorageAccessSandboxed() const;
 
-  // Returns the cookie settings for this and sub contexts.
+  // Helper method that returns true if storage access API is enabled and
+  // the passed flag has storage-access sandbox flag.
+  static bool StorageAccessSandboxed(uint32_t aSandboxFlags);
+
+  // Returns the cookie jar settings for this and sub contexts.
   nsICookieJarSettings* CookieJarSettings();
+
+  // Returns whether this document has the storage permission.
+  bool HasStoragePermission() { return mHasStoragePermission; }
 
   // Increments the document generation.
   inline void Changed() { ++mGeneration; }
@@ -1964,6 +1974,14 @@ class Document : public nsINode,
     return window ? window->WindowID() : 0;
   }
 
+  /**
+   * Return WindowGlobalChild that is associated with the inner window.
+   */
+  WindowGlobalChild* GetWindowGlobalChild() {
+    return GetInnerWindow() ? GetInnerWindow()->GetWindowGlobalChild()
+                            : nullptr;
+  }
+
   bool IsTopLevelWindowInactive() const;
 
   /**
@@ -2004,7 +2022,8 @@ class Document : public nsINode,
 
   // This is called asynchronously by Document::AsyncRequestFullscreen()
   // to move this document into fullscreen mode if allowed.
-  void RequestFullscreen(UniquePtr<FullscreenRequest> aRequest);
+  void RequestFullscreen(UniquePtr<FullscreenRequest> aRequest,
+                         bool applyFullScreenDirectly = false);
 
   // Removes all the elements with fullscreen flag set from the top layer, and
   // clears their fullscreen flag.
@@ -2167,9 +2186,7 @@ class Document : public nsINode,
   void SetReadyStateInternal(ReadyState, bool aUpdateTimingInformation = true);
   ReadyState GetReadyStateEnum() { return mReadyState; }
 
-  void SetAncestorLoading(bool aAncestorIsLoading);
-  void NotifyLoading(const bool& aCurrentParentIsLoading,
-                     bool aNewParentIsLoading, const ReadyState& aCurrentState,
+  void NotifyLoading(bool aNewParentIsLoading, const ReadyState& aCurrentState,
                      ReadyState aNewState);
 
   // notify that a content node changed state.  This must happen under
@@ -2631,6 +2648,8 @@ class Document : public nsINode,
     }
     return root->mInChromeDocShell;
   }
+
+  bool IsDevToolsDocument() const { return mIsDevToolsDocument; }
 
   bool IsBeingUsedAsImage() const { return mIsBeingUsedAsImage; }
 
@@ -3575,14 +3594,10 @@ class Document : public nsINode,
   void SetTooltipNode(nsINode* aNode) { /* do nothing */
   }
 
-  bool DontWarnAboutMutationEventsAndAllowSlowDOMMutations() {
-    return mDontWarnAboutMutationEventsAndAllowSlowDOMMutations;
+  bool DevToolsWatchingDOMMutations() const {
+    return mDevToolsWatchingDOMMutations;
   }
-  void SetDontWarnAboutMutationEventsAndAllowSlowDOMMutations(
-      bool aDontWarnAboutMutationEventsAndAllowSlowDOMMutations) {
-    mDontWarnAboutMutationEventsAndAllowSlowDOMMutations =
-        aDontWarnAboutMutationEventsAndAllowSlowDOMMutations;
-  }
+  void SetDevToolsWatchingDOMMutations(bool aValue);
 
   // ParentNode
   nsIHTMLCollection* Children();
@@ -3655,6 +3670,13 @@ class Document : public nsINode,
   // Return true if NotifyUserGestureActivation() has been called on any
   // document in the document tree.
   bool HasBeenUserGestureActivated();
+
+  // Return true if there is transient user gesture activation and it hasn't yet
+  // timed out.
+  bool HasValidTransientUserGestureActivation();
+
+  // Return true.
+  bool ConsumeTransientUserGestureActivation();
 
   BrowsingContext* GetBrowsingContext() const;
 
@@ -3833,6 +3855,10 @@ class Document : public nsINode,
   // Returns true if there is any valid scale value in the |aViewportMetaData|.
   bool ParseScalesInViewportMetaData(const ViewportMetaData& aViewportMetaData);
 
+  // Get parent FeaturePolicy from container. The parent FeaturePolicy is
+  // stored in parent iframe or container's browsingContext (cross process)
+  already_AddRefed<mozilla::dom::FeaturePolicy> GetParentFeaturePolicy();
+
   // Returns a ViewportMetaData for this document.
   ViewportMetaData GetViewportMetaData() const;
 
@@ -3943,6 +3969,8 @@ class Document : public nsINode,
   }
 
   void SetPrototypeDocument(nsXULPrototypeDocument* aPrototype);
+
+  nsIPermissionDelegateHandler* PermDelegateHandler();
 
   // CSS prefers-color-scheme media feature for this document.
   StylePrefersColorScheme PrefersColorScheme() const;
@@ -4264,9 +4292,6 @@ class Document : public nsINode,
   // Helper for GetScrollingElement/IsScrollingElement.
   bool IsPotentiallyScrollable(HTMLBodyElement* aBody);
 
-  // Return the same type parent docuement if exists, or return null.
-  Document* GetSameTypeParentDocument();
-
   void MaybeAllowStorageForOpenerAfterUserInteraction();
 
   void MaybeStoreUserInteractionAsPermission();
@@ -4306,13 +4331,6 @@ class Document : public nsINode,
   nsCOMPtr<nsIReferrerInfo> mCachedReferrerInfo;
 
   nsWeakPtr mDocumentLoadGroup;
-
-  bool mBlockAllMixedContent;
-  bool mBlockAllMixedContentPreloads;
-  bool mUpgradeInsecureRequests;
-  bool mUpgradeInsecurePreloads;
-
-  bool mDontWarnAboutMutationEventsAndAllowSlowDOMMutations;
 
   WeakPtr<nsDocShell> mDocumentContainer;
 
@@ -4411,6 +4429,12 @@ class Document : public nsINode,
   // GetPermissionDelegateHandler
   RefPtr<PermissionDelegateHandler> mPermissionDelegateHandler;
 
+  bool mBlockAllMixedContent : 1;
+  bool mBlockAllMixedContentPreloads : 1;
+  bool mUpgradeInsecureRequests : 1;
+  bool mUpgradeInsecurePreloads : 1;
+  bool mDevToolsWatchingDOMMutations : 1;
+
   // True if BIDI is enabled.
   bool mBidiEnabled : 1;
   // True if we may need to recompute the language prefs for this document.
@@ -4481,6 +4505,13 @@ class Document : public nsINode,
 
   // True if we're loaded in a chrome docshell.
   bool mInChromeDocShell : 1;
+
+  // True if our current document is a DevTools document. Either the url is
+  // about:devtools-toolbox or the parent document already has
+  // mIsDevToolsDocument set to true.
+  // This is used to avoid applying High Contrast mode to DevTools documents.
+  // See Bug 1575766.
+  bool mIsDevToolsDocument : 1;
 
   // True is this document is synthetic : stand alone image, video, audio
   // file, etc.
@@ -5098,6 +5129,8 @@ class Document : public nsINode,
   float mSavedResolutionBeforeMVM;
 
   nsCOMPtr<nsICookieJarSettings> mCookieJarSettings;
+
+  bool mHasStoragePermission;
 
   // Document generation. Gets incremented everytime it changes.
   int32_t mGeneration;

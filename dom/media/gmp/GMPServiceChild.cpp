@@ -11,11 +11,11 @@
 #include "mozIGeckoMediaPluginChromeService.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/ipc/Endpoint.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/SyncRunnable.h"
 #include "mozilla/dom/ContentChild.h"
-#include "mozilla/SystemGroup.h"
 #include "nsCOMPtr.h"
 #include "nsComponentManagerUtils.h"
 #include "nsIObserverService.h"
@@ -461,7 +461,7 @@ GeckoMediaPluginServiceChild::GetServiceChild() {
     if (mGetServiceChildPromises.Length() == 1) {
       nsCOMPtr<nsIRunnable> r =
           WrapRunnable(contentChild, &dom::ContentChild::SendCreateGMPService);
-      SystemGroup::Dispatch(TaskCategory::Other, r.forget());
+      SchedulerGroup::Dispatch(TaskCategory::Other, r.forget());
     }
     return promise;
   }

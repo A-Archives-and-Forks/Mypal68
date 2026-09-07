@@ -171,8 +171,8 @@ WorkerDebugger::~WorkerDebugger() {
 
   if (!NS_IsMainThread()) {
     for (auto& listener : mListeners) {
-      NS_ReleaseOnMainThreadSystemGroup("WorkerDebugger::mListeners",
-                                        listener.forget());
+      NS_ReleaseOnMainThread("WorkerDebugger::mListeners",
+                             listener.forget());
     }
   }
 }
@@ -518,8 +518,7 @@ RefPtr<PerformanceInfoPromise> WorkerDebugger::ReportPerformanceInfo() {
   // (and CheckedUnsafePtr does not convert directly to RefPtr).
   WorkerPrivate* workerPtr = mWorkerPrivate;
   RefPtr<WorkerPrivate> workerRef = workerPtr;
-  RefPtr<AbstractThread> mainThread =
-      SystemGroup::AbstractMainThreadFor(TaskCategory::Performance);
+  RefPtr<AbstractThread> mainThread = AbstractThread::MainThread();
 
   return CollectMemoryInfo(top, mainThread)
       ->Then(
