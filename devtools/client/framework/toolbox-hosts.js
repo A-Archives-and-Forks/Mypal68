@@ -16,6 +16,13 @@ loader.lazyRequireGetter(
   true
 );
 
+loader.lazyRequireGetter(
+  this,
+  "PrivateBrowsingUtils",
+  "resource://gre/modules/PrivateBrowsingUtils.jsm",
+  true
+);
+
 /* A host should always allow this much space for the page to be displayed.
  * There is also a min-height on the browser, but we still don't want to set
  * frame.height to be larger than that, since it can cause problems with
@@ -234,9 +241,9 @@ class RightHost extends SidebarHost {
 /**
  * Host object for the toolbox in a separate window
  */
-function WindowHost() {
+function WindowHost(hostTab) {
   this._boundUnload = this._boundUnload.bind(this);
-
+  this.hostTab = hostTab;
   EventEmitter.decorate(this);
 }
 
@@ -250,7 +257,19 @@ WindowHost.prototype = {
    */
   create: function() {
     return new Promise(resolve => {
-      const flags = "chrome,centerscreen,resizable,dialog=no";
+      let flags = "chrome,centerscreen,resizable,dialog=no";
+
+      // If we are debugging a tab which is in a Private window, we must also
+      // set the private flag on the DevTools host window. Otherwise switching
+      // hosts between docked and window modes can fail due to incompatible
+      // docshell origin attributes. See 1581093.
+      if (
+        this.hostTab &&
+        PrivateBrowsingUtils.isWindowPrivate(this.hostTab.ownerGlobal)
+      ) {
+        flags += ",private";
+      }
+
       const win = Services.ww.openWindow(
         null,
         this.WINDOW_URL,
@@ -430,7 +449,8 @@ function focusTab(tab) {
  * Create an iframe that can be used to load DevTools via about:devtools-toolbox.
  */
 function createDevToolsFrame(doc, className) {
-  const frame = doc.createXULElement("iframe");
+  const frame = doc.createXULElement("browser");
+  frame.setAttribute("type", "content");
   frame.flex = 1; // Required to be able to shrink when the window shrinks
   frame.className = className;
   frame.tooltip = "aHTMLTooltip";

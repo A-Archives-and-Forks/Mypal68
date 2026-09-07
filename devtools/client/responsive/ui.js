@@ -10,6 +10,8 @@ const EventEmitter = require("devtools/shared/event-emitter");
 const {
   getOrientation,
 } = require("devtools/client/responsive/utils/orientation");
+const Constants = require("devtools/client/responsive/constants");
+const { TargetList } = require("devtools/shared/resources/target-list");
 
 loader.lazyRequireGetter(
   this,
@@ -96,9 +98,16 @@ class ResponsiveUI {
      * contained *within* the tool UI on the other hand is loaded in the child
      * process.
      */
-    this.toolWindow = null;
+    this._toolWindow = null;
     // The iframe containing the RDM UI.
     this.rdmFrame = null;
+
+    // Bind callbacks for resizers.
+    this.onResizeDrag = this.onResizeDrag.bind(this);
+    this.onResizeStart = this.onResizeStart.bind(this);
+    this.onResizeStop = this.onResizeStop.bind(this);
+
+    this.onTargetAvailable = this.onTargetAvailable.bind(this);
 
     // Promise resolved when the UI init has completed.
     const { promise, resolve } = Promise.withResolvers();
@@ -106,12 +115,6 @@ class ResponsiveUI {
     this.resolveInited = resolve;
 
     EventEmitter.decorate(this);
-  }
-
-  get docShell() {
-    return this.isBrowserUIEnabled
-      ? this.rdmFrame.contentWindow.docShell
-      : this.toolWindow.docShell;
   }
 
   get isBrowserUIEnabled() {
@@ -122,6 +125,26 @@ class ResponsiveUI {
     }
 
     return this._isBrowserUIEnabled;
+  }
+
+  get toolWindow() {
+    return this.isBrowserUIEnabled
+      ? this.rdmFrame.contentWindow
+      : this._toolWindow;
+  }
+
+  get docShell() {
+    return this.toolWindow.docShell;
+  }
+
+  get viewportElement() {
+    return this.isBrowserUIEnabled
+      ? this.browserStackEl.querySelector("browser")
+      : this._toolWindow.document.querySelector(".viewport-content");
+  }
+
+  get currentTarget() {
+    return this.targetList.targetFront;
   }
 
   /**
@@ -138,6 +161,10 @@ class ResponsiveUI {
 
     if (this.isBrowserUIEnabled) {
       this.initRDMFrame();
+
+      // Hide the browser content temporarily while things move around to avoid displaying
+      // strange intermediate states.
+      this.hideBrowserUI();
     }
 
     // Watch for tab close and window close so we can clean up RDM synchronously
@@ -151,7 +178,7 @@ class ResponsiveUI {
         tab: this.tab,
         containerURL: TOOL_URL,
         async getInnerBrowser(containerBrowser) {
-          const toolWindow = (ui.toolWindow = containerBrowser.contentWindow);
+          const toolWindow = (ui._toolWindow = containerBrowser.contentWindow);
           toolWindow.addEventListener("message", ui);
           debug("Wait until init from inner");
           await message.request(toolWindow, "init");
@@ -192,8 +219,9 @@ class ResponsiveUI {
     if (this.isBrowserUIEnabled) {
       this.browserWindow.addEventListener("FullZoomChange", this);
     } else {
-      this.docShell.contentViewer.fullZoom = 1;
-      this.docShell.contentViewer.textZoom = 1;
+      const bc = BrowsingContext.getFromWindow(this._toolWindow);
+      bc.fullZoom = 1;
+      bc.textZoom = 1;
 
       this.tab.linkedBrowser.addEventListener("FullZoomChange", this);
     }
@@ -203,25 +231,24 @@ class ResponsiveUI {
     if (!this.isBrowserUIEnabled) {
       // Notify the inner browser to start the frame script
       debug("Wait until start frame script");
-      await message.request(this.toolWindow, "start-frame-script");
+      await message.request(this._toolWindow, "start-frame-script");
     }
 
     // Get the protocol ready to speak with responsive emulation actor
     debug("Wait until RDP server connect");
     await this.connectToServer();
 
-    // Restore the previous state of RDM.
-    await this.restoreState();
+    // Restore the previous UI state.
+    await this.restoreUIState();
 
-    if (this.isBrowserUIEnabled) {
-      await this.responsiveFront.setDocumentInRDMPane(true);
-    }
+    // Show the browser UI now that its state is ready.
+    this.showBrowserUI();
 
     if (!this.isBrowserUIEnabled) {
       // Force the newly created Zoom actor to cache its 1.0 zoom level. This
       // prevents it from sending out FullZoomChange events when the content
       // full zoom level is changed the first time.
-      const bc = this.toolWindow.docShell.browsingContext;
+      const bc = this._toolWindow.docShell.browsingContext;
       const zoomActor = bc.currentWindowGlobal.getActor("Zoom");
       zoomActor.sendAsyncMessage("FullZoom", { value: 1.0 });
 
@@ -232,11 +259,7 @@ class ResponsiveUI {
     }
 
     // Non-blocking message to tool UI to start any delayed init activities
-    if (!this.isBrowserUIEnabled) {
-      message.post(this.toolWindow, "post-init");
-    } else {
-      message.post(this.rdmFrame.contentWindow, "post-init");
-    }
+    message.post(this.toolWindow, "post-init");
 
     debug("Init done");
     this.resolveInited();
@@ -251,6 +274,14 @@ class ResponsiveUI {
     rdmFrame.src = "chrome://devtools/content/responsive/toolbar.xhtml";
     rdmFrame.classList.add("rdm-toolbar");
 
+    // Create resizer handlers
+    const resizeHandle = doc.createElement("div");
+    resizeHandle.classList.add("viewport-resize-handle");
+    const resizeHandleX = doc.createElement("div");
+    resizeHandleX.classList.add("viewport-horizontal-resize-handle");
+    const resizeHandleY = doc.createElement("div");
+    resizeHandleY.classList.add("viewport-vertical-resize-handle");
+
     this.browserContainerEl = gBrowser.getBrowserContainer(
       gBrowser.getBrowserForTab(this.tab)
     );
@@ -262,6 +293,9 @@ class ResponsiveUI {
 
     // Prepend the RDM iframe inside of the current tab's browser stack.
     this.browserStackEl.prepend(rdmFrame);
+    this.browserStackEl.append(resizeHandle);
+    this.browserStackEl.append(resizeHandleX);
+    this.browserStackEl.append(resizeHandleY);
 
     // Wait for the frame script to be loaded.
     message.wait(rdmFrame.contentWindow, "script-init").then(async () => {
@@ -279,6 +313,15 @@ class ResponsiveUI {
     });
 
     this.rdmFrame = rdmFrame;
+
+    this.resizeHandle = resizeHandle;
+    this.resizeHandle.addEventListener("mousedown", this.onResizeStart);
+
+    this.resizeHandleX = resizeHandleX;
+    this.resizeHandleX.addEventListener("mousedown", this.onResizeStart);
+
+    this.resizeHandleY = resizeHandleY;
+    this.resizeHandleY.addEventListener("mousedown", this.onResizeStart);
   }
 
   /**
@@ -314,10 +357,21 @@ class ResponsiveUI {
 
       // Restore screen orientation of physical device.
       await this.updateScreenOrientation("landscape-primary", 0);
-    }
+      await this.updateMaxTouchPointsEnabled(false);
 
-    if (this.isBrowserUIEnabled) {
-      await this.responsiveFront.setDocumentInRDMPane(false);
+      if (this.isBrowserUIEnabled) {
+        await this.responsiveFront.setDocumentInRDMPane(false);
+        await this.responsiveFront.setFloatingScrollbars(false);
+
+        // Hide browser UI to avoid displaying weird intermediate states while closing.
+        this.hideBrowserUI();
+      }
+
+      this.targetList.unwatchTargets(
+        [this.targetList.TYPES.FRAME],
+        this.onTargetAvailable
+      );
+      this.targetList.stopListening();
     }
 
     this.tab.removeEventListener("TabClose", this);
@@ -326,11 +380,16 @@ class ResponsiveUI {
 
     if (!this.isBrowserUIEnabled) {
       this.tab.linkedBrowser.removeEventListener("FullZoomChange", this);
-      this.toolWindow.removeEventListener("message", this);
+      this._toolWindow.removeEventListener("message", this);
     } else {
       this.browserWindow.removeEventListener("FullZoomChange", this);
       this.rdmFrame.contentWindow.removeEventListener("message", this);
       this.rdmFrame.remove();
+
+      // Clean up resize handlers
+      this.resizeHandle.remove();
+      this.resizeHandleX.remove();
+      this.resizeHandleY.remove();
 
       this.browserContainerEl.classList.remove("responsive-mode");
       this.browserStackEl.style.removeProperty("--rdm-width");
@@ -339,7 +398,7 @@ class ResponsiveUI {
 
     if (!this.isBrowserUIEnabled && !isTabContentDestroying) {
       // Notify the inner browser to stop the frame script
-      await message.request(this.toolWindow, "stop-frame-script");
+      await message.request(this._toolWindow, "stop-frame-script");
     }
 
     // Ensure the tab is reloaded if required when exiting RDM so that no emulated
@@ -358,6 +417,9 @@ class ResponsiveUI {
       }
     }
 
+    // Show the browser UI now.
+    this.showBrowserUI();
+
     // Destroy local state
     const swap = this.swap;
     this.browserContainerEl = null;
@@ -366,7 +428,10 @@ class ResponsiveUI {
     this.tab = null;
     this.initialized = null;
     this.rdmFrame = null;
-    this.toolWindow = null;
+    this.resizeHandle = null;
+    this.resizeHandleX = null;
+    this.resizeHandleY = null;
+    this._toolWindow = null;
     this.swap = null;
 
     // Close the devtools client used to speak with responsive emulation actor.
@@ -395,8 +460,14 @@ class ResponsiveUI {
     DevToolsServer.registerAllActors();
     this.client = new DevToolsClient(DevToolsServer.connectPipe());
     await this.client.connect();
+
     const targetFront = await this.client.mainRoot.getTab();
-    this.responsiveFront = await targetFront.getFront("responsive");
+    this.targetList = new TargetList(this.client.mainRoot, targetFront);
+    this.targetList.startListening();
+    await this.targetList.watchTargets(
+      [this.targetList.TYPES.FRAME],
+      this.onTargetAvailable
+    );
   }
 
   /**
@@ -417,6 +488,20 @@ class ResponsiveUI {
     return Services.prefs.getBoolPref(pref, false);
   }
 
+  hideBrowserUI() {
+    if (this.isBrowserUIEnabled) {
+      this.tab.linkedBrowser.style.visibility = "hidden";
+      this.resizeHandle.style.visibility = "hidden";
+    }
+  }
+
+  showBrowserUI() {
+    if (this.isBrowserUIEnabled) {
+      this.tab.linkedBrowser.style.removeProperty("visibility");
+      this.resizeHandle.style.removeProperty("visibility");
+    }
+  }
+
   handleEvent(event) {
     const { browserWindow, tab, toolWindow } = this;
 
@@ -428,10 +513,7 @@ class ResponsiveUI {
         if (this.isBrowserUIEnabled) {
           // Get the current device size and update to that size, which
           // will pick up changes to the zoom.
-          const {
-            width,
-            height,
-          } = this.rdmFrame.contentWindow.getViewportSize();
+          const { width, height } = this.getViewportSize();
           this.updateViewportSize(width, height);
         } else {
           const zoom = tab.linkedBrowser.fullZoom;
@@ -439,6 +521,8 @@ class ResponsiveUI {
         }
         break;
       case "BeforeTabRemotenessChange":
+        this.onRemotenessChange(event);
+        break;
       case "TabClose":
       case "unload":
         this.manager.closeIfNeeded(browserWindow, tab, {
@@ -504,6 +588,7 @@ class ResponsiveUI {
     const { device, viewport } = event.data;
     const { type, angle } = getOrientation(device, viewport);
     await this.updateScreenOrientation(type, angle);
+    await this.updateMaxTouchPointsEnabled(touch);
 
     reloadNeeded |=
       (await this.updateUserAgent(userAgent)) &&
@@ -532,6 +617,9 @@ class ResponsiveUI {
 
   async onChangeTouchSimulation(event) {
     const { enabled } = event.data;
+
+    await this.updateMaxTouchPointsEnabled(enabled);
+
     const reloadNeeded =
       (await this.updateTouchSimulation(enabled)) &&
       this.reloadOnChange("touchSimulation");
@@ -581,6 +669,96 @@ class ResponsiveUI {
     this.emit("device-association-removed");
   }
 
+  /**
+   * Resizing the browser on mousemove
+   */
+  onResizeDrag({ screenX, screenY }) {
+    if (!this.isResizing || !this.rdmFrame.contentWindow) {
+      return;
+    }
+
+    const zoom = this.tab.linkedBrowser.fullZoom;
+
+    let deltaX = (screenX - this.lastScreenX) / zoom;
+    let deltaY = (screenY - this.lastScreenY) / zoom;
+
+    const leftAlignmentEnabled = Services.prefs.getBoolPref(
+      "devtools.responsive.leftAlignViewport.enabled",
+      false
+    );
+
+    if (!leftAlignmentEnabled) {
+      // The viewport is centered horizontally, so horizontal resize resizes
+      // by twice the distance the mouse was dragged - on left and right side.
+      deltaX = deltaX * 2;
+    }
+
+    if (this.ignoreX) {
+      deltaX = 0;
+    }
+    if (this.ignoreY) {
+      deltaY = 0;
+    }
+
+    const viewportSize = this.getViewportSize();
+
+    let width = Math.round(viewportSize.width + deltaX);
+    let height = Math.round(viewportSize.height + deltaY);
+
+    if (width < Constants.MIN_VIEWPORT_DIMENSION) {
+      width = Constants.MIN_VIEWPORT_DIMENSION;
+    } else if (width != viewportSize.width) {
+      this.lastScreenX = screenX;
+    }
+
+    if (height < Constants.MIN_VIEWPORT_DIMENSION) {
+      height = Constants.MIN_VIEWPORT_DIMENSION;
+    } else if (height != viewportSize.height) {
+      this.lastScreenY = screenY;
+    }
+
+    // Update the RDM store and viewport size with the new width and height.
+    this.rdmFrame.contentWindow.setViewportSize({ width, height });
+    this.updateViewportSize(width, height);
+
+    // Change the device selector back to an unselected device
+    if (this.rdmFrame.contentWindow.getAssociatedDevice()) {
+      this.rdmFrame.contentWindow.clearDeviceAssociation();
+    }
+  }
+
+  /**
+   * Start the process of resizing the browser.
+   */
+  onResizeStart({ target, screenX, screenY }) {
+    this.browserWindow.addEventListener("mousemove", this.onResizeDrag, true);
+    this.browserWindow.addEventListener("mouseup", this.onResizeStop, true);
+
+    this.isResizing = true;
+    this.lastScreenX = screenX;
+    this.lastScreenY = screenY;
+    this.ignoreX = target === this.resizeHandleY;
+    this.ignoreY = target === this.resizeHandleX;
+  }
+
+  /**
+   * Stop the process of resizing the browser.
+   */
+  onResizeStop() {
+    this.browserWindow.removeEventListener(
+      "mousemove",
+      this.onResizeDrag,
+      true
+    );
+    this.browserWindow.removeEventListener("mouseup", this.onResizeStop, true);
+
+    this.isResizing = false;
+    this.lastScreenX = 0;
+    this.lastScreenY = 0;
+    this.ignoreX = false;
+    this.ignoreY = false;
+  }
+
   onResizeViewport(event) {
     const { width, height } = event.data;
     this.updateViewportSize(width, height);
@@ -596,8 +774,7 @@ class ResponsiveUI {
   }
 
   async onScreenshot() {
-    const targetFront = await this.client.mainRoot.getTab();
-    const captureScreenshotSupported = await targetFront.actorHasMethod(
+    const captureScreenshotSupported = await this.currentTarget.actorHasMethod(
       "responsive",
       "captureScreenshot"
     );
@@ -621,10 +798,17 @@ class ResponsiveUI {
     );
   }
 
+  async hasDeviceState() {
+    const deviceState = await asyncStorage.getItem(
+      "devtools.responsive.deviceState"
+    );
+    return !!deviceState;
+  }
+
   /**
-   * Restores the previous state of RDM.
+   * Restores the previous UI state.
    */
-  async restoreState() {
+  async restoreUIState() {
     // Restore UI alignment.
     if (this.isBrowserUIEnabled) {
       const leftAlignmentEnabled = Services.prefs.getBoolPref(
@@ -635,10 +819,37 @@ class ResponsiveUI {
       this.updateUIAlignment(leftAlignmentEnabled);
     }
 
-    const deviceState = await asyncStorage.getItem(
-      "devtools.responsive.deviceState"
+    const height = Services.prefs.getIntPref(
+      "devtools.responsive.viewport.height",
+      0
     );
-    if (deviceState) {
+    const width = Services.prefs.getIntPref(
+      "devtools.responsive.viewport.width",
+      0
+    );
+    this.updateViewportSize(width, height);
+  }
+
+  /**
+   * Restores the previous actor state.
+   */
+  async restoreActorState() {
+    if (this.isBrowserUIEnabled) {
+      // It's possible the target will switch to a page loaded in the parent-process
+      // (i.e: about:robots). When this happens, the values set on the BrowsingContext
+      // by RDM are not preserved. So we need to set setDocumentInRDMPane = true whenever
+      // there is a target switch.
+      await this.responsiveFront.setDocumentInRDMPane(true);
+
+      // Apply floating scrollbar styles to document.
+      await this.responsiveFront.setFloatingScrollbars(true);
+
+      // Attach current target to the selected browser tab.
+      await this.currentTarget.attach();
+    }
+
+    const hasDeviceState = await this.hasDeviceState();
+    if (hasDeviceState) {
       // Return if there is a device state to restore, this will be done when the
       // device list is loaded after the post-init.
       return;
@@ -665,16 +876,16 @@ class ResponsiveUI {
       0
     );
 
-    let reloadNeeded = false;
     const { type, angle } = this.getInitialViewportOrientation({
       width,
       height,
     });
 
-    this.updateViewportSize(width, height);
     await this.updateDPPX(pixelRatio);
     await this.updateScreenOrientation(type, angle);
+    await this.updateMaxTouchPointsEnabled(touchSimulationEnabled);
 
+    let reloadNeeded = false;
     if (touchSimulationEnabled) {
       reloadNeeded |=
         (await this.updateTouchSimulation(touchSimulationEnabled)) &&
@@ -790,8 +1001,7 @@ class ResponsiveUI {
    *        reloaded/navigated to, so we should not be simulating "orientationchange".
    */
   async updateScreenOrientation(type, angle, isViewportRotated = false) {
-    const targetFront = await this.client.mainRoot.getTab();
-    const simulateOrientationChangeSupported = await targetFront.actorHasMethod(
+    const simulateOrientationChangeSupported = await this.currentTarget.actorHasMethod(
       "responsive",
       "simulateScreenOrientationChange"
     );
@@ -808,6 +1018,23 @@ class ResponsiveUI {
     // Used by tests.
     if (!isViewportRotated) {
       this.emit("only-viewport-orientation-changed");
+    }
+  }
+
+  /**
+   * Sets whether or not maximum touch points are supported for the simulated device.
+   *
+   * @param {Boolean} touchSimulationEnabled
+   *        Whether or not touch is enabled for the simulated device.
+   */
+  async updateMaxTouchPointsEnabled(touchSimulationEnabled) {
+    const setMaxTouchPointsSupported = await this.currentTarget.actorHasMethod(
+      "responsive",
+      "setMaxTouchPoints"
+    );
+
+    if (setMaxTouchPointsSupported) {
+      await this.responsiveFront.setMaxTouchPoints(touchSimulationEnabled);
     }
   }
 
@@ -846,17 +1073,30 @@ class ResponsiveUI {
     // on the <browser> because we'll need to use this for the alert dialog as well.
     this.browserStackEl.style.setProperty("--rdm-width", `${scaledWidth}px`);
     this.browserStackEl.style.setProperty("--rdm-height", `${scaledHeight}px`);
+
+    // This is a bit premature, but we emit a content-resize event here. It
+    // would be preferrable to wait until the viewport is actually resized,
+    // but the "resize" event is not triggered by this style change. The
+    // content-resize message is only used by tests, and if needed those tests
+    // can use the testing function setViewportSizeAndAwaitReflow to ensure
+    // the viewport has had time to reach this size.
+    this.emit("content-resize", {
+      width,
+      height,
+    });
   }
 
   /**
    * Helper for tests. Assumes a single viewport for now.
    */
   getViewportSize() {
-    if (!this.isBrowserUIEnabled) {
+    // The getViewportSize function is loaded in index.js, and might not be
+    // available yet.
+    if (this.toolWindow.getViewportSize) {
       return this.toolWindow.getViewportSize();
     }
 
-    return this.rdmFrame.contentWindow.getViewportSize();
+    return { width: 0, height: 0 };
   }
 
   /**
@@ -865,11 +1105,12 @@ class ResponsiveUI {
   async setViewportSize(size) {
     await this.initialized;
     if (!this.isBrowserUIEnabled) {
-      this.toolWindow.setViewportSize(size);
+      this._toolWindow.setViewportSize(size);
       return;
     }
 
     const { width, height } = size;
+    this.rdmFrame.contentWindow.setViewportSize({ width, height });
     this.updateViewportSize(width, height);
   }
 
@@ -878,7 +1119,7 @@ class ResponsiveUI {
    */
   getViewportBrowser() {
     if (!this.isBrowserUIEnabled) {
-      return this.toolWindow.getViewportBrowser();
+      return this._toolWindow.getViewportBrowser();
     }
 
     return this.tab.linkedBrowser;
@@ -896,6 +1137,43 @@ class ResponsiveUI {
    */
   getInitialViewportOrientation(viewport) {
     return getOrientation(viewport, viewport);
+  }
+
+  /**
+   * Helper for tests to get the browser's window.
+   */
+  getBrowserWindow() {
+    if (!this.isBrowserUIEnabled) {
+      return this._toolWindow;
+    }
+
+    return this.browserWindow;
+  }
+
+  async onTargetAvailable({ isTopLevel, targetFront }) {
+    if (isTopLevel) {
+      this.responsiveFront = await targetFront.getFront("responsive");
+      await this.restoreActorState();
+    }
+  }
+
+  async onRemotenessChange(event) {
+    const isTargetSwitchingEnabled = Services.prefs.getBoolPref(
+      "devtools.target-switching.enabled",
+      false
+    );
+
+    // We should ignore the remoteness events in case of old RDM
+    // as it is firing fake remoteness events.
+    if (isTargetSwitchingEnabled && this.isBrowserUIEnabled) {
+      const newTarget = await this.client.mainRoot.getTab();
+      await this.targetList.switchToTarget(newTarget);
+    } else {
+      const { browserWindow, tab } = this;
+      this.manager.closeIfNeeded(browserWindow, tab, {
+        reason: event.type,
+      });
+    }
   }
 }
 

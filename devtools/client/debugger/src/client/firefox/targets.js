@@ -134,7 +134,7 @@ async function listProcessTargets(args: Args) {
     return [];
   }
 
-  const { processes } = await devToolsClient.mainRoot.listProcesses();
+  const processes = await devToolsClient.mainRoot.listProcesses();
   const targets = await Promise.all(
     processes
       .filter(descriptor => !descriptor.isParent)

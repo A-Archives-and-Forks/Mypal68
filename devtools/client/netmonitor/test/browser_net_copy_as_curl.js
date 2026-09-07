@@ -69,7 +69,7 @@ add_task(async function() {
 
   // Unfinished request (bug#1378464, bug#1420513)
   const waitSlow = waitForNetworkEvents(monitor, 0);
-  await ContentTask.spawn(tab.linkedBrowser, SLOW_SJS, async function(url) {
+  await SpecialPowers.spawn(tab.linkedBrowser, [SLOW_SJS], async function(url) {
     content.wrappedJSObject.performRequest(url, "GET", null);
   });
   await waitSlow;
@@ -102,13 +102,15 @@ add_task(async function() {
 
   async function performRequest(method, payload) {
     const waitRequest = waitForNetworkEvents(monitor, 1);
-    await ContentTask.spawn(
+    await SpecialPowers.spawn(
       tab.linkedBrowser,
-      {
-        url: SIMPLE_SJS,
-        method_: method,
-        payload_: payload,
-      },
+      [
+        {
+          url: SIMPLE_SJS,
+          method_: method,
+          payload_: payload,
+        },
+      ],
       async function({ url, method_, payload_ }) {
         content.wrappedJSObject.performRequest(url, method_, payload_);
       }

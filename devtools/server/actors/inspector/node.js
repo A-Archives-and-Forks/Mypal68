@@ -92,6 +92,13 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
+  "isRemoteFrame",
+  "devtools/shared/layout/utils",
+  true
+);
+
+loader.lazyRequireGetter(
+  this,
   "InspectorActorUtils",
   "devtools/server/actors/inspector/utils"
 );
@@ -264,6 +271,14 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
       form.isDocumentElement = true;
     }
 
+    // Flag the remote frame and declare at least one child (the #document element) so
+    // that they can be expanded.
+    if (this.isRemoteFrame) {
+      form.remoteFrame = true;
+      form.numChildren = 1;
+      form.browsingContextID = this.rawNode.browsingContext.id;
+    }
+
     return form;
   },
 
@@ -294,6 +309,17 @@ const NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
   watchSlotchange: function(callback) {
     this.slotchangeListener = callback;
     this.rawNode.addEventListener("slotchange", this.slotchangeListener);
+  },
+
+  /**
+   * Check if the current node is representing a remote frame.
+   * In the context of the browser toolbox, a remote frame can be the <browser remote>
+   * element found inside each tab.
+   * In the context of the content toolbox, a remote frame can be a <iframe> that contains
+   * a different origin document.
+   */
+  get isRemoteFrame() {
+    return isRemoteFrame(this.rawNode);
   },
 
   // Estimate the number of children that the walker will return without making

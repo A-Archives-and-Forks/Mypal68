@@ -146,6 +146,27 @@ class InspectorFront extends FrontClassWithSpec(inspectorSpec) {
     const { walker } = await target.getFront("inspector");
     return walker.getNodeActorFromContentDomReference(contentDomReference);
   }
+
+  async getChildInspectors() {
+    const fissionEnabled = false;
+    const childInspectors = [];
+    const target = this.targetFront;
+    // this line can be removed when we are ready for fission frames
+    if (fissionEnabled && target.chrome && !target.isAddon) {
+      const { frames } = await target.listRemoteFrames();
+      // attempt to get targets and filter by targets that could connect
+      for (const descriptor of frames) {
+        const remoteTarget = await descriptor.getTarget();
+        if (remoteTarget) {
+          // get inspector
+          const remoteInspectorFront = await remoteTarget.getFront("inspector");
+          await remoteInspectorFront.walker.reparentRemoteFrame();
+          childInspectors.push(remoteInspectorFront);
+        }
+      }
+    }
+    return childInspectors;
+  }
 }
 
 exports.InspectorFront = InspectorFront;

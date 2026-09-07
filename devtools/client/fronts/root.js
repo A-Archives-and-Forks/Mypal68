@@ -13,20 +13,8 @@ const {
 loader.lazyRequireGetter(this, "getFront", "devtools/shared/protocol", true);
 loader.lazyRequireGetter(
   this,
-  "ProcessDescriptorFront",
-  "devtools/client/fronts/descriptors/process",
-  true
-);
-loader.lazyRequireGetter(
-  this,
   "BrowsingContextTargetFront",
   "devtools/client/fronts/targets/browsing-context",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "ContentProcessTargetFront",
-  "devtools/client/fronts/targets/content-process",
   true
 );
 loader.lazyRequireGetter(
@@ -171,7 +159,7 @@ class RootFront extends FrontClassWithSpec(rootSpec) {
     let { workers } = await this.listWorkers();
 
     // And then from the Child processes
-    const { processes } = await this.listProcesses();
+    const processes = await this.listProcesses();
     for (const processDescriptorFront of processes) {
       // Ignore parent process
       if (processDescriptorFront.isParent) {
@@ -187,88 +175,29 @@ class RootFront extends FrontClassWithSpec(rootSpec) {
     return workers;
   }
 
-  async listProcesses() {
-    const { processes } = await super.listProcesses();
-    const processDescriptors = processes.map(form => {
-      if (form.actor && form.actor.includes("processDescriptor")) {
-        return this._getProcessDescriptorFront(form);
-      }
-      // Support FF69 and older
-      return {
-        id: form.id,
-        isParent: form.parent,
-        getTarget: () => {
-          return this.getProcess(form.id);
-        },
-      };
-    });
-    return { processes: processDescriptors };
-  }
-
   /**
-   * Fetch the ParentProcessTargetActor for the main process.
+   * Fetch the ProcessDescriptorFront for the main process.
    *
-   * `getProcess` requests allows to fetch the target actor for any process
-   * and the main process is having the process ID zero.
+   * `getProcess` requests allows to fetch the descriptor for any process and
+   * the main process is having the process ID zero.
    */
   getMainProcess() {
     return this.getProcess(0);
   }
 
-  async getProcess(id) {
-    const { form } = await super.getProcess(id);
-    if (form.actor && form.actor.includes("processDescriptor")) {
-      // The server currently returns a form, when we can drop backwards compatibility,
-      // we can use automatic marshalling here instead, making the next line unnecessary
-      const processDescriptorFront = this._getProcessDescriptorFront(form);
-      return processDescriptorFront.getTarget();
-    }
-
-    // Backwards compatibility for servers up to FF69.
-    // Do not use specification automatic marshalling as getProcess may return
-    // two different type: ParentProcessTargetActor or ContentProcessTargetActor.
-    // Also, we do want to memoize the fronts and return already existing ones.
-    let front = this.actor(form.actor);
-    if (front) {
-      return front;
-    }
-    // getProcess may return a ContentProcessTargetActor or a ParentProcessTargetActor
-    // In most cases getProcess(0) will return the main process target actor,
-    // which is a ParentProcessTargetActor, but not in xpcshell, which uses a
-    // ContentProcessTargetActor. So select the right front based on the actor ID.
-    if (form.actor.includes("contentProcessTarget")) {
-      front = new ContentProcessTargetFront(this._client);
-    } else {
-      // ParentProcessTargetActor doesn't have a specific front, instead it uses
-      // BrowsingContextTargetFront on the client side.
-      front = new BrowsingContextTargetFront(this._client);
-    }
-    // As these fronts aren't instantiated by protocol.js, we have to set their actor ID
-    // manually like that:
-    front.actorID = form.actor;
-    front.form(form);
-    this.manage(front);
-
-    return front;
-  }
-
   /**
-   * Get the previous process descriptor front if it exists, create a new one if not.
+   * Retrieve the target descriptor for the provided id.
    *
-   * If we are using a modern server, we will get a form for a processDescriptorFront.
-   * Until we can switch to auto marshalling, we need to marshal this into a process
-   * descriptor front ourselves.
+   * @return {ProcessDescriptorFront} the process descriptor front for the
+   *         provided id.
    */
-  _getProcessDescriptorFront(form) {
-    let front = this.actor(form.actor);
-    if (front) {
-      return front;
-    }
-    front = new ProcessDescriptorFront(this._client);
-    front.form(form);
-    front.actorID = form.actor;
-    this.manage(front);
-    return front;
+  async getProcess(id) {
+    const { form, processDescriptor } = await super.getProcess(id);
+    // Backward compatibility: FF74 or older servers will return the
+    // process descriptor as the "form" property of the response.
+    // Once FF75 is merged to release we can always expect `processDescriptor`
+    // to be defined.
+    return processDescriptor || form;
   }
 
   /**
@@ -335,9 +264,9 @@ class RootFront extends FrontClassWithSpec(rootSpec) {
     // devtools/client/framework/test/browser_toolbox_target.js is passing such
     // a fake tab.
     if (filter && filter.tab && filter.tab.tagName == "tab") {
-      front = new LocalTabTargetFront(this._client, filter.tab);
+      front = new LocalTabTargetFront(this._client, null, this, filter.tab);
     } else {
-      front = new BrowsingContextTargetFront(this._client);
+      front = new BrowsingContextTargetFront(this._client, null, this);
     }
     // As these fronts aren't instantiated by protocol.js, we have to set their actor ID
     // manually like that:

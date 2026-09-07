@@ -516,6 +516,45 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
 
     return querySelectors(nodeFront);
   }
+
+  async children(node, options) {
+    if (!node.remoteFrame) {
+      return super.children(node, options);
+    }
+    const remoteTarget = await node.connectToRemoteFrame();
+    const walker = (await remoteTarget.getFront("inspector")).walker;
+
+    // Finally retrieve the NodeFront of the remote frame's document
+    const documentNode = await walker.getRootNode();
+
+    // Force reparenting through the remote frame boundary.
+    documentNode.reparent(node);
+
+    // And return the same kind of response `walker.children` returns
+    return {
+      nodes: [documentNode],
+      hasFirst: true,
+      hasLast: true,
+    };
+  }
+
+  async reparentRemoteFrame() {
+    // Get the parent target, which most likely runs in another process
+    const descriptorFront = this.targetFront.descriptorFront;
+    const parentTarget = await descriptorFront.getParentTarget();
+    // Get the NodeFront for the embedder element
+    // i.e. the <iframe> element which is hosting the document that
+    const parentWalker = (await parentTarget.getFront("inspector")).walker;
+    // As this <iframe> most likely runs in another process, we have to get it through the parent
+    // target's WalkerFront.
+    const parentNode = (await parentWalker.getEmbedderElement(
+      descriptorFront.id
+    )).node;
+
+    // Finally, set this embedder element's node front as the
+    const documentNode = await this.getRootNode();
+    documentNode.reparent(parentNode);
+  }
 }
 
 exports.WalkerFront = WalkerFront;

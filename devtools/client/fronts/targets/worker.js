@@ -13,8 +13,8 @@ const { TargetMixin } = require("devtools/client/fronts/targets/target-mixin");
 class WorkerTargetFront extends TargetMixin(
   FrontClassWithSpec(workerTargetSpec)
 ) {
-  constructor(client) {
-    super(client);
+  constructor(client, targetFront, parentFront) {
+    super(client, targetFront, parentFront);
 
     this.traits = {};
 

@@ -11,12 +11,6 @@ Services.scriptloader.loadSubScript(
 
 const EventEmitter = require("devtools/shared/event-emitter");
 
-// This is far from ideal. https://bugzilla.mozilla.org/show_bug.cgi?id=1565279
-// covers removing this pref flip.
-SpecialPowers.pushPrefEnv({
-  set: [["security.allow_unsafe_parent_loads", true]],
-});
-
 function toggleAllTools(state) {
   for (const [, tool] of gDevTools._tools) {
     if (!tool.visibilityswitch) {
@@ -30,7 +24,7 @@ function toggleAllTools(state) {
   }
 }
 
-function getParentProcessActors(callback) {
+async function getParentProcessActors(callback) {
   const { DevToolsServer } = require("devtools/server/devtools-server");
   const { DevToolsClient } = require("devtools/client/devtools-client");
 
@@ -38,17 +32,16 @@ function getParentProcessActors(callback) {
   DevToolsServer.registerAllActors();
   DevToolsServer.allowChromeProcess = true;
 
-  const client = new DevToolsClient(DevToolsServer.connectPipe());
-  client
-    .connect()
-    .then(() => client.mainRoot.getMainProcess())
-    .then(front => {
-      callback(client, front);
-    });
-
   SimpleTest.registerCleanupFunction(() => {
     DevToolsServer.destroy();
   });
+
+  const client = new DevToolsClient(DevToolsServer.connectPipe());
+  await client.connect();
+  const mainProcessDescriptor = await client.mainRoot.getMainProcess();
+  const mainProcessTargetFront = await mainProcessDescriptor.getTarget();
+
+  callback(client, mainProcessTargetFront);
 }
 
 function getSourceActor(aSources, aURL) {

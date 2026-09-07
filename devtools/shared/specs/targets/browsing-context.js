@@ -25,10 +25,6 @@ types.addDictType("browsingContextTarget.listframes", {
   frames: "array:browsingContextTarget.window",
 });
 
-types.addDictType("browsingContextTarget.listRemoteFrames", {
-  frames: "array:frameDescriptor",
-});
-
 types.addDictType("browsingContextTarget.window", {
   id: "string",
   parentID: "nullable:string",
@@ -99,10 +95,6 @@ const browsingContextTargetSpecPrototype = {
     listFrames: {
       request: {},
       response: RetVal("browsingContextTarget.listframes"),
-    },
-    listRemoteFrames: {
-      request: {},
-      response: RetVal("browsingContextTarget.listRemoteFrames"),
     },
     listWorkers: {
       request: {},

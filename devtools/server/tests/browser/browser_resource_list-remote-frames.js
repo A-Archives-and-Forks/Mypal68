@@ -18,6 +18,8 @@ add_task(async function() {
 async function testLocalListFrames(tabTarget) {
   // at this point, tabTarget is the tab with two iframes, one nested inside
   // the other.
+  // we should move this to descriptorFront.listRemoteFrames once we have
+  // tabDescriptors
   const { frames } = await tabTarget.listRemoteFrames();
   is(frames.length, 2, "Got two frames");
 
@@ -43,7 +45,8 @@ async function testBrowserListFrames(tabTarget) {
   // Now, we can test against the entire browser. getMainProcess will return
   // a target for the parentProcess, and will be able to enumerate over all
   // the tabs, the remote iframe, and the pair of frames, one nested inside the other.
-  const target = await tabTarget.client.mainRoot.getMainProcess();
+  const targetDescriptor = await tabTarget.client.mainRoot.getMainProcess();
+  const target = await targetDescriptor.getTarget();
   await getFrames(target, tabTarget);
 }
 
@@ -56,6 +59,7 @@ async function getFrames(target) {
   // since it is requesting information from a content process. From the parent
   // we can access information like the URL.
   const descriptor = frames.find(f => f.url && f.url.includes("doc_iframe"));
+  ok(descriptor, "we have a descriptor with the url 'doc_iframe'");
 
   const front = await descriptor.getTarget();
   ok(front.hasActor("console"), "Got the console actor");
@@ -74,7 +78,7 @@ async function getFrames(target) {
     is(frameTarget, null, "We cannot get remote iframe fronts yet");
   }
 
-  getFirstFrameAgain(front, descriptor, target);
+  await getFirstFrameAgain(front, descriptor, target);
 }
 
 // Assert that calling descriptor.getTarget returns the same actor.
@@ -88,7 +92,9 @@ async function getFirstFrameAgain(firstTargetFront, descriptor, target) {
   );
 
   const { frames } = await target.listRemoteFrames();
-  const secondDescriptor = frames.find(f => f.id === descriptor.id);
+  const secondDescriptor = frames.find(f => {
+    return f.id === descriptor.id;
+  });
   const secondTargetFront = await secondDescriptor.getTarget();
   is(
     secondTargetFront,

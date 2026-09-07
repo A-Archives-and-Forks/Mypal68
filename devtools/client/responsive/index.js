@@ -31,11 +31,15 @@ const {
 } = require("devtools/client/responsive/actions/devices");
 const {
   addViewport,
+  changePixelRatio,
+  removeDeviceAssociation,
   resizeViewport,
   zoomViewport,
 } = require("devtools/client/responsive/actions/viewports");
 const {
   changeDisplayPixelRatio,
+  changeUserAgent,
+  toggleTouchSimulation,
 } = require("devtools/client/responsive/actions/ui");
 
 // Exposed for use by tests
@@ -136,6 +140,15 @@ window.addInitialViewport = ({ userContextId }) => {
   }
 };
 
+window.getAssociatedDevice = () => {
+  const { viewports } = bootstrap.store.getState();
+  if (!viewports.length) {
+    return null;
+  }
+
+  return viewports[0].device;
+};
+
 /**
  * Called by manager.js when tests want to check the viewport size.
  */
@@ -155,6 +168,17 @@ window.getViewportSize = () => {
 window.setViewportSize = ({ width, height }) => {
   try {
     bootstrap.dispatch(resizeViewport(0, width, height));
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+window.clearDeviceAssociation = () => {
+  try {
+    bootstrap.dispatch(removeDeviceAssociation(0));
+    bootstrap.dispatch(toggleTouchSimulation(false));
+    bootstrap.dispatch(changePixelRatio(0, 0));
+    bootstrap.dispatch(changeUserAgent(""));
   } catch (e) {
     console.error(e);
   }

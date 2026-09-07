@@ -16,7 +16,7 @@ const EXPECTED_REQUESTS = {
     url: TOP_URL,
     causeType: "document",
     causeUri: null,
-    stack: true,
+    stack: false,
   },
   "ws://localhost:8080/": {
     method: "GET",

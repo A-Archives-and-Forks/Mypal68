@@ -437,6 +437,7 @@ HarBuilder.prototype = {
       return cache;
     }
 
+    if (file.responseCacheAvailable && this._options.requestData) {
       const responseCache = await this._options.requestData(
         file.id,
         "responseCache"

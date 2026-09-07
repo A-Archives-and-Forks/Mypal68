@@ -19,6 +19,7 @@ DIRS += [
     'platform',
     'protocol',
     'qrcode',
+    'resources',
     'screenshot',
     'security',
     'sprintfjs',

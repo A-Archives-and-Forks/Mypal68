@@ -12,27 +12,32 @@ const WIDTH = 375;
 const HEIGHT = 450;
 const ZOOM_LEVELS = [0.3, 0.5, 0.9, 1, 1.5, 2, 2.4];
 
-add_task(async function() {
-  const tab = await addTab(TEST_URL);
-  const browser = tab.linkedBrowser;
+addRDMTask(
+  null,
+  async function() {
+    const tab = await addTab(TEST_URL);
+    const browser = tab.linkedBrowser;
 
-  const { ui, manager } = await openRDM(tab);
-  await setViewportSize(ui, manager, WIDTH, HEIGHT);
+    const { ui, manager } = await openRDM(tab);
+    await waitForDeviceAndViewportState(ui);
+    await setViewportSize(ui, manager, WIDTH, HEIGHT);
 
-  info("Ensure outer size values are unchanged at different zoom levels.");
-  for (let i = 0; i < ZOOM_LEVELS.length; i++) {
-    info(`Setting zoom level to ${ZOOM_LEVELS[i]}`);
-    await promiseRDMZoom(ui, browser, ZOOM_LEVELS[i]);
+    info("Ensure outer size values are unchanged at different zoom levels.");
+    for (let i = 0; i < ZOOM_LEVELS.length; i++) {
+      info(`Setting zoom level to ${ZOOM_LEVELS[i]}`);
+      await promiseRDMZoom(ui, browser, ZOOM_LEVELS[i]);
 
-    await checkWindowOuterSize(ui, ZOOM_LEVELS[i]);
-    await checkWindowScreenSize(ui, ZOOM_LEVELS[i]);
-  }
-});
+      await checkWindowOuterSize(ui, ZOOM_LEVELS[i]);
+      await checkWindowScreenSize(ui, ZOOM_LEVELS[i]);
+    }
+  },
+  { usingBrowserUI: true, onlyPrefAndTask: true }
+);
 
 async function checkWindowOuterSize(ui, zoom_level) {
-  return ContentTask.spawn(
+  return SpecialPowers.spawn(
     ui.getViewportBrowser(),
-    { width: WIDTH, height: HEIGHT, zoom: zoom_level },
+    [{ width: WIDTH, height: HEIGHT, zoom: zoom_level }],
     async function({ width, height, zoom }) {
       // Approximate the outer size value returned on the window content with the expected
       // value. We should expect, at the very most, a 2px difference between the two due
@@ -52,9 +57,9 @@ async function checkWindowOuterSize(ui, zoom_level) {
 }
 
 async function checkWindowScreenSize(ui, zoom_level) {
-  return ContentTask.spawn(
+  return SpecialPowers.spawn(
     ui.getViewportBrowser(),
-    { width: WIDTH, height: HEIGHT, zoom: zoom_level },
+    [{ width: WIDTH, height: HEIGHT, zoom: zoom_level }],
     async function({ width, height, zoom }) {
       const { screen } = content;
 

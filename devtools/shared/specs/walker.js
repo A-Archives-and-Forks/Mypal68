@@ -363,6 +363,14 @@ const walkerSpec = generateActorSpec({
       },
       response: {},
     },
+    getEmbedderElement: {
+      request: {
+        browsingContextID: Arg(0, "string"),
+      },
+      response: {
+        nodeFront: RetVal("disconnectedNode"),
+      },
+    },
   },
 });
 

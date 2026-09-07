@@ -153,6 +153,20 @@ const responsiveSpec = generateActorSpec({
       },
       response: {},
     },
+
+    setFloatingScrollbars: {
+      request: {
+        state: Arg(0, "boolean"),
+      },
+      response: {},
+    },
+
+    setMaxTouchPoints: {
+      request: {
+        flag: Arg(0, "boolean"),
+      },
+      response: {},
+    },
   },
 });
 

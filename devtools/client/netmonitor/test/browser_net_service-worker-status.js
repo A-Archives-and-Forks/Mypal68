@@ -43,7 +43,7 @@ add_task(async function() {
   ];
 
   info("Registering the service worker...");
-  await ContentTask.spawn(tab.linkedBrowser, {}, async function() {
+  await SpecialPowers.spawn(tab.linkedBrowser, [], async function() {
     await content.wrappedJSObject.registerServiceWorker();
   });
 
@@ -104,7 +104,7 @@ add_task(async function() {
   }
 
   info("Unregistering the service worker...");
-  await ContentTask.spawn(tab.linkedBrowser, {}, async function() {
+  await SpecialPowers.spawn(tab.linkedBrowser, [], async function() {
     await content.wrappedJSObject.unregisterServiceWorker();
   });
 

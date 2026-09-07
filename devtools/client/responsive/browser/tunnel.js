@@ -48,10 +48,6 @@ const SWAPPED_BROWSER_STATE = [
 const PROPERTIES_FROM_BROWSER_WINDOW = [
   // This is used by PermissionUI.jsm for permission doorhangers.
   "PopupNotifications",
-  // These are used by ContentClick.jsm when opening links in ways other than just
-  // navigating the viewport, such as a new tab by pressing Cmd-Click.
-  "whereToOpenLink",
-  "openLinkIn",
   // This is used by various event handlers, typically to call `getTabForBrowser` to map
   // a browser back to a tab.
   "gBrowser",
@@ -110,8 +106,8 @@ function tunnelToInnerBrowser(outer, inner) {
         inner._characterSet = outer._characterSet;
         inner._isSyntheticDocument = outer._isSyntheticDocument;
         inner._innerWindowID = outer._innerWindowID;
-        inner._remoteWebNavigationImpl._currentURI =
-          outer._remoteWebNavigationImpl._currentURI;
+        inner._remoteWebNavigation._currentURI =
+          outer._remoteWebNavigation._currentURI;
         // mozbrowser elements do not support the `contentPrincipal` property.
         // Because of this, we copy the outer browser's (xul:browser)
         // `contentPrincipal` here. We need to do this because some event
@@ -143,7 +139,6 @@ function tunnelToInnerBrowser(outer, inner) {
       // Various browser methods access the `frameLoader` property, including:
       //   * `saveBrowser` from contentAreaUtils.js
       //   * `docShellIsActive` from browser.js
-      //   * `hasContentOpener` from browser.js
       //   * `preserveLayers` from browser.js
       //   * `receiveMessage` from SessionStore.jsm
       // In general, these methods are interested in the `frameLoader` for the content,
@@ -235,9 +230,8 @@ function tunnelToInnerBrowser(outer, inner) {
       // because stop() will remove the browser binding and these will no longer bee
       // used.
       const webNavigation = new BrowserElementWebNavigation(inner);
-      webNavigation.copyStateFrom(inner._remoteWebNavigationImpl);
+      webNavigation.copyStateFrom(inner._remoteWebNavigation);
       outer._remoteWebNavigation = webNavigation;
-      outer._remoteWebNavigationImpl = webNavigation;
 
       // Now that we've flipped to the remote browser mode, add `progressListener`
       // onto the remote version of `webProgress`.  Normally tabbrowser.xml does this step
@@ -456,40 +450,21 @@ MessageManagerTunnel.prototype = {
     "InPermitUnload",
     "PermitUnload",
     // Messages sent from browser.js
-    "Browser:Reload",
     "PageStyle:Disable",
     "PageStyle:Switch",
-    // Messages sent from SelectParentHelper.jsm
-    "Forms:DismissedDropDown",
-    "Forms:MouseOut",
-    "Forms:MouseOver",
-    "Forms:SelectDropDownItem",
     // Messages sent from SessionStore.jsm
     "SessionStore:flush",
     "SessionStore:restoreHistory",
     "SessionStore:restoreTabContent",
-    // Messages sent from viewZoomOverlay.js.
-    "FullZoom",
   ],
 
   INNER_TO_OUTER_MESSAGES: [
     // Messages sent to browser.js
-    "Browser:LoadURI",
-    "Link:SetIcon",
-    "Link:SetFailedIcon",
-    "Link:AddFeed",
-    "Link:AddSearch",
     "PageStyle:StyleSheets",
     // Messages sent to browser.js
     "DOMTitleChanged",
-    "Forms:ShowDropDown",
-    "Forms:HideDropDown",
     "InPermitUnload",
     "PermitUnload",
-    // Messages sent to tabbrowser.xml
-    "contextmenu",
-    // Messages sent to SelectParentHelper.jsm
-    "Forms:UpdateDropDown",
     // Messages sent to SessionStore.jsm
     "SessionStore:update",
     // Messages sent to BrowserTestUtils.jsm
@@ -499,45 +474,27 @@ MessageManagerTunnel.prototype = {
   OUTER_TO_INNER_MESSAGE_PREFIXES: [
     // Messages sent from browser.js
     "Autoscroll:",
-    // Messages sent from nsContextMenu.js
-    "ContextMenu:",
     // Messages sent from DevTools
     "debug:",
-    // Messages sent from findbar.xml
-    "Findbar:",
     // Messages sent from RemoteFinder.jsm
     "Finder:",
     // Messages sent from InlineSpellChecker.jsm
-    "InlineSpellChecker:",
-    // Messages sent from MessageChannel.jsm
     "MessageChannel:",
-    // Messages sent from pageinfo.js
-    "PageInfo:",
     // Messages sent from printUtils.js
     "Printing:",
-    // Messages sent from viewSourceUtils.js
-    "ViewSource:",
   ],
 
   INNER_TO_OUTER_MESSAGE_PREFIXES: [
     // Messages sent to browser.js
     "Autoscroll:",
-    // Messages sent to nsContextMenu.js
-    "ContextMenu:",
     // Messages sent to DevTools
     "debug:",
-    // Messages sent to findbar.xml
-    "Findbar:",
     // Messages sent to RemoteFinder.jsm
     "Finder:",
     // Messages sent to MessageChannel.jsm
     "MessageChannel:",
-    // Messages sent to pageinfo.js
-    "PageInfo:",
     // Messages sent to printUtils.js
     "Printing:",
-    // Messages sent to viewSourceUtils.js
-    "ViewSource:",
   ],
 
   OUTER_TO_INNER_FRAME_SCRIPTS: [

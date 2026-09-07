@@ -12,11 +12,17 @@ const {
 } = require("devtools/shared/protocol.js");
 const { nodeSpec, nodeListSpec } = require("devtools/shared/specs/node");
 const { SimpleStringFront } = require("devtools/client/fronts/string");
+const Services = require("Services");
 
 loader.lazyRequireGetter(
   this,
   "nodeConstants",
   "devtools/shared/dom-node-constants"
+);
+
+const BROWSER_TOOLBOX_FISSION_ENABLED = Services.prefs.getBoolPref(
+  "devtools.browsertoolbox.fission",
+  false
 );
 
 const HIDDEN_CLASS = "__fx-devtools-hide-shortcut__";
@@ -274,6 +280,9 @@ class NodeFront extends FrontClassWithSpec(nodeSpec) {
   get numChildren() {
     return this._form.numChildren;
   }
+  get remoteFrame() {
+    return BROWSER_TOOLBOX_FISSION_ENABLED && this._form.remoteFrame;
+  }
   get hasEventListeners() {
     return this._form.hasEventListeners;
   }
@@ -509,6 +518,22 @@ class NodeFront extends FrontClassWithSpec(nodeSpec) {
       return null;
     }
     return actor.rawNode;
+  }
+
+  async connectToRemoteFrame() {
+    if (!this.remoteFrame) {
+      console.warn("Tried to open remote connection to an invalid frame.");
+      return null;
+    }
+    if (this._remoteFrameTarget) {
+      return this._remoteFrameTarget;
+    }
+    // First get the target actor form of this remote frame element
+    const descriptor = await this.targetFront.client.mainRoot.getBrowsingContextDescriptor(
+      this._form.browsingContextID
+    );
+    this._remoteFrameTarget = await descriptor.getTarget();
+    return this._remoteFrameTarget;
   }
 
   async getAllSelectors() {

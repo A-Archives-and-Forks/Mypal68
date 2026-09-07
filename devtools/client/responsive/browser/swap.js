@@ -236,6 +236,15 @@ function swapToInnerBrowser({ tab, containerURL, getInnerBrowser }) {
       await tabLoaded(containerTab);
       debug("Wait until inner browser available");
       innerBrowser = await getInnerBrowser(containerBrowser);
+
+      Object.defineProperty(innerBrowser, "outerBrowser", {
+        get() {
+          return tab.linkedBrowser;
+        },
+        configurable: true,
+        enumerable: true,
+      });
+
       addXULBrowserDecorations(innerBrowser);
       if (innerBrowser.isRemoteBrowser != tab.linkedBrowser.isRemoteBrowser) {
         throw new Error(
@@ -448,8 +457,8 @@ function addXULBrowserDecorations(browser) {
   // without errors.  During the swap process above, these will move from the
   // the new inner browser to the original tab's browser (step 4) and then to
   // the temporary container tab's browser (step 7), which is then closed.
-  if (browser._remoteWebNavigationImpl == undefined) {
-    browser._remoteWebNavigationImpl = {
+  if (browser._remoteWebNavigation == undefined) {
+    browser._remoteWebNavigation = {
       swapBrowser() {},
     };
   }

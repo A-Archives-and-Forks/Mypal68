@@ -23,6 +23,12 @@ loader.lazyRequireGetter(
 );
 loader.lazyRequireGetter(
   this,
+  "isRemoteFrame",
+  "devtools/shared/layout/utils",
+  true
+);
+loader.lazyRequireGetter(
+  this,
   "isXUL",
   "devtools/server/actors/highlighters/utils/markup",
   true
@@ -211,6 +217,12 @@ exports.HighlighterActor = protocol.ActorClassWithSpec(highlighterSpec, {
     if (this._highlighter) {
       this._highlighter.hide();
     }
+
+    // Since the node-picker works independently in each remote frame, the inspector
+    // front-end decides which highlighter to show and hide while picking.
+    // If we're being asked to hide here, we should also reset the current hovered node so
+    // we can start highlighting correctly again later.
+    this._hoveredNode = null;
   },
 
   /**
@@ -257,12 +269,26 @@ exports.HighlighterActor = protocol.ActorClassWithSpec(highlighterSpec, {
     }
     this._isPicking = true;
 
+    // In most cases, we need to prevent content events from reaching the content. This is
+    // needed to avoid triggering actions such as submitting forms or following links.
+    // In the case where the event happens on a remote frame however, we do want to let it
+    // through. That is because otherwise the pickers started in nested remote frames will
+    // never have a chance of picking their own elements.
     this._preventContentEvent = event => {
+      if (isRemoteFrame(event.target)) {
+        return;
+      }
       event.stopPropagation();
       event.preventDefault();
     };
 
     this._onPick = event => {
+      // If the picked node is a remote frame, then we need to let the event through
+      // since there's a highlighter actor in that sub-frame also picking.
+      if (isRemoteFrame(event.target)) {
+        return;
+      }
+
       this._preventContentEvent(event);
 
       if (!this._isEventAllowed(event)) {
@@ -278,7 +304,6 @@ exports.HighlighterActor = protocol.ActorClassWithSpec(highlighterSpec, {
         );
         return;
       }
-
       this._stopPickerListeners();
       this._isPicking = false;
       if (this._autohide) {
@@ -293,8 +318,13 @@ exports.HighlighterActor = protocol.ActorClassWithSpec(highlighterSpec, {
     };
 
     this._onHovered = event => {
-      this._preventContentEvent(event);
+      // If the hovered node is a remote frame, then we need to let the event through
+      // since there's a highlighter actor in that sub-frame also picking.
+      if (isRemoteFrame(event.target)) {
+        return;
+      }
 
+      this._preventContentEvent(event);
       if (!this._isEventAllowed(event)) {
         return;
       }

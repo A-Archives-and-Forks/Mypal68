@@ -48,7 +48,9 @@ async function throttleUploadTest(actuallyThrottle) {
 
   // Execute one POST request on the page and wait till its done.
   const wait = waitForNetworkEvents(monitor, 1);
-  await ContentTask.spawn(tab.linkedBrowser, { size }, async function(args) {
+  await SpecialPowers.spawn(tab.linkedBrowser, [{ size }], async function(
+    args
+  ) {
     content.wrappedJSObject.executeTest2(args.size);
   });
   await wait;

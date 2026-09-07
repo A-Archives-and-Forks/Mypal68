@@ -65,7 +65,7 @@ add_task(async function() {
 
 async function performRequestsAndWait(monitor, tab) {
   const wait = waitForNetworkEvents(monitor, 1);
-  await ContentTask.spawn(tab.linkedBrowser, {}, async function() {
+  await SpecialPowers.spawn(tab.linkedBrowser, [], async function() {
     content.wrappedJSObject.performLargePostDataRequest();
   });
   await wait;

@@ -598,6 +598,8 @@ var closeTabAndToolbox = async function(tab = gBrowser.selectedTab) {
   }
 
   await removeTab(tab);
+
+  await new Promise(resolve => setTimeout(resolve, 0));
 };
 
 /**
@@ -744,10 +746,8 @@ function waitForClipboardPromise(setup, expected) {
  * @return {Promise} resolves when the preferences have been updated
  */
 function pushPref(preferenceName, value) {
-  return new Promise(resolve => {
-    const options = { set: [[preferenceName, value]] };
-    SpecialPowers.pushPrefEnv(options, resolve);
-  });
+  const options = { set: [[preferenceName, value]] };
+  return SpecialPowers.pushPrefEnv(options);
 }
 
 /**
@@ -790,9 +790,9 @@ function isWindows() {
  */
 function waitForTitleChange(toolbox) {
   return new Promise(resolve => {
-    toolbox.win.parent.addEventListener("message", function onmessage(event) {
+    toolbox.topWindow.addEventListener("message", function onmessage(event) {
       if (event.data.name == "set-host-title") {
-        toolbox.win.parent.removeEventListener("message", onmessage);
+        toolbox.topWindow.removeEventListener("message", onmessage);
         resolve();
       }
     });

@@ -15,8 +15,8 @@ const { TargetMixin } = require("devtools/client/fronts/targets/target-mixin");
 class ContentProcessTargetFront extends TargetMixin(
   FrontClassWithSpec(contentProcessTargetSpec)
 ) {
-  constructor(client) {
-    super(client);
+  constructor(client, targetFront, parentFront) {
+    super(client, targetFront, parentFront);
 
     this.traits = {};
   }

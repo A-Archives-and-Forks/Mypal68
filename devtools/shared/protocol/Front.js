@@ -41,9 +41,9 @@ class Front extends Pool {
     this.parentFront = parentFront;
     this._requests = [];
 
-    // Front listener functions registered via `onFront` get notified
-    // of new fronts via this dedicated EventEmitter object.
-    this._frontListeners = new EventEmitter();
+    // Front listener functions registered via `watchFronts`
+    this._frontCreationListeners = new EventEmitter();
+    this._frontDestructionListeners = new EventEmitter();
 
     // List of optional listener for each event, that is processed immediatly on packet
     // receival, before emitting event via EventEmitter on the Front.
@@ -81,7 +81,8 @@ class Front extends Pool {
     this.actorID = null;
     this.targetFront = null;
     this.parentFront = null;
-    this._frontListeners = null;
+    this._frontCreationListeners = null;
+    this._frontDestructionListeners = null;
     this._beforeListeners = null;
   }
 
@@ -124,21 +125,76 @@ class Front extends Pool {
       front.form(form, ctx);
     }
 
-    // Call listeners registered via `onFront` method
-    this._frontListeners.emit(front.typeName, front);
+    // Call listeners registered via `watchFronts` method
+    this._frontCreationListeners.emit(front.typeName, front);
   }
 
-  // Run callback on every front of this type that currently exists, and on every
-  // instantiation of front type in the future.
-  onFront(typeName, callback) {
-    // First fire the callback on already instantiated fronts
-    for (const front of this.poolChildren()) {
-      if (front.typeName == typeName) {
-        callback(front);
-      }
+  async unmanage(front) {
+    super.unmanage(front);
+
+    // Call listeners registered via `watchFronts` method
+    this._frontDestructionListeners.emit(front.typeName, front);
+  }
+
+  /*
+   * Listen for the creation and/or destruction of fronts matching one of the provided types.
+   *
+   * @param {String} typeName
+   *        Actor type to watch.
+   * @param {Function} onAvailable (optional)
+   *        Callback fired when a front has been just created or was already available.
+   *        The function is called with one arguments, the front.
+   * @param {Function} onDestroy (optional)
+   *        Callback fired in case of front destruction.
+   *        The function is called with the same argument than onAvailable.
+   */
+  watchFronts(typeName, onAvailable, onDestroy) {
+    if (!this.actorID) {
+      // The front was already destroyed, bail out.
+      console.error(
+        `Tried to call watchFronts for the '${typeName}' type on an ` +
+          `already destroyed front '${this.typeName}'.`
+      );
+      return;
     }
-    // Then register the callback for fronts instantiated in the future
-    this._frontListeners.on(typeName, callback);
+
+    if (onAvailable) {
+      // First fire the callback on already instantiated fronts
+      for (const front of this.poolChildren()) {
+        if (front.typeName == typeName) {
+          onAvailable(front);
+        }
+      }
+
+      // Then register the callback for fronts instantiated in the future
+      this._frontCreationListeners.on(typeName, onAvailable);
+    }
+
+    if (onDestroy) {
+      this._frontDestructionListeners.on(typeName, onDestroy);
+    }
+  }
+
+  /**
+   * Stop listening for the creation and/or destruction of a given type of fronts.
+   * See `watchFronts()` for documentation of the arguments.
+   */
+  unwatchFronts(typeName, onAvailable, onDestroy) {
+    if (!this.actorID) {
+      // The front was already destroyed, bail out.
+      console.error(
+        `Tried to call unwatchFronts for the '${typeName}' type on an ` +
+          `already destroyed front '${this.typeName}'.`
+      );
+      return;
+    }
+
+    if (onAvailable) {
+      this._frontCreationListeners.off(typeName, onAvailable);
+    }
+    if (onDestroy) {
+      this._frontDestructionListeners.off(typeName, onDestroy);
+    }
   }
 
   /**

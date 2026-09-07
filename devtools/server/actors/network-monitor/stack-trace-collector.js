@@ -35,6 +35,7 @@ function StackTraceCollector(filters, netmonitors) {
 StackTraceCollector.prototype = {
   init() {
     Services.obs.addObserver(this, "http-on-opening-request");
+    Services.obs.addObserver(this, "document-on-opening-request");
     Services.obs.addObserver(this, "network-monitor-alternate-stack");
     ChannelEventSinkFactory.getService().registerCollector(this);
     this.onGetStack = this.onGetStack.bind(this);
@@ -48,6 +49,7 @@ StackTraceCollector.prototype = {
 
   destroy() {
     Services.obs.removeObserver(this, "http-on-opening-request");
+    Services.obs.removeObserver(this, "document-on-opening-request");
     Services.obs.removeObserver(this, "network-monitor-alternate-stack");
     ChannelEventSinkFactory.getService().unregisterCollector(this);
     for (const { messageManager } of this.netmonitors) {
@@ -81,14 +83,18 @@ StackTraceCollector.prototype = {
     try {
       channel = subject.QueryInterface(Ci.nsIHttpChannel);
       id = channel.channelId;
-    } catch (e) {
-      // WebSocketChannels do not have IDs, so use the URL. When a WebSocket is
-      // opened in a content process, a channel is created locally but the HTTP
-      // channel for the connection lives entirely in the parent process. When
-      // the server code running in the parent sees that HTTP channel, it will
-      // look for the creation stack using the websocket's URL.
-      channel = subject.QueryInterface(Ci.nsIWebSocketChannel);
-      id = channel.URI.spec;
+    } catch (e1) {
+      try {
+        channel = subject.QueryInterface(Ci.nsIIdentChannel);
+        id = channel.channelId;
+      } catch (e2) {
+        try {
+          channel = subject.QueryInterface(Ci.nsIWebSocketChannel);
+        } catch (e3) {
+          return;
+        }
+        id = channel.URI.spec;
+      }
     }
 
     if (!matchRequest(channel, this.filters)) {
@@ -97,7 +103,8 @@ StackTraceCollector.prototype = {
 
     const stacktrace = [];
     switch (topic) {
-      case "http-on-opening-request": {
+      case "http-on-opening-request":
+      case "document-on-opening-request": {
         // The channel is being opened on the main thread, associate the current
         // stack with it.
         //

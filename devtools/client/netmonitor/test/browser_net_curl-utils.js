@@ -25,7 +25,9 @@ add_task(async function() {
   store.dispatch(Actions.batchEnable(false));
 
   const wait = waitForNetworkEvents(monitor, 5);
-  await ContentTask.spawn(tab.linkedBrowser, SIMPLE_SJS, async function(url) {
+  await SpecialPowers.spawn(tab.linkedBrowser, [SIMPLE_SJS], async function(
+    url
+  ) {
     content.wrappedJSObject.performRequests(url);
   });
   await wait;
