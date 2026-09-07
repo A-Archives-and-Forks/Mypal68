@@ -21,13 +21,15 @@ class MaybeCloseWindowHelper final : public nsITimerCallback {
   NS_DECL_ISUPPORTS
   NS_DECL_NSITIMERCALLBACK
 
-  explicit MaybeCloseWindowHelper(nsIInterfaceRequestor* aContentContext);
+  explicit MaybeCloseWindowHelper(
+      mozilla::dom::BrowsingContext* aContentContext);
 
   /**
    * Closes the provided window async (if mShouldCloseWindow is true)
-   * and returns its opener if the window was just openend.
+   * and returns its opener if the window was just opened. Otherwise
+   * returns the BrowsingContext provided in the constructor.
    */
-  nsIInterfaceRequestor* MaybeCloseWindow();
+  mozilla::dom::BrowsingContext* MaybeCloseWindow();
 
   void SetShouldCloseWindow(bool aShouldCloseWindow);
 
@@ -38,13 +40,13 @@ class MaybeCloseWindowHelper final : public nsITimerCallback {
   /**
    * The dom window associated to handle content.
    */
-  nsCOMPtr<nsIInterfaceRequestor> mContentContext;
+  RefPtr<mozilla::dom::BrowsingContext> mBrowsingContext;
 
   /**
    * Used to close the window on a timer, to avoid any exceptions that are
    * thrown if we try to close the window before it's fully loaded.
    */
-  nsCOMPtr<nsPIDOMWindowOuter> mWindowToClose;
+  RefPtr<mozilla::dom::BrowsingContext> mBCToClose;
   nsCOMPtr<nsITimer> mTimer;
 
   /**
@@ -62,8 +64,6 @@ class nsDSURIContentListener final : public nsIURIContentListener,
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIURICONTENTLISTENER
-
-  nsresult Init();
 
  protected:
   explicit nsDSURIContentListener(nsDocShell* aDocShell);
@@ -86,8 +86,6 @@ class nsDSURIContentListener final : public nsIURIContentListener,
   // preferred and encouraged!
   nsWeakPtr mWeakParentContentListener;
   nsIURIContentListener* mParentContentListener;
-
-  nsCOMPtr<nsIWebNavigationInfo> mNavInfo;
 };
 
 #endif /* nsDSURIContentListener_h__ */

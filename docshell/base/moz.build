@@ -59,6 +59,7 @@ EXPORTS += [
     'nsDocShellLoadTypes.h',
     'nsDocShellTreeOwner.h',
     'nsIScrollObserver.h',
+    'nsWebNavigationInfo.h',
     'SerializedLoadContext.h',
 ]
 
@@ -70,10 +71,12 @@ EXPORTS.mozilla += [
 
 EXPORTS.mozilla.dom += [
     'BrowsingContext.h',
-    'BrowsingContextFieldList.h',
     'BrowsingContextGroup.h',
     'CanonicalBrowsingContext.h',
     'ChildProcessChannelListener.h',
+    'SyncedContext.h',
+    'SyncedContextInlines.h',
+    'WindowContext.h',
 ]
 
 UNIFIED_SOURCES += [
@@ -84,7 +87,6 @@ UNIFIED_SOURCES += [
     'ChildProcessChannelListener.cpp',
     'LoadContext.cpp',
     'nsAboutRedirector.cpp',
-    'nsDefaultURIFixup.cpp',
     'nsDocShell.cpp',
     'nsDocShellEditorData.cpp',
     'nsDocShellEnumerator.cpp',
@@ -95,6 +97,7 @@ UNIFIED_SOURCES += [
     'nsRefreshTimer.cpp',
     'nsWebNavigationInfo.cpp',
     'SerializedLoadContext.cpp',
+    'WindowContext.cpp',
 ]
 
 include('/ipc/chromium/chromium-config.mozbuild')
@@ -118,3 +121,7 @@ LOCAL_INCLUDES += [
 
 if CONFIG['CC_TYPE'] in ('clang', 'gcc'):
     CXXFLAGS += ['-Wno-error=shadow']
+
+EXTRA_JS_MODULES += [
+    'URIFixup.jsm'
+]

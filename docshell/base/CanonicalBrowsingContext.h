@@ -8,17 +8,20 @@
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/MediaControlKeysEvent.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/MozPromise.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsWrapperCache.h"
 #include "nsTHashMap.h" //MY
 #include "nsTHashtable.h"
 #include "nsHashKeys.h"
-
-class nsIDocShell;
+#include "nsISHistory.h"
+#include "nsISHEntry.h"
 
 namespace mozilla {
 namespace dom {
 
+class WindowGlobalParent;
+class BrowserParent;
 class MediaController;
 class WindowGlobalParent;
 
@@ -27,6 +30,10 @@ class WindowGlobalParent;
 // parent needs.
 class CanonicalBrowsingContext final : public BrowsingContext {
  public:
+  NS_DECL_ISUPPORTS_INHERITED
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(CanonicalBrowsingContext,
+                                           BrowsingContext)
+
   static already_AddRefed<CanonicalBrowsingContext> Get(uint64_t aId);
   static CanonicalBrowsingContext* Cast(BrowsingContext* aContext);
   static const CanonicalBrowsingContext* Cast(const BrowsingContext* aContext);
@@ -34,30 +41,34 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   bool IsOwnedByProcess(uint64_t aProcessId) const {
     return mProcessId == aProcessId;
   }
+  bool IsEmbeddedInProcess(uint64_t aProcessId) const {
+    return mEmbedderProcessId == aProcessId;
+  }
   uint64_t OwnerProcessId() const { return mProcessId; }
+  uint64_t EmbedderProcessId() const { return mEmbedderProcessId; }
   ContentParent* GetContentParent() const;
 
   void GetCurrentRemoteType(nsACString& aRemoteType, ErrorResult& aRv) const;
 
-  void SetOwnerProcessId(uint64_t aProcessId) { mProcessId = aProcessId; }
+  void SetOwnerProcessId(uint64_t aProcessId);
+
+  void SetInFlightProcessId(uint64_t aProcessId);
+  uint64_t GetInFlightProcessId() const { return mInFlightProcessId; }
 
   void GetWindowGlobals(nsTArray<RefPtr<WindowGlobalParent>>& aWindows);
 
-  // Called by WindowGlobalParent to register and unregister window globals.
-  void RegisterWindowGlobal(WindowGlobalParent* aGlobal);
-  void UnregisterWindowGlobal(WindowGlobalParent* aGlobal);
-
   // The current active WindowGlobal.
-  WindowGlobalParent* GetCurrentWindowGlobal() const {
-    return mCurrentWindowGlobal;
-  }
-  void SetCurrentWindowGlobal(WindowGlobalParent* aGlobal);
+  WindowGlobalParent* GetCurrentWindowGlobal() const;
 
-  WindowGlobalParent* GetEmbedderWindowGlobal() const {
-    return mEmbedderWindowGlobal;
-  }
-  void SetEmbedderWindowGlobal(WindowGlobalParent* aGlobal);
+  already_AddRefed<WindowGlobalParent> GetEmbedderWindowGlobal() const;
 
+  // Same as GetEmbedderWindowGlobal but within the same browsing context group
+  already_AddRefed<WindowGlobalParent> GetParentWindowGlobal() const;
+
+  nsISHistory* GetSessionHistory();
+  void SetSessionHistory(nsISHistory* aSHistory) {
+    mSessionHistory = aSHistory;
+  }
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
 
@@ -83,53 +94,104 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // and propogate the action to other browsing contexts in content processes.
   void UpdateMediaControlKeysEvent(MediaControlKeysEvent aEvent);
 
-  // Validate that the given process is allowed to perform the given
-  // transaction. aSource is |nullptr| if set in the parent process.
-  bool ValidateTransaction(const Transaction& aTransaction,
-                           ContentParent* aSource);
+  // Triggers a load in the process
+  using BrowsingContext::LoadURI;
+  void LoadURI(const nsAString& aURI, const LoadURIOptions& aOptions,
+               ErrorResult& aError);
 
-  void SetFieldEpochsForChild(ContentParent* aChild,
-                              const FieldEpochs& aEpochs);
-  const FieldEpochs& GetFieldEpochsForChild(ContentParent* aChild);
+  using RemotenessPromise = MozPromise<RefPtr<BrowserParent>, nsresult, false>;
+  RefPtr<RemotenessPromise> ChangeFrameRemoteness(const nsACString& aRemoteType,
+                                                  uint64_t aPendingSwitchId);
 
   // Return a media controller from the top-level browsing context that can
   // control all media belonging to this browsing context tree. Return nullptr
   // if the top-level browsing context has been discarded.
   MediaController* GetMediaController();
 
- protected:
-  void Traverse(nsCycleCollectionTraversalCallback& cb);
-  void Unlink();
+  bool HasHistoryEntry(nsISHEntry* aEntry) const {
+    return aEntry && (aEntry == mOSHE || aEntry == mLSHE);
+  }
 
+  void UpdateSHEntries(nsISHEntry* aNewLSHE, nsISHEntry* aNewOSHE) {
+    mLSHE = aNewLSHE;
+    mOSHE = aNewOSHE;
+  }
+
+  void SwapHistoryEntries(nsISHEntry* aOldEntry, nsISHEntry* aNewEntry) {
+    if (aOldEntry == mOSHE) {
+      mOSHE = aNewEntry;
+    }
+
+    if (aOldEntry == mLSHE) {
+      mLSHE = aNewEntry;
+    }
+  }
+
+ protected:
   // Called when the browsing context is being discarded.
   void CanonicalDiscard();
 
   using Type = BrowsingContext::Type;
   CanonicalBrowsingContext(BrowsingContext* aParent,
                            BrowsingContextGroup* aGroup,
-                           uint64_t aBrowsingContextId, uint64_t aProcessId,
-                           Type aType);
+                           uint64_t aBrowsingContextId,
+                           uint64_t aOwnerProcessId,
+                           uint64_t aEmbedderProcessId, Type aType,
+                           FieldTuple&& aFields);
 
  private:
   friend class BrowsingContext;
+
+  ~CanonicalBrowsingContext() = default;
+
+  class PendingRemotenessChange {
+   public:
+    NS_INLINE_DECL_REFCOUNTING(PendingRemotenessChange)
+
+    PendingRemotenessChange(CanonicalBrowsingContext* aTarget,
+                            RemotenessPromise::Private* aPromise,
+                            uint64_t aPendingSwitchId)
+        : mTarget(aTarget),
+          mPromise(aPromise),
+          mPendingSwitchId(aPendingSwitchId) {}
+
+    void Cancel(nsresult aRv);
+    void Complete(ContentParent* aContentParent);
+
+   private:
+    ~PendingRemotenessChange();
+    void Clear();
+
+    RefPtr<CanonicalBrowsingContext> mTarget;
+    RefPtr<RemotenessPromise::Private> mPromise;
+
+    uint64_t mPendingSwitchId;
+  };
 
   // XXX(farre): Store a ContentParent pointer here rather than mProcessId?
   // Indicates which process owns the docshell.
   uint64_t mProcessId;
 
-  // All live window globals within this browsing context.
-  nsTHashtable<nsRefPtrHashKey<WindowGlobalParent>> mWindowGlobals;
-  RefPtr<WindowGlobalParent> mCurrentWindowGlobal;
-  RefPtr<WindowGlobalParent> mEmbedderWindowGlobal;
+  // Indicates which process owns the embedder element.
+  uint64_t mEmbedderProcessId;
 
-  // Generation information for each content process which has interacted with
-  // this CanonicalBrowsingContext, by ChildID.
-  nsTHashMap<nsUint64HashKey, FieldEpochs> mChildFieldEpochs;
+  // The ID of the former owner process during an ownership change, which may
+  // have in-flight messages that assume it is still the owner.
+  uint64_t mInFlightProcessId = 0;
+
+  // The current remoteness change which is in a pending state.
+  RefPtr<PendingRemotenessChange> mPendingRemotenessChange;
+
+  nsCOMPtr<nsISHistory> mSessionHistory;
 
   // Tab media controller is used to control all media existing in the same
   // browsing context tree, so it would only exist in the top level browsing
   // context.
   RefPtr<MediaController> mTabMediaController;
+
+  // These are being mirrored from docshell
+  nsCOMPtr<nsISHEntry> mOSHE;
+  nsCOMPtr<nsISHEntry> mLSHE;
 };
 
 }  // namespace dom

@@ -4,12 +4,17 @@
 
 #include "mozilla/dom/CanonicalBrowsingContext.h"
 
+#include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/BrowsingContextGroup.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/dom/ContentProcessManager.h"
 #include "mozilla/dom/MediaController.h"
 #include "mozilla/dom/MediaControlService.h"
 #include "mozilla/dom/PlaybackController.h"
+#include "mozilla/ipc/ProtocolUtils.h"
+#include "mozilla/NullPrincipal.h"
+
+using namespace mozilla::ipc;
 
 extern mozilla::LazyLogModule gAutoplayPermissionLog;
 
@@ -27,10 +32,14 @@ extern mozilla::LazyLogModule gUserInteractionPRLog;
 CanonicalBrowsingContext::CanonicalBrowsingContext(BrowsingContext* aParent,
                                                    BrowsingContextGroup* aGroup,
                                                    uint64_t aBrowsingContextId,
-                                                   uint64_t aProcessId,
-                                                   BrowsingContext::Type aType)
-    : BrowsingContext(aParent, aGroup, aBrowsingContextId, aType),
-      mProcessId(aProcessId) {
+                                                   uint64_t aOwnerProcessId,
+                                                   uint64_t aEmbedderProcessId,
+                                                   BrowsingContext::Type aType,
+                                                   FieldTuple&& aFields)
+    : BrowsingContext(aParent, aGroup, aBrowsingContextId, aType,
+                      std::move(aFields)),
+      mProcessId(aOwnerProcessId),
+      mEmbedderProcessId(aEmbedderProcessId) {
   // You are only ever allowed to create CanonicalBrowsingContexts in the
   // parent process.
   MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
@@ -83,80 +92,71 @@ void CanonicalBrowsingContext::GetCurrentRemoteType(nsACString& aRemoteType,
   aRemoteType.Assign(cp->GetRemoteType());
 }
 
+void CanonicalBrowsingContext::SetOwnerProcessId(uint64_t aProcessId) {
+  MOZ_LOG(GetLog(), LogLevel::Debug,
+          ("SetOwnerProcessId for 0x%08" PRIx64 " (0x%08" PRIx64
+           " -> 0x%08" PRIx64 ")",
+           Id(), mProcessId, aProcessId));
+
+  mProcessId = aProcessId;
+}
+
+void CanonicalBrowsingContext::SetInFlightProcessId(uint64_t aProcessId) {
+  // We can't handle more than one in-flight process change at a time.
+  MOZ_ASSERT_IF(aProcessId, mInFlightProcessId == 0);
+
+  mInFlightProcessId = aProcessId;
+}
+
 void CanonicalBrowsingContext::GetWindowGlobals(
     nsTArray<RefPtr<WindowGlobalParent>>& aWindows) {
-  aWindows.SetCapacity(mWindowGlobals.Count());
-  for (auto iter = mWindowGlobals.Iter(); !iter.Done(); iter.Next()) {
-    aWindows.AppendElement(iter.Get()->GetKey());
+  aWindows.SetCapacity(GetWindowContexts().Length());
+  for (auto& window : GetWindowContexts()) {
+    aWindows.AppendElement(static_cast<WindowGlobalParent*>(window.get()));
   }
 }
 
-void CanonicalBrowsingContext::RegisterWindowGlobal(
-    WindowGlobalParent* aGlobal) {
-  MOZ_ASSERT(!mWindowGlobals.Contains(aGlobal), "Global already registered!");
-  mWindowGlobals.PutEntry(aGlobal);
+WindowGlobalParent* CanonicalBrowsingContext::GetCurrentWindowGlobal() const {
+  return static_cast<WindowGlobalParent*>(GetCurrentWindowContext());
 }
 
-void CanonicalBrowsingContext::UnregisterWindowGlobal(
-    WindowGlobalParent* aGlobal) {
-  MOZ_ASSERT(mWindowGlobals.Contains(aGlobal), "Global not registered!");
-  mWindowGlobals.RemoveEntry(aGlobal);
-
-  // Our current window global should be in our mWindowGlobals set. If it's not
-  // anymore, clear that reference.
-  if (aGlobal == mCurrentWindowGlobal) {
-    mCurrentWindowGlobal = nullptr;
-  }
-}
-
-void CanonicalBrowsingContext::SetCurrentWindowGlobal(
-    WindowGlobalParent* aGlobal) {
-  MOZ_ASSERT(mWindowGlobals.Contains(aGlobal), "Global not registered!");
-
-  // TODO: This should probably assert that the processes match.
-  mCurrentWindowGlobal = aGlobal;
-}
-
-void CanonicalBrowsingContext::SetEmbedderWindowGlobal(
-    WindowGlobalParent* aGlobal) {
-  MOZ_RELEASE_ASSERT(aGlobal, "null embedder");
-  if (RefPtr<BrowsingContext> parent = GetParent()) {
-    MOZ_RELEASE_ASSERT(aGlobal->BrowsingContext() == parent,
-                       "Embedder has incorrect browsing context");
+already_AddRefed<WindowGlobalParent>
+CanonicalBrowsingContext::GetEmbedderWindowGlobal() const {
+  uint64_t windowId = GetEmbedderInnerWindowId();
+  if (windowId == 0) {
+    return nullptr;
   }
 
-  mEmbedderWindowGlobal = aGlobal;
+  return WindowGlobalParent::GetByInnerWindowId(windowId);
 }
 
-bool CanonicalBrowsingContext::ValidateTransaction(
-    const Transaction& aTransaction, ContentParent* aProcess) {
-  // Check that the correct process is performing sets for transactions with
-  // non-racy fields.
-  if (aTransaction.HasNonRacyField()) {
-    if (NS_WARN_IF(aProcess && mProcessId != aProcess->ChildID())) {
-      return false;
+already_AddRefed<WindowGlobalParent>
+CanonicalBrowsingContext::GetParentWindowGlobal() const {
+  if (GetParent()) {
+    return GetEmbedderWindowGlobal();
+  }
+  return nullptr;
+}
+
+nsISHistory* CanonicalBrowsingContext::GetSessionHistory() {
+  if (mSessionHistory) {
+    return mSessionHistory;
+  }
+
+  nsCOMPtr<nsIWebNavigation> webNav = do_QueryInterface(GetDocShell());
+  if (webNav) {
+    RefPtr<ChildSHistory> shistory = webNav->GetSessionHistory();
+    if (shistory) {
+      return shistory->LegacySHistory();
     }
   }
 
-  return true;
+  return nullptr;
 }
 
 JSObject* CanonicalBrowsingContext::WrapObject(
     JSContext* aCx, JS::Handle<JSObject*> aGivenProto) {
   return CanonicalBrowsingContext_Binding::Wrap(aCx, this, aGivenProto);
-}
-
-void CanonicalBrowsingContext::Traverse(
-    nsCycleCollectionTraversalCallback& cb) {
-  CanonicalBrowsingContext* tmp = this;
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mWindowGlobals, mCurrentWindowGlobal,
-                                    mEmbedderWindowGlobal);
-}
-
-void CanonicalBrowsingContext::Unlink() {
-  CanonicalBrowsingContext* tmp = this;
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mWindowGlobals, mCurrentWindowGlobal,
-                                  mEmbedderWindowGlobal);
 }
 
 void CanonicalBrowsingContext::CanonicalDiscard() {
@@ -167,7 +167,7 @@ void CanonicalBrowsingContext::CanonicalDiscard() {
 }
 
 void CanonicalBrowsingContext::NotifyStartDelayedAutoplayMedia() {
-  if (!mCurrentWindowGlobal) {
+  if (!GetCurrentWindowGlobal()) {
     return;
   }
 
@@ -187,13 +187,9 @@ void CanonicalBrowsingContext::NotifyStartDelayedAutoplayMedia() {
 }
 
 void CanonicalBrowsingContext::NotifyMediaMutedChanged(bool aMuted) {
-  nsPIDOMWindowOuter* window = GetDOMWindow();
-  if (window) {
-    window->SetAudioMuted(aMuted);
-  }
-  Group()->EachParent([&](ContentParent* aParent) {
-    Unused << aParent->SendSetMediaMuted(this, aMuted);
-  });
+  MOZ_ASSERT(!GetParent(),
+             "Notify media mute change on non top-level context!");
+  SetMuted(aMuted);
 }
 
 void CanonicalBrowsingContext::UpdateMediaControlKeysEvent(
@@ -204,19 +200,254 @@ void CanonicalBrowsingContext::UpdateMediaControlKeysEvent(
   });
 }
 
-void CanonicalBrowsingContext::SetFieldEpochsForChild(
-    ContentParent* aChild, const BrowsingContext::FieldEpochs& aEpochs) {
-  mChildFieldEpochs.InsertOrUpdate(aChild->ChildID(), aEpochs);
+void CanonicalBrowsingContext::LoadURI(const nsAString& aURI,
+                                       const LoadURIOptions& aOptions,
+                                       ErrorResult& aError) {
+  nsCOMPtr<nsISupports> consumer = GetDocShell();
+  if (!consumer) {
+    consumer = GetEmbedderElement();
+  }
+  if (!consumer) {
+    aError.Throw(NS_ERROR_UNEXPECTED);
+    return;
+  }
+
+  RefPtr<nsDocShellLoadState> loadState;
+  nsresult rv = nsDocShellLoadState::CreateFromLoadURIOptions(
+      consumer, aURI, aOptions, getter_AddRefs(loadState));
+
+  if (rv == NS_ERROR_MALFORMED_URI) {
+    DisplayLoadError(aURI);
+    return;
+  }
+
+  if (NS_FAILED(rv)) {
+    aError.Throw(rv);
+    return;
+  }
+
+  LoadURI(loadState, true);
 }
 
-const BrowsingContext::FieldEpochs&
-CanonicalBrowsingContext::GetFieldEpochsForChild(ContentParent* aChild) {
-  static const BrowsingContext::FieldEpochs sDefaultFieldEpochs;
-
-  if (auto entry = mChildFieldEpochs.Lookup(aChild->ChildID())) {
-    return entry.Data();
+void CanonicalBrowsingContext::PendingRemotenessChange::Complete(
+    ContentParent* aContentParent) {
+  if (!mPromise) {
+    return;
   }
-  return sDefaultFieldEpochs;
+
+  RefPtr<CanonicalBrowsingContext> target(mTarget);
+  RefPtr<WindowGlobalParent> embedderWindow = target->GetEmbedderWindowGlobal();
+  if (NS_WARN_IF(!embedderWindow) || NS_WARN_IF(!embedderWindow->CanSend())) {
+    Cancel(NS_ERROR_FAILURE);
+    return;
+  }
+
+  RefPtr<BrowserParent> embedderBrowser = embedderWindow->GetBrowserParent();
+  if (NS_WARN_IF(!embedderBrowser)) {
+    Cancel(NS_ERROR_FAILURE);
+    return;
+  }
+
+  // Pull load flags from our embedder browser.
+  nsCOMPtr<nsILoadContext> loadContext = embedderBrowser->GetLoadContext();
+  MOZ_DIAGNOSTIC_ASSERT(
+      loadContext->UseRemoteTabs() && loadContext->UseRemoteSubframes(),
+      "Not supported without fission");
+
+  // NOTE: These are the only flags we actually care about
+  uint32_t chromeFlags = nsIWebBrowserChrome::CHROME_REMOTE_WINDOW |
+                         nsIWebBrowserChrome::CHROME_FISSION_WINDOW;
+  if (loadContext->UsePrivateBrowsing()) {
+    chromeFlags |= nsIWebBrowserChrome::CHROME_PRIVATE_WINDOW;
+  }
+
+  TabId tabId(nsContentUtils::GenerateTabId());
+  RefPtr<BrowserBridgeParent> bridge = new BrowserBridgeParent();
+  ManagedEndpoint<PBrowserBridgeChild> endpoint =
+      embedderBrowser->OpenPBrowserBridgeEndpoint(bridge);
+  if (NS_WARN_IF(!endpoint.IsValid())) {
+    Cancel(NS_ERROR_UNEXPECTED);
+    return;
+  }
+
+  RefPtr<WindowGlobalParent> oldWindow = target->GetCurrentWindowGlobal();
+  RefPtr<BrowserParent> oldBrowser =
+      oldWindow ? oldWindow->GetBrowserParent() : nullptr;
+  bool wasRemote = oldWindow && oldWindow->IsProcessRoot();
+
+  // Update which process is considered the current owner
+  uint64_t inFlightProcessId = target->OwnerProcessId();
+  target->SetInFlightProcessId(inFlightProcessId);
+  target->SetOwnerProcessId(aContentParent->ChildID());
+
+  auto resetInFlightId = [target, inFlightProcessId] {
+    if (target->GetInFlightProcessId() == inFlightProcessId) {
+      target->SetInFlightProcessId(0);
+    } else {
+      MOZ_DIAGNOSTIC_ASSERT(false, "Unexpected InFlightProcessId");
+    }
+  };
+
+  // If we were in a remote frame, trigger unloading of the remote window. When
+  // the original remote window acknowledges, we can clear the in-flight ID.
+  if (wasRemote) {
+    MOZ_DIAGNOSTIC_ASSERT(oldBrowser);
+    MOZ_DIAGNOSTIC_ASSERT(oldBrowser != embedderBrowser);
+    MOZ_DIAGNOSTIC_ASSERT(oldBrowser->GetBrowserBridgeParent());
+
+    auto callback = [resetInFlightId](auto) { resetInFlightId(); };
+    oldBrowser->SendWillChangeProcess(callback, callback);
+    oldBrowser->Destroy();
+  }
+
+  // Tell the embedder process a remoteness change is in-process. When this is
+  // acknowledged, reset the in-flight ID if it used to be an in-process load.
+  {
+    auto callback = [wasRemote, resetInFlightId](auto) {
+      if (!wasRemote) {
+        resetInFlightId();
+      }
+    };
+    embedderWindow->SendMakeFrameRemote(target, std::move(endpoint), tabId,
+                                        callback, callback);
+  }
+
+  // FIXME: We should get the correct principal for the to-be-created window so
+  // we can avoid creating unnecessary extra windows in the new process.
+  OriginAttributes attrs = embedderBrowser->OriginAttributesRef();
+  RefPtr<nsIPrincipal> principal = embedderBrowser->GetContentPrincipal();
+  if (principal) {
+    attrs.SetFirstPartyDomain(
+        true, principal->OriginAttributesRef().mFirstPartyDomain);
+  }
+
+  nsCOMPtr<nsIPrincipal> initialPrincipal =
+      NullPrincipal::CreateWithInheritedAttributes(attrs,
+                                                   /* isFirstParty */ false);
+  WindowGlobalInit windowInit =
+      WindowGlobalActor::AboutBlankInitializer(target, initialPrincipal);
+
+  // Actually create the new BrowserParent actor and finish initialization of
+  // our new BrowserBridgeParent.
+  nsresult rv = bridge->InitWithProcess(aContentParent,
+                                        windowInit, chromeFlags, tabId);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    Cancel(rv);
+    return;
+  }
+
+  RefPtr<BrowserParent> newBrowser = bridge->GetBrowserParent();
+  newBrowser->ResumeLoad(mPendingSwitchId);
+
+  // We did it! The process switch is complete.
+  mPromise->Resolve(newBrowser, __func__);
+  Clear();
+}
+
+void CanonicalBrowsingContext::PendingRemotenessChange::Cancel(nsresult aRv) {
+  if (!mPromise) {
+    return;
+  }
+
+  mPromise->Reject(aRv, __func__);
+  Clear();
+}
+
+void CanonicalBrowsingContext::PendingRemotenessChange::Clear() {
+  // Make sure we don't die while we're doing cleanup.
+  RefPtr<PendingRemotenessChange> kungFuDeathGrip(this);
+  if (mTarget) {
+    MOZ_DIAGNOSTIC_ASSERT(mTarget->mPendingRemotenessChange == this);
+    mTarget->mPendingRemotenessChange = nullptr;
+  }
+
+  mPromise = nullptr;
+  mTarget = nullptr;
+}
+
+CanonicalBrowsingContext::PendingRemotenessChange::~PendingRemotenessChange() {
+  MOZ_ASSERT(!mPromise && !mTarget,
+             "should've already been Cancel() or Complete()-ed");
+}
+
+RefPtr<CanonicalBrowsingContext::RemotenessPromise>
+CanonicalBrowsingContext::ChangeFrameRemoteness(const nsACString& aRemoteType,
+                                                uint64_t aPendingSwitchId) {
+  // Ensure our embedder hasn't been destroyed already.
+  RefPtr<WindowGlobalParent> embedderWindowGlobal = GetEmbedderWindowGlobal();
+  if (!embedderWindowGlobal) {
+    NS_WARNING("Non-embedded BrowsingContext");
+    return RemotenessPromise::CreateAndReject(NS_ERROR_UNEXPECTED, __func__);
+  }
+
+  if (!embedderWindowGlobal->CanSend()) {
+    NS_WARNING("Embedder already been destroyed.");
+    return RemotenessPromise::CreateAndReject(NS_ERROR_NOT_AVAILABLE, __func__);
+  }
+
+  RefPtr<ContentParent> oldContent = GetContentParent();
+  if (!oldContent || aRemoteType.IsEmpty()) {
+    NS_WARNING("Cannot switch to or from non-remote frame");
+    return RemotenessPromise::CreateAndReject(NS_ERROR_NOT_IMPLEMENTED,
+                                              __func__);
+  }
+
+  if (aRemoteType.Equals(oldContent->GetRemoteType())) {
+    NS_WARNING("Already in the correct process");
+    return RemotenessPromise::CreateAndReject(NS_ERROR_FAILURE, __func__);
+  }
+
+  // Cancel ongoing remoteness changes.
+  if (mPendingRemotenessChange) {
+    mPendingRemotenessChange->Cancel(NS_ERROR_ABORT);
+    MOZ_ASSERT(!mPendingRemotenessChange, "Should have cleared");
+  }
+
+  RefPtr<BrowserParent> embedderBrowser =
+      embedderWindowGlobal->GetBrowserParent();
+  MOZ_ASSERT(embedderBrowser);
+
+  // Switching to local. No new process, so perform switch sync.
+  if (aRemoteType.Equals(embedderBrowser->Manager()->GetRemoteType())) {
+    if (GetCurrentWindowGlobal()) {
+      MOZ_DIAGNOSTIC_ASSERT(GetCurrentWindowGlobal()->IsProcessRoot());
+      RefPtr<BrowserParent> oldBrowser =
+          GetCurrentWindowGlobal()->GetBrowserParent();
+
+      RefPtr<CanonicalBrowsingContext> target(this);
+      SetInFlightProcessId(OwnerProcessId());
+      oldBrowser->SendWillChangeProcess(
+          [target](bool aSuccess) { target->SetInFlightProcessId(0); },
+          [target](mozilla::ipc::ResponseRejectReason aReason) {
+            target->SetInFlightProcessId(0);
+          });
+      oldBrowser->Destroy();
+    }
+
+    SetOwnerProcessId(embedderBrowser->Manager()->ChildID());
+    Unused << embedderWindowGlobal->SendMakeFrameLocal(this, aPendingSwitchId);
+    return RemotenessPromise::CreateAndResolve(embedderBrowser, __func__);
+  }
+
+  // Switching to remote. Wait for new process to launch before switch.
+  auto promise = MakeRefPtr<RemotenessPromise::Private>(__func__);
+  RefPtr<PendingRemotenessChange> change =
+      new PendingRemotenessChange(this, promise, aPendingSwitchId);
+  mPendingRemotenessChange = change;
+
+  ContentParent::GetNewOrUsedBrowserProcessAsync(
+      /* aFrameElement = */ nullptr,
+      /* aRemoteType = */ aRemoteType,
+      /* aPriority = */ hal::PROCESS_PRIORITY_FOREGROUND,
+      /* aOpener = */ nullptr,
+      /* aPreferUsed = */ false)
+      ->Then(
+          GetMainThreadSerialEventTarget(), __func__,
+          [change](ContentParent* aContentParent) {
+            change->Complete(aContentParent);
+          },
+          [change](LaunchError aError) { change->Cancel(NS_ERROR_FAILURE); });
+  return promise.forget();
 }
 
 MediaController* CanonicalBrowsingContext::GetMediaController() {
@@ -235,6 +466,15 @@ MediaController* CanonicalBrowsingContext::GetMediaController() {
   }
   return mTabMediaController;
 }
+
+NS_IMPL_CYCLE_COLLECTION_INHERITED(CanonicalBrowsingContext, BrowsingContext,
+                                   mSessionHistory)
+
+NS_IMPL_ADDREF_INHERITED(CanonicalBrowsingContext, BrowsingContext)
+NS_IMPL_RELEASE_INHERITED(CanonicalBrowsingContext, BrowsingContext)
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(CanonicalBrowsingContext)
+NS_INTERFACE_MAP_END_INHERITING(BrowsingContext)
 
 }  // namespace dom
 }  // namespace mozilla

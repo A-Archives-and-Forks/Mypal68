@@ -16,6 +16,7 @@
 #include "nsIProtocolHandler.h"
 #include "nsIUploadChannel2.h"
 
+#include "nsComponentManagerUtils.h"
 #include "nsNetUtil.h"
 #include "nsStreamUtils.h"
 #include "nsStringStream.h"

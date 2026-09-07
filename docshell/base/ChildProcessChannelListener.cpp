@@ -4,6 +4,7 @@
 
 #include "mozilla/dom/ChildProcessChannelListener.h"
 
+#include "mozilla/ipc/Endpoint.h"
 #include "nsDocShellLoadState.h"
 
 namespace mozilla {
@@ -13,19 +14,29 @@ static StaticRefPtr<ChildProcessChannelListener> sCPCLSingleton;
 
 void ChildProcessChannelListener::RegisterCallback(uint64_t aIdentifier,
                                                    Callback&& aCallback) {
-  if (auto channel = mChannels.Extract(aIdentifier)) {
-    aCallback(*channel);
+  if (auto args = mChannelArgs.Extract(aIdentifier)) {
+    nsresult rv =
+        aCallback(args->mLoadState, std::move(args->mRedirects),
+                  std::move(args->mStreamFilterEndpoints), args->mTiming);
+    args->mResolver(rv);
   } else {
     mCallbacks.InsertOrUpdate(aIdentifier, std::move(aCallback));
   }
 }
 
 void ChildProcessChannelListener::OnChannelReady(
-    nsIChildChannel* aChannel, uint64_t aIdentifier) {
+    nsDocShellLoadState* aLoadState, uint64_t aIdentifier,
+    nsTArray<net::DocumentChannelRedirect>&& aRedirects,
+    nsTArray<Endpoint>&& aStreamFilterEndpoints, nsDOMNavigationTiming* aTiming,
+    Resolver&& aResolver) {
   if (auto callback = mCallbacks.Extract(aIdentifier)) {
-    (*callback)(aChannel);
+    nsresult rv = (*callback)(aLoadState, std::move(aRedirects),
+                              std::move(aStreamFilterEndpoints), aTiming);
+    aResolver(rv);
   } else {
-    mChannels.InsertOrUpdate(aIdentifier, aChannel);
+    mChannelArgs.InsertOrUpdate(aIdentifier, CallbackArgs{aLoadState, std::move(aRedirects),
+                                std::move(aStreamFilterEndpoints), aTiming,
+                                std::move(aResolver)});
   }
 }
 

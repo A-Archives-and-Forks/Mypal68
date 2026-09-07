@@ -7,9 +7,12 @@
 
 #include <functional>
 
+#include "mozilla/extensions/StreamFilterParent.h"
 #include "mozilla/net/NeckoChannelParams.h"
+#include "nsDOMNavigationTiming.h"
 #include "nsTHashMap.h"
-#include "nsIChildChannel.h"
+#include "nsIChannel.h"
+#include "BackgroundUtils.h"
 
 namespace mozilla {
 namespace dom {
@@ -17,20 +20,35 @@ namespace dom {
 class ChildProcessChannelListener final {
   NS_INLINE_DECL_REFCOUNTING(ChildProcessChannelListener)
 
-  typedef std::function<void(nsIChildChannel*)> Callback;
+  using Endpoint = mozilla::ipc::Endpoint<extensions::PStreamFilterParent>;
+  using Resolver = std::function<void(const nsresult&)>;
+  using Callback = std::function<nsresult(
+      nsDocShellLoadState*, nsTArray<net::DocumentChannelRedirect>&&,
+      nsTArray<Endpoint>&&, nsDOMNavigationTiming*)>;
 
   void RegisterCallback(uint64_t aIdentifier, Callback&& aCallback);
 
-  void OnChannelReady(nsIChildChannel* aChannel, uint64_t aIdentifier);
+  void OnChannelReady(nsDocShellLoadState* aLoadState, uint64_t aIdentifier,
+                      nsTArray<net::DocumentChannelRedirect>&& aRedirects,
+                      nsTArray<Endpoint>&& aStreamFilterEndpoints,
+                      nsDOMNavigationTiming* aTiming, Resolver&& aResolver);
 
   static already_AddRefed<ChildProcessChannelListener> GetSingleton();
 
  private:
   ChildProcessChannelListener() = default;
   ~ChildProcessChannelListener() = default;
+  struct CallbackArgs {
+    RefPtr<nsDocShellLoadState> mLoadState;
+    nsTArray<net::DocumentChannelRedirect> mRedirects;
+    nsTArray<Endpoint> mStreamFilterEndpoints;
+    RefPtr<nsDOMNavigationTiming> mTiming;
+    Resolver mResolver;
+  };
 
+  // TODO Backtrack.
   nsTHashMap<nsUint64HashKey, Callback> mCallbacks;
-  nsTHashMap<nsUint64HashKey, nsCOMPtr<nsIChildChannel>> mChannels;
+  nsTHashMap<nsUint64HashKey, CallbackArgs> mChannelArgs;
 };
 
 }  // namespace dom
